@@ -176,6 +176,13 @@ async def get_calendars():
     calendars = await db.calendars.find({}, {"_id": 0}).to_list(1000)
     return calendars
 
+@api_router.delete("/calendars/{calendar_id}")
+async def delete_calendar(calendar_id: str):
+    result = await db.calendars.delete_one({"id": calendar_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Calendar not found")
+    return {"message": "Deleted successfully"}
+
 # Unavailability endpoints
 @api_router.post("/unavailability", response_model=MachineUnavailability)
 async def create_unavailability(unavailability: MachineUnavailability):

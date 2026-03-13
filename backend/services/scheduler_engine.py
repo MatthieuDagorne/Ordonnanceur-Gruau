@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from services.diagnostics import SchedulingDiagnostics
+from services.machine_assigner import MachineAssigner
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,13 @@ class SchedulerEngine:
         - ignore_rules: bool
         - ignore_material: bool
         - debug_mode: bool
+        - auto_assign_machines: bool (default True)
         """
         options = options or {}
         debug_mode = options.get('debug_mode', True)
         ignore_rules = options.get('ignore_rules', False)
         ignore_material = options.get('ignore_material', False)
+        auto_assign_machines = options.get('auto_assign_machines', True)
         
         # Initialiser le diagnostic
         self.diagnostics = SchedulingDiagnostics(self.db)
@@ -34,6 +37,26 @@ class SchedulerEngine:
             rules = await self.db.business_rules.find({}, {"_id": 0}).to_list(1000)
             
             await self.diagnostics.run_pre_validation(orders, operations, machines, rules, stocks)
+            
+            # Vérification bloquante
+            if len(orders) == 0 or len(operations) == 0 or len(machines) == 0:
+                logger.error("❌ Données insuffisantes pour l'ordonnancement")
+                return {
+                    'status': 'ERROR',
+                    'operations': [],
+                    'conflicts': [],
+                    'solver_time': 0,
+                    'diagnostics': self.diagnostics.get_report()
+                }
+            
+            # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
+            if auto_assign_machines and not ignore_rules:
+                logger.info("\n🤖 Auto-assignation des machines activée")
+                assigner = MachineAssigner(machines, rules_engine)
+                assignment_result = assigner.assign_machines_to_operations(operations, orders)
+                
+                # Ajouter les stats d'assignation au diagnostic
+                self.diagnostics.report['machine_assignment'] = assignment_result
             
             # Vérification bloquante
             if len(orders) == 0 or len(operations) == 0 or len(machines) == 0:

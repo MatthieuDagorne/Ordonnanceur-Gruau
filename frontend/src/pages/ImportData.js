@@ -278,10 +278,10 @@ export default function ImportData() {
           <div>
             <p className="font-medium text-slate-900">Opérations:</p>
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
-              id, order_id, operation_number, sequence, production_time_minutes, setup_time_minutes, machine_id
+              id, order_id, operation_number, sequence, production_time_minutes, setup_time_minutes
             </code>
-            <p className="text-xs text-amber-600 mt-1">
-              ⚠️ Important: le champ <strong>machine_id</strong> doit correspondre à un ID de machine existant
+            <p className="text-xs text-blue-600 mt-1">
+              ℹ️ Le champ <strong>machine_id</strong> est optionnel. Si absent, le moteur d'ordonnancement assignera automatiquement une machine selon les règles de compatibilité.
             </p>
           </div>
           <div>

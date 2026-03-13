@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -39,6 +39,17 @@ export default function Calendars() {
       fetchCalendars();
     } catch (error) {
       toast.error('Erreur lors de la création');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Confirmer la suppression ?')) return;
+    try {
+      await axios.delete(`${API}/calendars/${id}`);
+      toast.success('Calendrier supprimé');
+      fetchCalendars();
+    } catch (error) {
+      toast.error('Erreur lors de la suppression');
     }
   };
 
@@ -177,6 +188,7 @@ export default function Calendars() {
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Nom</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Jours ouvrés</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Horaires</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -189,11 +201,20 @@ export default function Calendars() {
                 <td className="px-4 py-2 text-sm text-slate-700 font-mono">
                   {calendar.start_hour}h - {calendar.end_hour}h
                 </td>
+                <td className="px-4 py-2">
+                  <button
+                    data-testid="delete-calendar-btn"
+                    onClick={() => handleDelete(calendar.id)}
+                    className="text-red-600 hover:text-red-800 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </td>
               </tr>
             ))}
             {calendars.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-500">
                   Aucun calendrier. Cliquez sur "Nouveau Calendrier" pour en créer un.
                 </td>
               </tr>

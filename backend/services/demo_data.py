@@ -122,5 +122,13 @@ async def load_demo_data(db):
     return {
         'success': True,
         'message': 'Données de démonstration chargées',
-        'data': demo
+        'counts': {
+            'work_centers': len(demo['work_centers']),
+            'machines': len(demo['machines']),
+            'manufacturing_orders': len(demo['manufacturing_orders']),
+            'operations': len(demo['operations']),
+            'articles': len(demo['articles']),
+            'stocks': len(demo['stocks']),
+            'calendars': len(demo['calendars'])
+        }
     }
