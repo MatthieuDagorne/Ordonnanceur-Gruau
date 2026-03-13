@@ -125,6 +125,111 @@ export default function GanttView() {
         </button>
       </div>
 
+      {/* Diagnostic Section */}
+      {scenario.schedule_data && scenario.schedule_data.diagnostics && (
+        <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
+          <h4 className="text-lg font-semibold text-slate-800 mb-4">📊 Diagnostic d'Ordonnancement</h4>
+          
+          {/* Pre-validation */}
+          {scenario.schedule_data.diagnostics.pre_validation && (
+            <div className="mb-4">
+              <h5 className="text-sm font-semibold text-slate-700 mb-2">Validation des Données</h5>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-slate-50 p-3 rounded-sm">
+                  <p className="text-xs text-slate-500 mb-1">Ordres</p>
+                  <p className="text-lg font-mono font-semibold text-slate-900">
+                    {scenario.schedule_data.diagnostics.pre_validation.orders_count}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-sm">
+                  <p className="text-xs text-slate-500 mb-1">Opérations</p>
+                  <p className="text-lg font-mono font-semibold text-slate-900">
+                    {scenario.schedule_data.diagnostics.pre_validation.operations_count}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-sm">
+                  <p className="text-xs text-slate-500 mb-1">Machines</p>
+                  <p className="text-lg font-mono font-semibold text-slate-900">
+                    {scenario.schedule_data.diagnostics.pre_validation.machines_count}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-sm">
+                  <p className="text-xs text-slate-500 mb-1">Règles</p>
+                  <p className="text-lg font-mono font-semibold text-slate-900">
+                    {scenario.schedule_data.diagnostics.pre_validation.rules_count}
+                  </p>
+                </div>
+              </div>
+              {scenario.schedule_data.diagnostics.pre_validation.feasible_operations !== undefined && (
+                <div className="mt-3 flex gap-4">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-green-600 font-semibold">
+                      ✓ {scenario.schedule_data.diagnostics.pre_validation.feasible_operations} planifiables
+                    </span>
+                  </div>
+                  {scenario.schedule_data.diagnostics.pre_validation.blocked_operations > 0 && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-red-600 font-semibold">
+                        ✗ {scenario.schedule_data.diagnostics.pre_validation.blocked_operations} bloquées
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Blocking Reasons */}
+          {scenario.schedule_data.diagnostics.blocking_reasons && 
+           scenario.schedule_data.diagnostics.blocking_reasons.length > 0 && (
+            <div className="mb-4">
+              <h5 className="text-sm font-semibold text-slate-700 mb-2">⚠️ Causes de Blocage</h5>
+              <div className="space-y-2">
+                {scenario.schedule_data.diagnostics.blocking_reasons.slice(0, 5).map((reason, idx) => (
+                  <div key={idx} className="bg-red-50 border border-red-200 rounded-sm p-3 text-sm">
+                    <p className="font-mono text-red-900">
+                      {reason.type === 'OPERATION_BLOCKED' && reason.operation_id ? (
+                        <>
+                          <span className="font-semibold">Op {reason.operation_id}:</span>{' '}
+                          {reason.reasons?.join(', ')}
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold">{reason.type}:</span> {reason.reason}
+                          {reason.solution && <><br /><span className="text-red-700">→ {reason.solution}</span></>}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                ))}
+                {scenario.schedule_data.diagnostics.blocking_reasons.length > 5 && (
+                  <p className="text-xs text-slate-500">
+                    ... et {scenario.schedule_data.diagnostics.blocking_reasons.length - 5} autre(s) blocage(s)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Solver Info */}
+          {scenario.schedule_data.diagnostics.solver_info && (
+            <div>
+              <h5 className="text-sm font-semibold text-slate-700 mb-2">🔧 Informations Solveur</h5>
+              <div className="bg-slate-50 p-3 rounded-sm font-mono text-xs space-y-1">
+                <p>→ Opérations envoyées au solveur: {scenario.schedule_data.diagnostics.solver_info.operations_sent}</p>
+                <p>→ Machines utilisées: {scenario.schedule_data.diagnostics.solver_info.machines_used}</p>
+                <p>→ Horizon: {scenario.schedule_data.diagnostics.solver_info.horizon_days?.toFixed(1)} jours</p>
+                <p>→ Statut: <span className={`font-semibold ${
+                  scenario.schedule_data.diagnostics.solver_info.status === 'OPTIMAL' ? 'text-green-600' :
+                  scenario.schedule_data.diagnostics.solver_info.status === 'FEASIBLE' ? 'text-blue-600' :
+                  'text-red-600'
+                }`}>{scenario.schedule_data.diagnostics.solver_info.status}</span></p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-lg font-semibold text-slate-800">Planning Gantt</h4>

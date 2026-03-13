@@ -2,18 +2,114 @@ from ortools.sat.python import cp_model
 import logging
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
+from services.diagnostics import SchedulingDiagnostics
 
 logger = logging.getLogger(__name__)
 
 class SchedulerEngine:
     def __init__(self, db):
         self.db = db
+        self.diagnostics = None
     
-    async def schedule(self, orders, operations, machines, rules_engine, material_checker):
+    async def schedule(self, orders, operations, machines, rules_engine, material_checker, options=None):
         """
-        Main scheduling function using OR-Tools CP-SAT.
+        Main scheduling function using OR-Tools CP-SAT with full diagnostics.
+        
+        options peut contenir:
+        - ignore_rules: bool
+        - ignore_material: bool
+        - debug_mode: bool
         """
+        options = options or {}
+        debug_mode = options.get('debug_mode', True)
+        ignore_rules = options.get('ignore_rules', False)
+        ignore_material = options.get('ignore_material', False)
+        
+        # Initialiser le diagnostic
+        self.diagnostics = SchedulingDiagnostics(self.db)
+        
         try:
+            # PHASE 1: PRE-VALIDATION
+            stocks = await self.db.stocks.find({}, {"_id": 0}).to_list(1000)
+            rules = await self.db.business_rules.find({}, {"_id": 0}).to_list(1000)
+            
+            await self.diagnostics.run_pre_validation(orders, operations, machines, rules, stocks)
+            
+            # Vérification bloquante
+            if len(orders) == 0 or len(operations) == 0 or len(machines) == 0:
+                logger.error("❌ Données insuffisantes pour l'ordonnancement")
+                return {
+                    'status': 'ERROR',
+                    'operations': [],
+                    'conflicts': [],
+                    'solver_time': 0,
+                    'diagnostics': self.diagnostics.get_report()
+                }
+            
+            # PHASE 2: ANALYSE DE FAISABILITÉ
+            feasible_count, blocked_count = self.diagnostics.analyze_all_operations(
+                operations, orders, machines, rules_engine, material_checker
+            )
+            
+            # PHASE 3: FILTRAGE DES OPÉRATIONS VALIDES
+            valid_operations = []
+            blocked_operations = []
+            
+            for op in operations:
+                order_id = op.get('order_id')
+                order = next((o for o in orders if o.get('id') == order_id), None)
+                
+                is_valid = True
+                blocking_reason = None
+                
+                # Vérification machine
+                machine_id = op.get('machine_id')
+                if not machine_id:
+                    is_valid = False
+                    blocking_reason = 'Aucune machine assignée'
+                elif not any(m.get('id') == machine_id for m in machines):
+                    is_valid = False
+                    blocking_reason = f'Machine {machine_id} introuvable'
+                
+                # Vérification matière (si non ignorée)
+                if is_valid and not ignore_material and order:
+                    article = order.get('article')
+                    if not material_checker.check_availability(article, order.get('quantity', 0)):
+                        is_valid = False
+                        blocking_reason = f'Matière insuffisante pour {article}'
+                
+                # Vérification règles métier (si non ignorées)
+                if is_valid and not ignore_rules and machine_id:
+                    operation_code = str(op.get('operation_number', ''))
+                    allowed, reason, penalty = rules_engine.is_operation_allowed_on_machine(
+                        operation_code, machine_id
+                    )
+                    if not allowed:
+                        is_valid = False
+                        blocking_reason = f'Règle métier: {reason}'
+                
+                if is_valid:
+                    valid_operations.append(op)
+                else:
+                    blocked_operations.append({
+                        'operation_id': op.get('id'),
+                        'reason': blocking_reason or 'Raison inconnue'
+                    })
+            
+            logger.info(f"📊 Opérations valides pour le solveur: {len(valid_operations)}")
+            logger.info(f"📊 Opérations bloquées: {len(blocked_operations)}")
+            
+            if len(valid_operations) == 0:
+                logger.error("❌ Aucune opération valide pour l'ordonnancement")
+                return {
+                    'status': 'NO_VALID_OPERATIONS',
+                    'operations': [],
+                    'conflicts': blocked_operations,
+                    'solver_time': 0,
+                    'diagnostics': self.diagnostics.get_report()
+                }
+            
+            # PHASE 4: CONSTRUCTION DU MODÈLE OR-TOOLS
             model = cp_model.CpModel()
             
             # Calculate horizon (7 days in minutes)
@@ -25,28 +121,7 @@ class SchedulerEngine:
             interval_vars = {}
             machine_to_intervals = {}
             
-            # Filter operations that pass material check
-            valid_operations = []
-            blocked_operations = []
-            
-            for op in operations:
-                order_id = op.get('order_id')
-                order = next((o for o in orders if o.get('id') == order_id), None)
-                
-                if order:
-                    # Check material availability
-                    article = order.get('article')
-                    if material_checker.check_availability(article, order.get('quantity', 0)):
-                        valid_operations.append(op)
-                    else:
-                        blocked_operations.append({
-                            'operation_id': op.get('id'),
-                            'reason': f'Material unavailable for article {article}'
-                        })
-            
-            logger.info(f"Valid operations: {len(valid_operations)}, Blocked: {len(blocked_operations)}")
-            
-            # Create variables for each operation
+            # Create variables for each valid operation
             for op in valid_operations:
                 op_id = op.get('id')
                 duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
@@ -75,10 +150,14 @@ class SchedulerEngine:
                         machine_to_intervals[machine_id] = []
                     machine_to_intervals[machine_id].append(interval_var)
             
+            # Log solver input
+            self.diagnostics.log_solver_input(valid_operations, machine_to_intervals, horizon)
+            
             # Add no-overlap constraints per machine
             for machine_id, intervals in machine_to_intervals.items():
                 if len(intervals) > 1:
                     model.add_no_overlap(intervals)
+                    logger.info(f"   ✓ Contrainte no-overlap ajoutée pour machine {machine_id}: {len(intervals)} opérations")
             
             # Add sequence constraints (operations of same order must be sequential)
             operations_by_order = {}
@@ -88,6 +167,7 @@ class SchedulerEngine:
                     operations_by_order[order_id] = []
                 operations_by_order[order_id].append(op)
             
+            sequence_constraints_count = 0
             for order_id, order_ops in operations_by_order.items():
                 # Sort by sequence
                 sorted_ops = sorted(order_ops, key=lambda x: x.get('sequence', 0))
@@ -96,24 +176,30 @@ class SchedulerEngine:
                     op2_id = sorted_ops[i + 1].get('id')
                     if op1_id in end_vars and op2_id in start_vars:
                         model.add(start_vars[op2_id] >= end_vars[op1_id])
+                        sequence_constraints_count += 1
+            
+            logger.info(f"   ✓ {sequence_constraints_count} contraintes de séquence ajoutées")
             
             # Objective: minimize makespan
-            makespan = model.new_int_var(0, horizon, 'makespan')
             if end_vars:
+                makespan = model.new_int_var(0, horizon, 'makespan')
                 model.add_max_equality(makespan, list(end_vars.values()))
                 model.minimize(makespan)
+                logger.info(f"   ✓ Objectif: minimiser makespan")
             
-            # Solve
+            # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
             solver.parameters.max_time_in_seconds = 60
             solver.parameters.num_search_workers = 4
             
+            logger.info("\\n🔄 Lancement du solveur OR-Tools CP-SAT...")
             status = solver.solve(model)
+            logger.info(f"✓ Solveur terminé")
             
             result = {
                 'status': self._get_status_string(status),
                 'operations': [],
-                'conflicts': [],
+                'conflicts': blocked_operations,
                 'solver_time': solver.wall_time,
                 'objective_value': solver.objective_value if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None
             }
@@ -134,22 +220,39 @@ class SchedulerEngine:
                             'end_time': end_time,
                             'start_date': self._minutes_to_datetime(start_time).isoformat(),
                             'end_date': self._minutes_to_datetime(end_time).isoformat(),
-                            'decision_reason': f'Assigned to machine {op.get("machine_id")}'
+                            'decision_reason': f'Assigné à machine {op.get("machine_id")}'
                         })
             
-            # Add blocked operations to conflicts
-            result['conflicts'].extend(blocked_operations)
+            # Log solver result
+            self.diagnostics.log_solver_result(
+                result['status'],
+                result['operations'],
+                result['conflicts'],
+                result['solver_time']
+            )
+            
+            # Add diagnostics to result
+            result['diagnostics'] = self.diagnostics.get_report()
             
             return result
             
         except Exception as e:
-            logger.error(f"Scheduling error: {str(e)}", exc_info=True)
-            return {
-                'status': 'ERROR',
-                'operations': [],
-                'conflicts': [{'error': str(e)}],
-                'solver_time': 0
-            }
+            logger.error(f"❌ Erreur d'ordonnancement: {str(e)}", exc_info=True)
+            if self.diagnostics:
+                return {
+                    'status': 'ERROR',
+                    'operations': [],
+                    'conflicts': [{'error': str(e)}],
+                    'solver_time': 0,
+                    'diagnostics': self.diagnostics.get_report()
+                }
+            else:
+                return {
+                    'status': 'ERROR',
+                    'operations': [],
+                    'conflicts': [{'error': str(e)}],
+                    'solver_time': 0
+                }
     
     def _get_status_string(self, status):
         status_map = {

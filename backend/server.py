@@ -16,6 +16,7 @@ import uuid
 from services.scheduler_engine import SchedulerEngine
 from services.material_checker import MaterialChecker
 from services.rules_engine import RulesEngine
+from services.demo_data import load_demo_data
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -291,9 +292,15 @@ async def import_stocks(file: UploadFile = File(...)):
         logger.error(f"Import error: {str(e)}")
         return ImportResult(success=False, message=str(e))
 
-# Scheduling endpoint
+# Scheduling endpoint with options
+class ScheduleRequestWithOptions(BaseModel):
+    scenario_id: Optional[str] = None
+    ignore_rules: bool = False
+    ignore_material: bool = False
+    debug_mode: bool = True
+
 @api_router.post("/scheduling/calculate")
-async def calculate_schedule(request: ScheduleRequest):
+async def calculate_schedule(request: ScheduleRequestWithOptions):
     try:
         scenario_id = request.scenario_id or str(uuid.uuid4())
         
@@ -311,13 +318,19 @@ async def calculate_schedule(request: ScheduleRequest):
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         
-        # Run scheduler
+        # Run scheduler with options
         engine = SchedulerEngine(db)
         material_checker = MaterialChecker(stocks)
         rules_engine = RulesEngine(rules)
         
+        options = {
+            'ignore_rules': request.ignore_rules,
+            'ignore_material': request.ignore_material,
+            'debug_mode': request.debug_mode
+        }
+        
         schedule_result = await engine.schedule(
-            orders, operations, machines, rules_engine, material_checker
+            orders, operations, machines, rules_engine, material_checker, options
         )
         
         # Save result
@@ -368,6 +381,16 @@ async def export_schedule(scenario_id: str):
         media_type='text/csv',
         filename=f'schedule_{scenario_id}.csv'
     )
+
+# Demo data endpoint
+@api_router.post("/demo/load")
+async def load_demo():
+    try:
+        result = await load_demo_data(db)
+        return result
+    except Exception as e:
+        logger.error(f"Demo data error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Dashboard stats
 @api_router.get("/dashboard/stats")
