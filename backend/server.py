@@ -101,13 +101,30 @@ class Scenario(BaseModel):
     schedule_data: Optional[Dict[str, Any]] = None
     status: str = "draft"  # draft, calculating, completed, error
 
-class ScheduleRequest(BaseModel):
+class ScheduleRequestWithOptions(BaseModel):
     scenario_id: Optional[str] = None
+    ignore_rules: bool = False
+    ignore_material: bool = False
+    debug_mode: bool = True
 
 class ImportResult(BaseModel):
     success: bool
     message: str
     records_imported: int = 0
+    previous_records: int = 0
+    duplicates_found: int = 0
+
+class DataStats(BaseModel):
+    manufacturing_orders: int
+    operations: int
+    articles: int
+    stocks: int
+    machines: int
+    work_centers: int
+    calendars: int
+    rules: int
+    scenarios: int
+    last_import: Optional[str] = None
 
 # Work Centers endpoints
 @api_router.post("/work-centers", response_model=WorkCenter)
@@ -227,78 +244,239 @@ async def get_scenario(scenario_id: str):
         raise HTTPException(status_code=404, detail="Scenario not found")
     return scenario
 
-# Import CSV endpoint
+# DATA MANAGEMENT - Reset and Stats
+@api_router.post("/data/reset")
+async def reset_operational_data():
+    """
+    Supprime toutes les données opérationnelles (ERP) mais conserve la configuration.
+    """
+    try:
+        # Count before deletion
+        orders_count = await db.manufacturing_orders.count_documents({})
+        operations_count = await db.operations.count_documents({})
+        articles_count = await db.articles.count_documents({})
+        stocks_count = await db.stocks.count_documents({})
+        scenarios_count = await db.scenarios.count_documents({})
+        
+        # Delete operational data
+        await db.manufacturing_orders.delete_many({})
+        await db.operations.delete_many({})
+        await db.articles.delete_many({})
+        await db.stocks.delete_many({})
+        await db.components.delete_many({})
+        await db.transactions.delete_many({})
+        await db.scenarios.delete_many({})
+        
+        logger.info("🗑️  Données opérationnelles supprimées")
+        logger.info(f"   - {orders_count} ordres de fabrication")
+        logger.info(f"   - {operations_count} opérations")
+        logger.info(f"   - {articles_count} articles")
+        logger.info(f"   - {stocks_count} stocks")
+        logger.info(f"   - {scenarios_count} scénarios")
+        
+        return {
+            "success": True,
+            "message": "Données opérationnelles supprimées",
+            "deleted": {
+                "orders": orders_count,
+                "operations": operations_count,
+                "articles": articles_count,
+                "stocks": stocks_count,
+                "scenarios": scenarios_count
+            }
+        }
+    except Exception as e:
+        logger.error(f"Reset error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/data/stats", response_model=DataStats)
+async def get_data_stats():
+    """
+    Retourne les statistiques des données chargées.
+    """
+    stats = DataStats(
+        manufacturing_orders=await db.manufacturing_orders.count_documents({}),
+        operations=await db.operations.count_documents({}),
+        articles=await db.articles.count_documents({}),
+        stocks=await db.stocks.count_documents({}),
+        machines=await db.machines.count_documents({}),
+        work_centers=await db.work_centers.count_documents({}),
+        calendars=await db.calendars.count_documents({}),
+        rules=await db.business_rules.count_documents({}),
+        scenarios=await db.scenarios.count_documents({})
+    )
+    
+    # Get last import timestamp (if available)
+    last_order = await db.manufacturing_orders.find_one({}, {"_id": 0}, sort=[("id", -1)])
+    if last_order:
+        stats.last_import = datetime.now(timezone.utc).isoformat()
+    
+    return stats
+
+# Import CSV endpoints with full replacement mode
 @api_router.post("/import/manufacturing-orders", response_model=ImportResult)
 async def import_manufacturing_orders(file: UploadFile = File(...)):
     try:
+        # Count existing records
+        previous_count = await db.manufacturing_orders.count_documents({})
+        
+        # Read CSV
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
+        # Check for duplicate IDs in file
+        if 'id' in df.columns:
+            duplicate_ids = df['id'].duplicated().sum()
+            if duplicate_ids > 0:
+                return ImportResult(
+                    success=False,
+                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
+                    duplicates_found=duplicate_ids
+                )
+        
+        # DELETE old data (full replacement mode)
+        await db.manufacturing_orders.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciens ordres supprimés")
+        
+        # Insert new data
         records = df.to_dict('records')
         for record in records:
-            record['id'] = str(record.get('id', uuid.uuid4()))
+            if 'id' not in record or pd.isna(record['id']):
+                record['id'] = str(uuid.uuid4())
+            else:
+                record['id'] = str(record['id'])
             await db.manufacturing_orders.insert_one(record)
         
-        return ImportResult(success=True, message="Import successful", records_imported=len(records))
+        logger.info(f"✅ {len(records)} nouveaux ordres importés")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} ordres (remplace {previous_count} anciens)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
     except Exception as e:
-        logger.error(f"Import error: {str(e)}")
+        logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
 @api_router.post("/import/operations", response_model=ImportResult)
 async def import_operations(file: UploadFile = File(...)):
     try:
+        previous_count = await db.operations.count_documents({})
+        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
+        # Check for duplicate IDs
+        if 'id' in df.columns:
+            duplicate_ids = df['id'].duplicated().sum()
+            if duplicate_ids > 0:
+                return ImportResult(
+                    success=False,
+                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
+                    duplicates_found=duplicate_ids
+                )
+        
+        # DELETE old data
+        await db.operations.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciennes opérations supprimées")
+        
+        # Insert new data
         records = df.to_dict('records')
         for record in records:
-            record['id'] = str(record.get('id', uuid.uuid4()))
+            if 'id' not in record or pd.isna(record['id']):
+                record['id'] = str(uuid.uuid4())
+            else:
+                record['id'] = str(record['id'])
             await db.operations.insert_one(record)
         
-        return ImportResult(success=True, message="Import successful", records_imported=len(records))
+        logger.info(f"✅ {len(records)} nouvelles opérations importées")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} opérations (remplace {previous_count} anciennes)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
     except Exception as e:
-        logger.error(f"Import error: {str(e)}")
+        logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
 @api_router.post("/import/articles", response_model=ImportResult)
 async def import_articles(file: UploadFile = File(...)):
     try:
+        previous_count = await db.articles.count_documents({})
+        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
+        # Check for duplicate IDs
+        if 'id' in df.columns:
+            duplicate_ids = df['id'].duplicated().sum()
+            if duplicate_ids > 0:
+                return ImportResult(
+                    success=False,
+                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
+                    duplicates_found=duplicate_ids
+                )
+        
+        # DELETE old data
+        await db.articles.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciens articles supprimés")
+        
+        # Insert new data
         records = df.to_dict('records')
         for record in records:
-            record['id'] = str(record.get('id', uuid.uuid4()))
+            if 'id' not in record or pd.isna(record['id']):
+                record['id'] = str(uuid.uuid4())
+            else:
+                record['id'] = str(record['id'])
             await db.articles.insert_one(record)
         
-        return ImportResult(success=True, message="Import successful", records_imported=len(records))
+        logger.info(f"✅ {len(records)} nouveaux articles importés")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} articles (remplace {previous_count} anciens)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
     except Exception as e:
-        logger.error(f"Import error: {str(e)}")
+        logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
 @api_router.post("/import/stocks", response_model=ImportResult)
 async def import_stocks(file: UploadFile = File(...)):
     try:
+        previous_count = await db.stocks.count_documents({})
+        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
+        # DELETE old data
+        await db.stocks.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciens stocks supprimés")
+        
+        # Insert new data
         records = df.to_dict('records')
         for record in records:
-            record['id'] = str(record.get('id', uuid.uuid4()))
+            if 'id' not in record or pd.isna(record.get('id')):
+                record['id'] = str(uuid.uuid4())
             await db.stocks.insert_one(record)
         
-        return ImportResult(success=True, message="Import successful", records_imported=len(records))
+        logger.info(f"✅ {len(records)} nouveaux stocks importés")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} stocks (remplace {previous_count} anciens)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
     except Exception as e:
-        logger.error(f"Import error: {str(e)}")
+        logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
 # Scheduling endpoint with options
-class ScheduleRequestWithOptions(BaseModel):
-    scenario_id: Optional[str] = None
-    ignore_rules: bool = False
-    ignore_material: bool = False
-    debug_mode: bool = True
-
 @api_router.post("/scheduling/calculate")
 async def calculate_schedule(request: ScheduleRequestWithOptions):
     try:
