@@ -180,12 +180,32 @@ class Scenario(BaseModel):
     status: str = "draft"
 
 class ScheduleRequestWithOptions(BaseModel):
+    """
+    Options avancées pour l'ordonnancement APS.
+    """
     scenario_id: Optional[str] = None
+    scenario_name: Optional[str] = None
+    
+    # Priorités (poids relatifs)
+    priority_mode: str = "due_date"  # "due_date", "material_availability", "balanced"
+    due_date_weight: int = 100        # Poids de la priorité date
+    material_weight: int = 50         # Poids de la disponibilité matière
+    setup_time_weight: int = 20       # Poids pour minimiser les changements de série
+    
+    # Contraintes à ignorer (debug)
     ignore_rules: bool = False
     ignore_material: bool = False
+    ignore_calendars: bool = False
+    
+    # Paramètres solveur
+    max_solver_time_seconds: int = 60
+    optimization_gap: float = 0.05    # Gap d'optimalité acceptable (5% par défaut)
+    
+    # Options avancées
     debug_mode: bool = True
     auto_assign_machines: bool = True
-    max_solver_time_seconds: int = 60  # Nouveau: temps maximum de calcul
+    allow_splitting: bool = False     # Permettre le fractionnement des opérations
+    respect_sequence: bool = True     # Respecter l'ordre des opérations dans l'OF
 
 class ImportResult(BaseModel):
     success: bool
@@ -199,6 +219,12 @@ class DataStats(BaseModel):
     operations: int
     articles: int
     stocks: int
+    machines: int = 0
+    work_centers: int = 0
+    calendars: int = 0
+    rules: int = 0
+    scenarios: int = 0
+    last_import: Optional[str] = None
 
 # ==================================================
 # MODÈLES APS - Advanced Planning & Scheduling
@@ -1431,21 +1457,32 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
         options = {
             'ignore_rules': request.ignore_rules,
             'ignore_material': request.ignore_material,
+            'ignore_calendars': request.ignore_calendars,
             'debug_mode': request.debug_mode,
             'auto_assign_machines': request.auto_assign_machines,
-            'max_solver_time_seconds': request.max_solver_time_seconds
+            'max_solver_time_seconds': request.max_solver_time_seconds,
+            'priority_mode': request.priority_mode,
+            'due_date_weight': request.due_date_weight,
+            'material_weight': request.material_weight,
+            'setup_time_weight': request.setup_time_weight,
+            'optimization_gap': request.optimization_gap,
+            'allow_splitting': request.allow_splitting,
+            'respect_sequence': request.respect_sequence
         }
         
         schedule_result = await engine.schedule(
             orders, operations, machines, rules_engine, material_checker, options
         )
         
+        # Sauvegarder les options utilisées dans le scénario
         await db.scenarios.update_one(
             {"id": scenario_id},
             {
                 "$set": {
                     "status": "completed",
-                    "schedule_data": schedule_result
+                    "schedule_data": schedule_result,
+                    "options": options,
+                    "name": request.scenario_name or f"Scénario {scenario_id[:8]}"
                 }
             },
             upsert=True

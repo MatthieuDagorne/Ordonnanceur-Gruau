@@ -1,0 +1,110 @@
+{
+  "summary": "Completed testing of APS Scheduling page refactoring. All 22 backend tests PASSED. All frontend UI tests PASSED. The page has been successfully refactored without demo mode and with new APS options.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/data/stats",
+        "issue": "DataStats model was missing fields (machines, work_centers, calendars, rules, scenarios, last_import). FIXED by adding missing fields to model."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scheduling_aps_options.py",
+    "/app/test_reports/pytest/pytest_scheduling_aps.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/server.py (fixed DataStats model - added missing fields)",
+    "/app/backend/tests/test_scheduling_aps_options.py (new test file)"
+  ],
+  "success_rate": {
+    "backend": "100% (22/22 tests passed)",
+    "frontend": "100% (all UI features verified)"
+  },
+  "seed_data_creation": "None required - used existing test data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Page Ordonnancement APS fully tested with new features: priority modes, weight sliders, solver parameters, advanced options. All working correctly.",
+  "features_verified": {
+    "1_no_demo_button": "PASS - No 'Charger Données Demo' button found on the page",
+    "2_priority_modes": "PASS - 3 priority modes available: due_date, material_availability, balanced",
+    "3_balanced_mode_sliders": "PASS - Balanced mode shows 3 weight sliders (Date de besoin, Disponibilité matière, Minimiser temps de setup) with values 0-100",
+    "4_solver_time_dropdown": "PASS - Dropdown with 5 options: 30s, 1min, 2min, 5min, 10min",
+    "5_optimization_gap_slider": "PASS - Slider range 1-20%",
+    "6_advanced_options_collapsible": "PASS - Options Avancées section is collapsible",
+    "7_ignore_constraints_checkboxes": "PASS - 3 checkboxes: Ignorer les règles métier, Ignorer la disponibilité matière, Ignorer les calendriers machines",
+    "8_api_accepts_all_options": "PASS - POST /api/scheduling/calculate accepts priority_mode, due_date_weight, material_weight, setup_time_weight, ignore_rules, ignore_material, ignore_calendars, max_solver_time_seconds, optimization_gap, respect_sequence",
+    "9_visual_constraint_indicators": "PASS - Contraintes Appliquées section shows visual indicators with green checkmarks for active and strikethrough for ignored"
+  },
+  "backend_tests": {
+    "TestSchedulingAPIEndpoint": {
+      "test_scheduling_accepts_priority_mode_due_date": "PASS",
+      "test_scheduling_accepts_priority_mode_material_availability": "PASS",
+      "test_scheduling_accepts_priority_mode_balanced": "PASS"
+    },
+    "TestSchedulingWeightSliders": {
+      "test_scheduling_accepts_due_date_weight": "PASS",
+      "test_scheduling_accepts_material_weight": "PASS",
+      "test_scheduling_accepts_setup_time_weight": "PASS",
+      "test_scheduling_accepts_all_weights_together": "PASS"
+    },
+    "TestSchedulingSolverParameters": {
+      "test_scheduling_accepts_max_solver_time_30s": "PASS",
+      "test_scheduling_accepts_max_solver_time_60s": "PASS",
+      "test_scheduling_accepts_max_solver_time_120s": "PASS",
+      "test_scheduling_accepts_max_solver_time_300s": "PASS",
+      "test_scheduling_accepts_max_solver_time_600s": "PASS",
+      "test_scheduling_accepts_optimization_gap": "PASS",
+      "test_scheduling_accepts_optimization_gap_range": "PASS"
+    },
+    "TestSchedulingAdvancedOptions": {
+      "test_scheduling_accepts_ignore_rules": "PASS",
+      "test_scheduling_accepts_ignore_material": "PASS",
+      "test_scheduling_accepts_ignore_calendars": "PASS",
+      "test_scheduling_accepts_respect_sequence": "PASS"
+    },
+    "TestSchedulingFullConfiguration": {
+      "test_scheduling_full_configuration": "PASS",
+      "test_scheduling_result_contains_diagnostics": "PASS"
+    },
+    "TestDataStatsEndpoint": {
+      "test_data_stats_returns_200": "PASS",
+      "test_data_stats_returns_required_fields": "PASS"
+    }
+  },
+  "frontend_tests": {
+    "Scheduling_page_elements": {
+      "scenario_name_input": "PASS - data-testid='scenario-name-input' found",
+      "priority_mode_due_date": "PASS - data-testid='priority-mode-due_date' found",
+      "priority_mode_material": "PASS - data-testid='priority-mode-material_availability' found",
+      "priority_mode_balanced": "PASS - data-testid='priority-mode-balanced' found",
+      "max_solver_time_dropdown": "PASS - data-testid='max-solver-time' found with 5 options",
+      "optimization_gap_slider": "PASS - data-testid='optimization-gap' found (range 1-20)",
+      "advanced_options_toggle": "PASS - data-testid='advanced-options-toggle' found",
+      "calculate_button": "PASS - data-testid='calculate-schedule-btn' found"
+    },
+    "Balanced_mode_sliders": {
+      "due_date_weight": "PASS - data-testid='due-date-weight' visible in balanced mode",
+      "material_weight": "PASS - data-testid='material-weight' visible in balanced mode",
+      "setup_weight": "PASS - data-testid='setup-weight' visible in balanced mode"
+    },
+    "Advanced_options_checkboxes": {
+      "ignore_rules": "PASS - data-testid='ignore-rules-checkbox' found",
+      "ignore_material": "PASS - data-testid='ignore-material-checkbox' found",
+      "ignore_calendars": "PASS - data-testid='ignore-calendars-checkbox' found",
+      "respect_sequence": "PASS - data-testid='respect-sequence-checkbox' found"
+    }
+  },
+  "bug_fixed": {
+    "issue": "DataStats model missing fields causing 500 error on /api/data/stats",
+    "root_cause": "DataStats Pydantic model defined only 4 fields but get_data_stats() function used 9 fields including last_import",
+    "fix": "Added missing fields to DataStats model: machines, work_centers, calendars, rules, scenarios, last_import (Optional)"
+  }
+}
