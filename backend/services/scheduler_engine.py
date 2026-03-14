@@ -103,13 +103,12 @@ class SchedulerEngine:
                 
                 # Vérification règles métier (si non ignorées)
                 if is_valid and not ignore_rules and machine_id:
-                    operation_code = str(op.get('operation_number', ''))
-                    allowed, reason, penalty = rules_engine.is_operation_allowed_on_machine(
-                        operation_code, machine_id
+                    allowed, reasons, penalty = rules_engine.evaluate_machine_for_operation(
+                        op, machine_id
                     )
                     if not allowed:
                         is_valid = False
-                        blocking_reason = f'Règle métier: {reason}'
+                        blocking_reason = f'Règle métier: {", ".join(reasons)}'
                 
                 if is_valid:
                     valid_operations.append(op)

@@ -64,31 +64,26 @@ class MachineUnavailability(BaseModel):
 
 class BusinessRule(BaseModel):
     """
-    Règles métier basées sur task_id et work_center_id.
+    Règles métier simplifiées pour le POC.
+    Types: ALLOW, FORBID, PREFER
     """
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    rule_type: str
-    is_hard: bool = Field(default=True)
     
-    # Critères de ciblage
+    # Critères de ciblage (au moins task_id ou work_center_id requis)
     task_id: Optional[str] = None
     work_center_id: Optional[str] = None
-    machine_id: Optional[str] = None
     article_id: Optional[str] = None
     
-    # Condition
-    condition_operator: str = Field(default="equals")
-    condition_value: Optional[str] = None
+    # Type de règle: ALLOW, FORBID, PREFER
+    rule_type: str
     
-    # Action
-    action_type: str
-    action_value: Optional[str] = None
+    # Machine cible (obligatoire)
+    machine_id: str
     
     # État
     active: bool = Field(default=True)
-    description: Optional[str] = None
 
 class ManufacturingOrder(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -245,10 +240,43 @@ async def create_rule(rule: BusinessRule):
     await db.business_rules.insert_one(doc)
     return rule
 
-@api_router.get("/rules", response_model=List[BusinessRule])
+@api_router.get("/rules")
 async def get_rules():
+    """Retourne toutes les règles métier (format simplifié POC)."""
     rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
-    return rules
+    # Filtrer pour ne garder que les règles conformes au nouveau format
+    valid_rules = []
+    for rule in rules:
+        # Vérifier que les champs obligatoires sont présents
+        if rule.get('name') and rule.get('machine_id') and rule.get('rule_type'):
+            # Normaliser rule_type en majuscules
+            rule_type = rule.get('rule_type', '').upper()
+            
+            # Convertir les anciens types vers le nouveau format
+            if rule_type not in ['ALLOW', 'FORBID', 'PREFER']:
+                if rule_type in ['COMPATIBILITY', 'MACHINE_OPERATION', 'TASK_WORKCENTER']:
+                    if rule.get('allowed') is False:
+                        rule_type = 'FORBID'
+                    else:
+                        rule_type = 'ALLOW'
+                elif rule_type == 'PROHIBITION':
+                    rule_type = 'FORBID'
+                elif rule_type == 'PREFERENCE':
+                    rule_type = 'PREFER'
+                else:
+                    rule_type = 'ALLOW'  # Valeur par défaut
+            
+            valid_rules.append({
+                'id': rule.get('id'),
+                'name': rule.get('name'),
+                'task_id': rule.get('task_id'),
+                'work_center_id': rule.get('work_center_id'),
+                'article_id': rule.get('article_id'),
+                'rule_type': rule_type,
+                'machine_id': rule.get('machine_id'),
+                'active': rule.get('active', True)
+            })
+    return valid_rules
 
 @api_router.delete("/rules/{rule_id}")
 async def delete_rule(rule_id: str):
@@ -257,14 +285,22 @@ async def delete_rule(rule_id: str):
         raise HTTPException(status_code=404, detail="Rule not found")
     return {"message": "Deleted successfully"}
 
+@api_router.delete("/rules")
+async def delete_all_rules():
+    """Supprime toutes les règles métier (utile pour nettoyer les anciennes données)."""
+    result = await db.business_rules.delete_many({})
+    return {"message": f"{result.deleted_count} règle(s) supprimée(s)"}
+
 # Manufacturing Orders endpoints
-@api_router.get("/manufacturing-orders", response_model=List[ManufacturingOrder])
+@api_router.get("/manufacturing-orders")
 async def get_manufacturing_orders():
+    """Retourne tous les ordres de fabrication."""
     orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
     return orders
 
-@api_router.get("/operations", response_model=List[Operation])
+@api_router.get("/operations")
 async def get_operations():
+    """Retourne toutes les opérations."""
     operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
     return operations
 
