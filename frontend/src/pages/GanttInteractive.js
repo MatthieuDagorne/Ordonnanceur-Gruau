@@ -1,0 +1,405 @@
+import { useEffect, useState, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package } from 'lucide-react';
+import { toast } from 'sonner';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = `${BACKEND_URL}/api`;
+
+export default function GanttInteractive() {
+  const { scenarioId } = useParams();
+  const navigate = useNavigate();
+  const [ganttData, setGanttData] = useState(null);
+  const [scenario, setScenario] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [zoom, setZoom] = useState(1); // 1 = 1 minute = 2px
+  const [hoveredTask, setHoveredTask] = useState(null);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    fetchData();
+  }, [scenarioId]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [ganttRes, scenarioRes] = await Promise.all([
+        axios.get(`${API}/gantt/data/${scenarioId}`),
+        axios.get(`${API}/scenarios/${scenarioId}`)
+      ]);
+      setGanttData(ganttRes.data);
+      setScenario(scenarioRes.data);
+    } catch (error) {
+      console.error('Error:', error);
+      toast.error('Erreur de chargement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const response = await axios.get(`${API}/export/schedule/${scenarioId}`, {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `schedule_${scenarioId}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success('Export réussi');
+    } catch (error) {
+      toast.error("Erreur lors de l'export");
+    }
+  };
+
+  const formatTime = (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h${mins.toString().padStart(2, '0')}`;
+  };
+
+  const formatDateTime = (isoString) => {
+    if (!isoString) return '-';
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return isoString;
+    }
+  };
+
+  // Calcul des positions et dimensions
+  const pixelsPerMinute = 2 * zoom;
+  const rowHeight = 48;
+  const headerHeight = 60;
+  const sidebarWidth = 160;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: 'var(--brand-primary)' }} />
+      </div>
+    );
+  }
+
+  if (!ganttData || !ganttData.machines) {
+    return (
+      <div className="flex items-center justify-center h-96" style={{ color: 'var(--text-muted)' }}>
+        Données non disponibles
+      </div>
+    );
+  }
+
+  const { machines, time_range, total_tasks, scheduling_start } = ganttData;
+  const totalWidth = (time_range?.total_minutes || 480) * pixelsPerMinute;
+
+  // Générer les marqueurs de temps
+  const timeMarkers = [];
+  const markerInterval = zoom >= 1 ? 60 : 120; // 1h ou 2h
+  for (let m = 0; m <= (time_range?.total_minutes || 480); m += markerInterval) {
+    timeMarkers.push(m);
+  }
+
+  return (
+    <div className="space-y-4" data-testid="gantt-interactive">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/scenarios')}
+            className="inline-flex items-center gap-2 transition-colors hover:opacity-80"
+            style={{ color: 'var(--text-secondary)' }}
+            data-testid="back-btn"
+          >
+            <ArrowLeft size={16} />
+            Retour
+          </button>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            {ganttData.scenario_name || 'Planning Gantt'}
+          </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setZoom(Math.max(0.5, zoom - 0.25))}
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+            title="Zoom -"
+          >
+            <ZoomOut size={16} />
+          </button>
+          <span className="text-sm font-mono px-2" style={{ color: 'var(--text-secondary)' }}>
+            {(zoom * 100).toFixed(0)}%
+          </span>
+          <button
+            onClick={() => setZoom(Math.min(3, zoom + 0.25))}
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+            title="Zoom +"
+          >
+            <ZoomIn size={16} />
+          </button>
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
+            data-testid="export-btn"
+          >
+            <Download size={16} />
+            Exporter
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Package size={16} style={{ color: 'var(--brand-primary)' }} />
+            <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Opérations</span>
+          </div>
+          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>{total_tasks}</p>
+        </div>
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Clock size={16} style={{ color: 'var(--status-info)' }} />
+            <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Durée totale</span>
+          </div>
+          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+            {formatTime(time_range?.total_minutes || 0)}
+          </p>
+        </div>
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Machines</span>
+          </div>
+          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>{machines.length}</p>
+        </div>
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Statut</span>
+          </div>
+          <p className="text-lg font-bold" style={{ color: ganttData.status === 'OPTIMAL' ? 'var(--status-success)' : 'var(--status-info)' }}>
+            {ganttData.status}
+          </p>
+        </div>
+      </div>
+
+      {/* Gantt Chart */}
+      <div 
+        className="rounded-lg overflow-hidden"
+        style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+        data-testid="gantt-chart"
+      >
+        <div className="overflow-x-auto" ref={containerRef}>
+          <div style={{ minWidth: sidebarWidth + totalWidth + 40 }}>
+            {/* Timeline Header */}
+            <div className="flex" style={{ height: headerHeight, borderBottom: '1px solid var(--border-default)' }}>
+              <div 
+                className="flex-shrink-0 flex items-center justify-center font-semibold text-sm"
+                style={{ width: sidebarWidth, backgroundColor: 'var(--bg-sunken)', color: 'var(--text-muted)', borderRight: '1px solid var(--border-default)' }}
+              >
+                Machine
+              </div>
+              <div className="relative flex-1" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                {timeMarkers.map(minute => (
+                  <div
+                    key={minute}
+                    className="absolute top-0 bottom-0 flex items-center"
+                    style={{ 
+                      left: minute * pixelsPerMinute,
+                      borderLeft: '1px solid var(--border-default)'
+                    }}
+                  >
+                    <span className="ml-1 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                      +{formatTime(minute)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Machine Rows */}
+            {machines.map((machine, idx) => (
+              <div 
+                key={machine.machine_id}
+                className="flex"
+                style={{ 
+                  height: rowHeight,
+                  backgroundColor: idx % 2 === 0 ? 'var(--bg-elevated)' : 'var(--bg-sunken)',
+                  borderBottom: '1px solid var(--border-default)'
+                }}
+              >
+                {/* Machine Label */}
+                <div 
+                  className="flex-shrink-0 flex items-center px-3 gap-2"
+                  style={{ 
+                    width: sidebarWidth, 
+                    borderRight: '1px solid var(--border-default)'
+                  }}
+                >
+                  <div 
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: machine.color }}
+                  />
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      {machine.machine_id}
+                    </p>
+                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                      {machine.tasks?.length || 0} ops
+                    </p>
+                  </div>
+                </div>
+
+                {/* Tasks */}
+                <div className="relative flex-1">
+                  {/* Grid lines */}
+                  {timeMarkers.map(minute => (
+                    <div
+                      key={minute}
+                      className="absolute top-0 bottom-0"
+                      style={{ 
+                        left: minute * pixelsPerMinute,
+                        borderLeft: '1px dashed var(--border-default)',
+                        opacity: 0.5
+                      }}
+                    />
+                  ))}
+                  
+                  {/* Task bars */}
+                  {machine.tasks?.map(task => {
+                    const left = (task.start_minutes - (time_range?.min_minutes || 0)) * pixelsPerMinute;
+                    const width = Math.max(task.duration_minutes * pixelsPerMinute, 20);
+                    
+                    return (
+                      <div
+                        key={task.id}
+                        className="absolute top-1 bottom-1 rounded cursor-pointer transition-all hover:brightness-110"
+                        style={{
+                          left: left,
+                          width: width,
+                          backgroundColor: task.is_late ? '#EF4444' : task.color,
+                          border: task.is_late ? '2px solid #B91C1C' : 'none'
+                        }}
+                        onMouseEnter={() => setHoveredTask(task)}
+                        onMouseLeave={() => setHoveredTask(null)}
+                        data-testid={`task-${task.id}`}
+                      >
+                        <div className="px-1 py-0.5 text-white text-xs font-medium truncate h-full flex items-center">
+                          {width > 60 ? task.operation_id : ''}
+                        </div>
+                        {task.is_late && (
+                          <AlertCircle size={12} className="absolute top-0.5 right-0.5 text-white" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {hoveredTask && (
+        <div 
+          className="fixed z-50 p-3 rounded-lg shadow-lg max-w-xs"
+          style={{ 
+            backgroundColor: 'var(--bg-elevated)', 
+            border: '1px solid var(--border-default)',
+            top: '50%',
+            right: 20,
+            transform: 'translateY(-50%)'
+          }}
+        >
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded" style={{ backgroundColor: hoveredTask.color }} />
+              <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
+                {hoveredTask.operation_id}
+              </span>
+              {hoveredTask.is_late && (
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
+                  EN RETARD
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <span style={{ color: 'var(--text-muted)' }}>Ordre:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.order_id}</span>
+              
+              <span style={{ color: 'var(--text-muted)' }}>Article:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.article_id || '-'}</span>
+              
+              <span style={{ color: 'var(--text-muted)' }}>Début:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{formatDateTime(hoveredTask.start)}</span>
+              
+              <span style={{ color: 'var(--text-muted)' }}>Fin:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{formatDateTime(hoveredTask.end)}</span>
+              
+              <span style={{ color: 'var(--text-muted)' }}>Durée:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.duration_minutes} min</span>
+              
+              {hoveredTask.due_date && (
+                <>
+                  <span style={{ color: 'var(--text-muted)' }}>Besoin:</span>
+                  <span className="font-mono" style={{ color: hoveredTask.is_late ? 'var(--status-error)' : 'var(--text-primary)' }}>
+                    {formatDateTime(hoveredTask.due_date)}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Légende */}
+      <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Légende des couleurs</h3>
+        <div className="flex flex-wrap gap-4 text-sm">
+          {machines.map(m => (
+            <div key={m.machine_id} className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded" style={{ backgroundColor: m.color }} />
+              <span style={{ color: 'var(--text-secondary)' }}>{m.machine_id}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 ml-4 pl-4" style={{ borderLeft: '1px solid var(--border-default)' }}>
+            <div className="w-4 h-4 rounded bg-red-500 border-2 border-red-700" />
+            <span style={{ color: 'var(--text-secondary)' }}>En retard</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Conflicts Warning */}
+      {scenario?.schedule_data?.conflicts?.length > 0 && (
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)' }}>
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} style={{ color: 'var(--status-warning)' }} />
+            <div>
+              <h4 className="font-semibold" style={{ color: 'var(--status-warning)' }}>
+                {scenario.schedule_data.conflicts.length} Conflit(s) détecté(s)
+              </h4>
+              <ul className="mt-2 space-y-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                {scenario.schedule_data.conflicts.slice(0, 5).map((c, idx) => (
+                  <li key={idx} className="font-mono">
+                    {c.operation_id ? `Op ${c.operation_id}: ${c.reason}` : JSON.stringify(c)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

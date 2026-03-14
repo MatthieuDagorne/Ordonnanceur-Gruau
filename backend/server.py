@@ -1019,6 +1019,103 @@ async def get_scenarios():
     scenarios = await db.scenarios.find({}, {"_id": 0}).to_list(1000)
     return scenarios
 
+# IMPORTANT: Cette route doit être AVANT /scenarios/{scenario_id}
+@api_router.get("/scenarios/compare")
+async def compare_scenarios_inline(ids: str):
+    """Compare plusieurs scénarios par leurs IDs (séparés par des virgules)."""
+    try:
+        scenario_ids = [s.strip() for s in ids.split(',') if s.strip()]
+        
+        if len(scenario_ids) < 2:
+            raise HTTPException(status_code=400, detail="Au moins 2 scénarios requis")
+        
+        scenarios = []
+        for sid in scenario_ids:
+            scenario = await db.scenarios.find_one({"id": sid}, {"_id": 0})
+            if scenario:
+                scenarios.append(scenario)
+        
+        if len(scenarios) < 2:
+            raise HTTPException(status_code=404, detail="Scénarios introuvables")
+        
+        comparison = []
+        for scenario in scenarios:
+            schedule_data = scenario.get('schedule_data', {})
+            operations = schedule_data.get('operations', [])
+            conflicts = schedule_data.get('conflicts', [])
+            
+            total_ops = len(operations)
+            total_conflicts = len(conflicts)
+            
+            if operations:
+                min_start = min(op.get('start_minutes', 0) for op in operations)
+                max_end = max(op.get('end_minutes', 0) for op in operations)
+                makespan = max_end - min_start
+            else:
+                makespan = 0
+            
+            machine_usage = {}
+            for op in operations:
+                machine_id = op.get('machine_id')
+                duration = op.get('duration_minutes', 0)
+                if machine_id:
+                    machine_usage[machine_id] = machine_usage.get(machine_id, 0) + duration
+            
+            late_count = 0
+            for op in operations:
+                end_dt = op.get('end_datetime')
+                due_date = op.get('date_besoin')
+                if end_dt and due_date:
+                    try:
+                        end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
+                        due = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                        if end > due:
+                            late_count += 1
+                    except:
+                        pass
+            
+            comparison.append({
+                'scenario_id': scenario.get('id'),
+                'scenario_name': scenario.get('name'),
+                'status': schedule_data.get('status'),
+                'created_at': scenario.get('created_at'),
+                'metrics': {
+                    'operations_scheduled': total_ops,
+                    'conflicts': total_conflicts,
+                    'makespan_minutes': makespan,
+                    'makespan_hours': round(makespan / 60, 2),
+                    'late_operations': late_count,
+                    'machines_used': len(machine_usage),
+                    'solver_time': schedule_data.get('solver_time', 0)
+                }
+            })
+        
+        best = {
+            'least_conflicts': min(comparison, key=lambda x: x['metrics']['conflicts'])['scenario_id'],
+            'shortest_makespan': min(comparison, key=lambda x: x['metrics']['makespan_minutes'])['scenario_id'],
+            'least_late': min(comparison, key=lambda x: x['metrics']['late_operations'])['scenario_id'],
+            'fastest_solve': min(comparison, key=lambda x: x['metrics']['solver_time'])['scenario_id']
+        }
+        
+        return {
+            'scenarios': comparison,
+            'best': best,
+            'comparison_count': len(comparison)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error comparing scenarios: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/scenarios/{scenario_id}")
+async def delete_scenario_inline(scenario_id: str):
+    """Supprime un scénario par son ID."""
+    result = await db.scenarios.delete_one({"id": scenario_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Scénario non trouvé")
+    return {"status": "deleted", "id": scenario_id}
+
 @api_router.get("/scenarios/{scenario_id}", response_model=Scenario)
 async def get_scenario(scenario_id: str):
     scenario = await db.scenarios.find_one({"id": scenario_id}, {"_id": 0})
@@ -1723,6 +1820,413 @@ async def get_dashboard_stats():
         "late_orders": late_orders,
         "total_machines": total_machines
     }
+
+# ============================================
+# NOUVEAUX ENDPOINTS P1/P2
+# ============================================
+
+# Vue matricielle des compatibilités Machine/Tâche
+@api_router.get("/matrix/machine-task")
+async def get_machine_task_matrix():
+    """
+    Génère une vue matricielle des compatibilités entre machines et tâches.
+    Utilise les règles métier pour déterminer les autorisations/interdictions.
+    """
+    try:
+        machines = await db.machines.find({}, {"_id": 0}).to_list(100)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        rules = await db.business_rules.find({"active": True}, {"_id": 0}).to_list(1000)
+        centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(100)
+        
+        # Extraire les tâches uniques
+        taches_set = set()
+        for op in operations:
+            tache_id = op.get('tache_id')
+            if tache_id:
+                taches_set.add(tache_id)
+        taches = sorted(list(taches_set))
+        
+        # Index des machines par centre
+        machines_by_centre = {}
+        for machine in machines:
+            centre_id = machine.get('centre_de_charge_id')
+            if centre_id:
+                if centre_id not in machines_by_centre:
+                    machines_by_centre[centre_id] = []
+                machines_by_centre[centre_id].append(machine.get('id'))
+        
+        # Construire la matrice
+        matrix = []
+        for machine in machines:
+            machine_id = machine.get('id')
+            machine_centre = machine.get('centre_de_charge_id')
+            
+            row = {
+                'machine_id': machine_id,
+                'machine_name': machine.get('nom', machine_id),
+                'centre_id': machine_centre,
+                'compatibilities': {}
+            }
+            
+            for tache_id in taches:
+                # Déterminer le statut de compatibilité
+                status = 'unknown'  # Par défaut
+                rule_applied = None
+                
+                # Vérifier les règles
+                for rule in rules:
+                    rule_tache = rule.get('tache_id')
+                    rule_machine = rule.get('machine_id')
+                    rule_type = rule.get('rule_type')
+                    
+                    # Règle qui s'applique à cette tâche et cette machine
+                    if rule_machine == machine_id:
+                        if rule_tache == tache_id or rule_tache is None:
+                            if rule_type == 'FORBID':
+                                status = 'forbidden'
+                                rule_applied = rule.get('name')
+                            elif rule_type == 'ALLOW':
+                                status = 'allowed'
+                                rule_applied = rule.get('name')
+                            elif rule_type == 'PREFER':
+                                status = 'preferred'
+                                rule_applied = rule.get('name')
+                
+                # Si pas de règle spécifique, vérifier si la machine est dans le bon centre
+                if status == 'unknown':
+                    # Chercher les opérations avec cette tâche pour connaître leur centre
+                    for op in operations:
+                        if op.get('tache_id') == tache_id:
+                            op_centre = op.get('centre_de_charge_id')
+                            if op_centre and op_centre == machine_centre:
+                                status = 'compatible'
+                            elif op_centre:
+                                status = 'incompatible'
+                            break
+                
+                row['compatibilities'][tache_id] = {
+                    'status': status,
+                    'rule': rule_applied
+                }
+            
+            matrix.append(row)
+        
+        return {
+            'machines': [m.get('id') for m in machines],
+            'taches': taches,
+            'matrix': matrix,
+            'rules_count': len(rules)
+        }
+    except Exception as e:
+        logger.error(f"Error generating matrix: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Données Gantt enrichies
+@api_router.get("/gantt/data/{scenario_id}")
+async def get_gantt_data(scenario_id: str):
+    """
+    Retourne les données formatées pour l'affichage Gantt interactif.
+    Inclut les informations sur les machines, les plages horaires et les dépendances.
+    """
+    try:
+        scenario = await db.scenarios.find_one({"id": scenario_id}, {"_id": 0})
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scénario non trouvé")
+        
+        schedule_data = scenario.get('schedule_data', {})
+        operations = schedule_data.get('operations', [])
+        
+        # Charger les machines pour les couleurs et noms
+        machines = await db.machines.find({}, {"_id": 0}).to_list(100)
+        machines_dict = {m.get('id'): m for m in machines}
+        
+        # Charger les ordres pour les infos supplémentaires
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        orders_dict = {o.get('id'): o for o in orders}
+        
+        # Couleurs par machine
+        colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
+        machine_colors = {}
+        for i, m in enumerate(machines):
+            machine_colors[m.get('id')] = colors[i % len(colors)]
+        
+        # Formater les tâches pour le Gantt
+        gantt_tasks = []
+        for op in operations:
+            machine_id = op.get('machine_id')
+            order_id = op.get('order_id')
+            order = orders_dict.get(order_id, {})
+            machine = machines_dict.get(machine_id, {})
+            
+            # Calculer si en retard
+            is_late = False
+            due_date = op.get('date_besoin')
+            end_dt = op.get('end_datetime')
+            if due_date and end_dt:
+                try:
+                    due = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                    end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
+                    is_late = end > due
+                except:
+                    pass
+            
+            gantt_tasks.append({
+                'id': op.get('operation_id'),
+                'operation_id': op.get('operation_id'),
+                'order_id': order_id,
+                'article_id': op.get('article_id') or order.get('article_id'),
+                'machine_id': machine_id,
+                'machine_name': machine.get('nom', machine_id),
+                'start': op.get('start_datetime'),
+                'end': op.get('end_datetime'),
+                'start_minutes': op.get('start_minutes', 0),
+                'end_minutes': op.get('end_minutes', 0),
+                'duration_minutes': op.get('duration_minutes', 0),
+                'due_date': due_date,
+                'is_late': is_late,
+                'color': machine_colors.get(machine_id, '#6B7280')
+            })
+        
+        # Grouper par machine
+        by_machine = {}
+        for task in gantt_tasks:
+            mid = task['machine_id']
+            if mid not in by_machine:
+                by_machine[mid] = {
+                    'machine_id': mid,
+                    'machine_name': task['machine_name'],
+                    'color': task['color'],
+                    'tasks': []
+                }
+            by_machine[mid]['tasks'].append(task)
+        
+        # Trier les tâches par heure de début
+        for mid in by_machine:
+            by_machine[mid]['tasks'].sort(key=lambda x: x['start_minutes'])
+        
+        # Calculer l'échelle de temps
+        if gantt_tasks:
+            min_start = min(t['start_minutes'] for t in gantt_tasks)
+            max_end = max(t['end_minutes'] for t in gantt_tasks)
+            scheduling_start = schedule_data.get('scheduling_start')
+        else:
+            min_start = 0
+            max_end = 0
+            scheduling_start = datetime.now().isoformat()
+        
+        return {
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name'),
+            'status': schedule_data.get('status'),
+            'scheduling_start': scheduling_start,
+            'time_range': {
+                'min_minutes': min_start,
+                'max_minutes': max_end,
+                'total_minutes': max_end - min_start
+            },
+            'machines': list(by_machine.values()),
+            'total_tasks': len(gantt_tasks),
+            'machine_colors': machine_colors
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting gantt data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Stock projeté amélioré avec dates ordonnancées
+@api_router.get("/projected-stock/advanced")
+async def get_projected_stock_advanced():
+    """
+    Calcul avancé du stock projeté utilisant les dates de début d'opération
+    issues du dernier ordonnancement plutôt que les dates besoin.
+    """
+    try:
+        # Charger toutes les données nécessaires
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+        planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        
+        # Récupérer le dernier scénario d'ordonnancement
+        last_scenario = await db.scenarios.find_one(
+            {"status": "completed"},
+            {"_id": 0},
+            sort=[("created_at", -1)]
+        )
+        
+        scheduled_ops = {}
+        if last_scenario and last_scenario.get('schedule_data', {}).get('operations'):
+            for op in last_scenario['schedule_data']['operations']:
+                op_id = op.get('operation_id')
+                if op_id:
+                    scheduled_ops[op_id] = {
+                        'start_datetime': op.get('start_datetime'),
+                        'end_datetime': op.get('end_datetime'),
+                        'machine_id': op.get('machine_id')
+                    }
+        
+        # Index des ordres et opérations
+        orders_dict = {o.get('id'): o for o in orders}
+        ops_by_id = {o.get('id'): o for o in operations}
+        
+        # Calculer les consommations avec dates ordonnancées
+        consumptions_by_article = {}
+        
+        for mat in operation_materials:
+            op_id = mat.get('operation_id')
+            article_id = mat.get('article_id')
+            quantity = mat.get('quantity', 0)
+            
+            if not article_id or not quantity:
+                continue
+            
+            # Déterminer la date de consommation
+            consumption_date = None
+            is_scheduled = False
+            
+            # Priorité 1: Date de l'opération ordonnancée
+            if op_id in scheduled_ops:
+                consumption_date = scheduled_ops[op_id].get('start_datetime')
+                is_scheduled = True
+            
+            # Priorité 2: Date besoin de l'ordre
+            if not consumption_date:
+                op = ops_by_id.get(op_id, {})
+                order_id = op.get('order_id')
+                if order_id:
+                    order = orders_dict.get(order_id, {})
+                    consumption_date = order.get('due_date')
+            
+            if not consumption_date:
+                consumption_date = datetime.now().isoformat()
+            
+            if article_id not in consumptions_by_article:
+                consumptions_by_article[article_id] = []
+            
+            consumptions_by_article[article_id].append({
+                'operation_id': op_id,
+                'quantity': quantity,
+                'consumption_datetime': consumption_date,
+                'is_scheduled': is_scheduled
+            })
+        
+        # Index des réceptions
+        receipts_by_article = {}
+        for rec in planned_receipts:
+            article_id = rec.get('article_id')
+            if article_id:
+                if article_id not in receipts_by_article:
+                    receipts_by_article[article_id] = []
+                receipts_by_article[article_id].append({
+                    'quantity': rec.get('quantity', 0),
+                    'planned_date': rec.get('planned_date')
+                })
+        
+        # Index des stocks
+        stock_by_article = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
+        
+        # Calculer le stock projeté
+        all_articles = set(stock_by_article.keys()) | set(consumptions_by_article.keys()) | set(receipts_by_article.keys())
+        all_articles = {a for a in all_articles if a is not None}
+        
+        projected_stock = []
+        consumption_details = []
+        
+        for article_id in sorted(all_articles, key=lambda x: str(x)):
+            initial_stock = stock_by_article.get(article_id, 0)
+            consumptions = consumptions_by_article.get(article_id, [])
+            receipts = receipts_by_article.get(article_id, [])
+            
+            total_consumption = sum(c['quantity'] for c in consumptions)
+            total_receipts = sum(r['quantity'] for r in receipts)
+            final_stock = initial_stock + total_receipts - total_consumption
+            
+            # Calculer la timeline et détecter les ruptures
+            events = []
+            for cons in consumptions:
+                events.append({
+                    'datetime': cons.get('consumption_datetime'),
+                    'type': 'consumption',
+                    'quantity': -cons.get('quantity', 0),
+                    'operation_id': cons.get('operation_id'),
+                    'is_scheduled': cons.get('is_scheduled', False)
+                })
+                consumption_details.append({
+                    'article_id': article_id,
+                    'operation_id': cons.get('operation_id'),
+                    'quantity': cons.get('quantity', 0),
+                    'consumption_datetime': cons.get('consumption_datetime'),
+                    'is_scheduled': cons.get('is_scheduled', False)
+                })
+            
+            for rec in receipts:
+                events.append({
+                    'datetime': rec.get('planned_date'),
+                    'type': 'receipt',
+                    'quantity': rec.get('quantity', 0)
+                })
+            
+            events.sort(key=lambda x: x.get('datetime') or '9999-99-99')
+            
+            current_stock = initial_stock
+            has_shortage = False
+            shortage_quantity = 0
+            first_shortage_datetime = None
+            availability_date = None
+            
+            for event in events:
+                prev_stock = current_stock
+                current_stock += event['quantity']
+                
+                if current_stock < 0 and not has_shortage:
+                    has_shortage = True
+                    shortage_quantity = abs(current_stock)
+                    first_shortage_datetime = event.get('datetime')
+                
+                if has_shortage and current_stock >= 0 and not availability_date:
+                    availability_date = event.get('datetime')
+            
+            scheduled_count = sum(1 for c in consumptions if c.get('is_scheduled'))
+            
+            projected_stock.append({
+                'article_id': article_id,
+                'initial_stock': initial_stock,
+                'total_consumption': total_consumption,
+                'total_receipts': total_receipts,
+                'final_stock': final_stock,
+                'has_shortage': has_shortage,
+                'shortage_quantity': shortage_quantity,
+                'first_shortage_datetime': first_shortage_datetime,
+                'availability_date': availability_date,
+                'consumptions_count': len(consumptions),
+                'scheduled_consumptions': scheduled_count,
+                'unscheduled_consumptions': len(consumptions) - scheduled_count
+            })
+        
+        # Trier par criticité
+        projected_stock.sort(key=lambda x: (0 if x['has_shortage'] else 1, x.get('first_shortage_datetime') or '9999'))
+        consumption_details.sort(key=lambda x: x.get('consumption_datetime') or '9999')
+        
+        return {
+            'projected_stock': projected_stock,
+            'consumption_details': consumption_details[:100],
+            'summary': {
+                'total_articles': len(projected_stock),
+                'articles_with_shortage': sum(1 for p in projected_stock if p['has_shortage']),
+                'articles_ok': sum(1 for p in projected_stock if not p['has_shortage']),
+                'scheduled_consumptions': sum(p['scheduled_consumptions'] for p in projected_stock),
+                'unscheduled_consumptions': sum(p['unscheduled_consumptions'] for p in projected_stock),
+                'has_scheduling_data': bool(scheduled_ops)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in advanced projected stock: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 app.include_router(api_router)
 

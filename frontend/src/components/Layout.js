@@ -17,7 +17,8 @@ import {
   Sun,
   Moon,
   Factory,
-  ChevronRight
+  ChevronRight,
+  Grid3X3
 } from 'lucide-react';
 
 const navigation = [
@@ -29,6 +30,7 @@ const navigation = [
   { name: 'Calendriers', path: '/calendars', icon: Calendar },
   { name: 'Indisponibilités', path: '/unavailability', icon: AlertCircle },
   { name: 'Règles Métier', path: '/rules', icon: Shield },
+  { name: 'Matrice Compat.', path: '/matrix', icon: Grid3X3 },
   { name: 'Ordres Fab.', path: '/orders', icon: ClipboardList },
   { name: 'Stock Projeté', path: '/projected-stock', icon: Package },
   { name: 'Ordonnancement', path: '/scheduling', icon: BarChart3 },

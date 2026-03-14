@@ -11,11 +11,12 @@ import Unavailability from '@/pages/Unavailability';
 import BusinessRules from '@/pages/BusinessRules';
 import ManufacturingOrders from '@/pages/ManufacturingOrders';
 import Scheduling from '@/pages/Scheduling';
-import GanttView from '@/pages/GanttView';
-import Scenarios from '@/pages/Scenarios';
+import GanttInteractive from '@/pages/GanttInteractive';
+import ScenariosComparison from '@/pages/ScenariosComparison';
 import DiagnosticAssignment from '@/pages/DiagnosticAssignment';
 import ProjectedStock from '@/pages/ProjectedStock';
 import APSDashboard from '@/pages/APSDashboard';
+import MatrixView from '@/pages/MatrixView';
 import '@/App.css';
 
 function App() {
@@ -37,8 +38,9 @@ function App() {
               <Route path="diagnostic" element={<DiagnosticAssignment />} />
               <Route path="projected-stock" element={<ProjectedStock />} />
               <Route path="aps" element={<APSDashboard />} />
-              <Route path="gantt/:scenarioId" element={<GanttView />} />
-              <Route path="scenarios" element={<Scenarios />} />
+              <Route path="matrix" element={<MatrixView />} />
+              <Route path="gantt/:scenarioId" element={<GanttInteractive />} />
+              <Route path="scenarios" element={<ScenariosComparison />} />
             </Route>
           </Routes>
         </BrowserRouter>
