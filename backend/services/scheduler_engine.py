@@ -103,8 +103,14 @@ class SchedulerEngine:
                 
                 # Vérification règles métier (si non ignorées)
                 if is_valid and not ignore_rules and machine_id:
+                    # Construire le contexte de matching (sans l'id de l'opération!)
+                    matching_context = {
+                        'task_id': op.get('task_id'),
+                        'work_center_id': op.get('work_center_id'),
+                        'article_id': order.get('article_id') if order else op.get('article_id')
+                    }
                     allowed, reasons, penalty = rules_engine.evaluate_machine_for_operation(
-                        op, machine_id
+                        matching_context, machine_id
                     )
                     if not allowed:
                         is_valid = False
@@ -216,7 +222,7 @@ class SchedulerEngine:
             
             logger.info("\\n🔄 Lancement du solveur OR-Tools CP-SAT...")
             status = solver.solve(model)
-            logger.info(f"✓ Solveur terminé")
+            logger.info(f"✓ Solveur terminé - Status: {self._get_status_string(status)}")
             
             result = {
                 'status': self._get_status_string(status),
@@ -227,7 +233,9 @@ class SchedulerEngine:
             }
             
             # Extract solution
+            logger.info(f"📊 Extraction solution: status={status}, OPTIMAL={cp_model.OPTIMAL}, FEASIBLE={cp_model.FEASIBLE}")
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                logger.info(f"   Valid operations count: {len(valid_operations)}")
                 for op in valid_operations:
                     op_id = op.get('id')
                     if op_id in start_vars:
@@ -244,6 +252,7 @@ class SchedulerEngine:
                             'end_date': self._minutes_to_datetime(end_time).isoformat(),
                             'decision_reason': f'Assigné à machine {op.get("machine_id")}'
                         })
+                logger.info(f"   Operations extracted: {len(result['operations'])}")
             
             # Log solver result
             self.diagnostics.log_solver_result(

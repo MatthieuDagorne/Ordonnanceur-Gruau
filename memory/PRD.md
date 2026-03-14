@@ -27,7 +27,28 @@ Structure d'une règle:
 Types de règles:
 - **ALLOW**: autorise explicitement une machine
 - **FORBID**: interdit une machine (exclue du planning)
-- **PREFER**: préfère une machine (prioritaire si possible)
+- **PREFER**: préfère une machine (prioritaire si possible, +100 score)
+
+**IMPORTANT - Logique de matching:**
+- Les règles utilisent UNIQUEMENT `task_id`, `work_center_id` et `article_id` pour le matching
+- L'`id` de l'opération n'est JAMAIS utilisé pour le matching des règles
+- L'`article_id` provient de l'ordre de fabrication (jointure sur `order_id`)
+
+### Moteur d'Auto-Assignation des Machines ✅
+**Dernière mise à jour: 14 Mars 2026**
+
+Logique de fonctionnement:
+1. Pour chaque opération, récupérer `task_id` et `work_center_id`
+2. Filtrer les machines appartenant au `work_center_id` requis
+3. Appliquer les règles métier (FORBID exclut, PREFER donne +100 score)
+4. Sélectionner la machine avec le meilleur score
+
+Logs détaillés:
+- Critères de matching affichés pour chaque opération
+- Machines candidates avant règles
+- Règles appliquées avec leur effet
+- Machines restantes après règles
+- Cause claire en cas d'échec (ex: "AUCUNE_MACHINE_DANS_WORK_CENTER")
 
 ### Gestion du Référentiel Atelier ✅
 - Postes de travail (work centers)
@@ -50,8 +71,8 @@ Types de règles:
 ### Diagnostic ✅
 - Rapport de pré-validation (données manquantes)
 - Analyse de faisabilité par opération
-- Log des règles appliquées
-- Statistiques d'assignation
+- Log des règles appliquées avec contexte
+- Statistiques d'assignation avec causes d'échec
 
 ## Endpoints API Principaux
 - `GET/POST /api/rules` - Gestion des règles métier

@@ -81,12 +81,14 @@ class SchedulingDiagnostics:
     def analyze_operation_feasibility(self, operation, machines, rules_engine, material_checker, order):
         """
         Analyse de faisabilité pour une opération donnée.
+        Utilise task_id, work_center_id et article_id pour le matching des règles.
         """
         analysis = {
             'operation_id': operation.get('id'),
-            'operation_number': operation.get('operation_number'),
+            'task_id': operation.get('task_id'),
+            'work_center_id': operation.get('work_center_id'),
             'order_id': operation.get('order_id'),
-            'article': order.get('article') if order else 'Unknown',
+            'article_id': order.get('article_id') if order else None,
             'is_feasible': True,
             'blocking_reasons': [],
             'warnings': [],
@@ -111,35 +113,41 @@ class SchedulingDiagnostics:
                 analysis['compatible_machines'].append(assigned_machine)
                 logger.info(f"✓ Op {operation.get('id')}: Machine {assigned_machine} trouvée")
         
-        # Vérification règles métier
+        # Vérification règles métier (avec le nouveau contexte)
         if assigned_machine:
-            operation_code = str(operation.get('operation_number', ''))
-            allowed, reason, penalty = rules_engine.is_operation_allowed_on_machine(
-                operation_code, assigned_machine
+            # Construire le contexte de matching (sans l'id de l'opération!)
+            matching_context = {
+                'task_id': operation.get('task_id'),
+                'work_center_id': operation.get('work_center_id'),
+                'article_id': order.get('article_id') if order else operation.get('article_id')
+            }
+            
+            allowed, reasons, penalty = rules_engine.evaluate_machine_for_operation(
+                matching_context, assigned_machine
             )
             
             if not allowed:
                 analysis['is_feasible'] = False
-                analysis['blocking_reasons'].append(f'Règle métier interdit: {reason}')
-                logger.error(f"❌ Op {operation.get('id')}: {reason}")
+                analysis['blocking_reasons'].append(f'Règle métier interdit: {", ".join(reasons)}')
+                logger.error(f"❌ Op {operation.get('id')}: {', '.join(reasons)}")
             elif penalty > 0:
                 analysis['warnings'].append(f'Pénalité appliquée: {penalty}')
-                logger.info(f"⚠️  Op {operation.get('id')}: {reason}")
+                logger.info(f"⚠️  Op {operation.get('id')}: Pénalité {penalty}")
         
         # Vérification disponibilité matière
         if order:
-            article = order.get('article')
+            article_id = order.get('article_id') or order.get('article')
             quantity = order.get('quantity', 0)
-            if not material_checker.check_availability(article, quantity):
+            if not material_checker.check_availability(article_id, quantity):
                 analysis['is_feasible'] = False
                 analysis['material_available'] = False
-                missing = material_checker.get_missing_materials(article, quantity)
+                missing = material_checker.get_missing_materials(article_id, quantity)
                 analysis['blocking_reasons'].append(
-                    f'Matière insuffisante: {article} (manque {missing} unités)'
+                    f'Matière insuffisante: {article_id} (manque {missing} unités)'
                 )
-                logger.error(f"❌ Op {operation.get('id')}: Matière insuffisante pour {article}")
+                logger.error(f"❌ Op {operation.get('id')}: Matière insuffisante pour {article_id}")
             else:
-                logger.info(f"✓ Op {operation.get('id')}: Matière disponible pour {article}")
+                logger.info(f"✓ Op {operation.get('id')}: Matière disponible pour {article_id}")
         
         # Vérification temps de production
         prod_time = operation.get('production_time_minutes', 0)

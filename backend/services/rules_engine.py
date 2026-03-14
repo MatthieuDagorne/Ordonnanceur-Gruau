@@ -8,33 +8,54 @@ logger = logging.getLogger(__name__)
 class RulesEngine:
     """
     Moteur de règles métier simplifié pour le POC.
-    Gère uniquement les règles d'affectation machine : ALLOW, FORBID, PREFER.
+    
+    Types de règles: ALLOW, FORBID, PREFER
+    
+    Critères de matching (depuis l'opération/ordre):
+    - task_id: type de tâche
+    - work_center_id: centre de charge
+    - article_id: article (depuis l'ordre de fabrication)
+    
+    IMPORTANT: N'utilise JAMAIS l'id de l'opération pour le matching.
     """
     
     def __init__(self, rules_data: List[Dict]):
         self.rules: List[BusinessRule] = []
         self.invalid_rules: List[Dict] = []
-        self.applied_rules_log: List[Dict] = []  # Pour le diagnostic
+        self.applied_rules_log: List[Dict] = []
         
         logger.info("\n" + "="*80)
-        logger.info("CHARGEMENT DES REGLES METIER (POC)")
+        logger.info("CHARGEMENT DES REGLES METIER")
         logger.info("="*80)
         
         for rule_data in rules_data:
             try:
                 rule = BusinessRule(**rule_data)
                 
-                # Validation : au moins task_id ou work_center_id doit être défini
+                # Validation: au moins task_id ou work_center_id
                 if not rule.task_id and not rule.work_center_id:
-                    logger.warning(f"  Regle '{rule.name}' ignoree: article_id seul non autorise")
+                    logger.warning(f"  [IGNORE] '{rule.name}': article_id seul non autorise")
                     self.invalid_rules.append({
                         'name': rule.name,
-                        'reason': 'Doit avoir task_id et/ou work_center_id (article_id seul non autorise)'
+                        'reason': 'Doit avoir task_id et/ou work_center_id'
                     })
                     continue
                 
                 self.rules.append(rule)
-                logger.info(f"  [OK] Regle chargee: {rule.name} ({rule.rule_type.value} -> machine {rule.machine_id})")
+                
+                # Log détaillé de la règle
+                criteria = []
+                if rule.task_id:
+                    criteria.append(f"task_id={rule.task_id}")
+                if rule.work_center_id:
+                    criteria.append(f"work_center_id={rule.work_center_id}")
+                if rule.article_id:
+                    criteria.append(f"article_id={rule.article_id}")
+                
+                logger.info(f"  [OK] {rule.name}")
+                logger.info(f"       Type: {rule.rule_type.value}")
+                logger.info(f"       Criteres: {' + '.join(criteria)}")
+                logger.info(f"       Machine cible: {rule.machine_id}")
                 
             except Exception as e:
                 logger.warning(f"  [ERREUR] Regle invalide: {e}")
@@ -43,132 +64,188 @@ class RulesEngine:
                     'reason': str(e)
                 })
         
-        logger.info(f"\nResume: {len(self.rules)} regle(s) active(s), {len(self.invalid_rules)} ignoree(s)")
-        self._log_rules_summary()
+        logger.info(f"\nResume: {len(self.rules)} regle(s) valide(s), {len(self.invalid_rules)} ignoree(s)")
         logger.info("="*80 + "\n")
     
-    def _log_rules_summary(self):
-        """Affiche un résumé des règles chargées."""
-        if not self.rules:
-            logger.info("  Aucune regle active.")
-            return
+    def _matches_rule(self, rule: BusinessRule, context: Dict) -> Tuple[bool, str]:
+        """
+        Vérifie si une règle correspond au contexte donné.
         
-        logger.info("\nDetail des regles:")
+        Le contexte contient: task_id, work_center_id, article_id
+        (PAS l'id de l'opération)
+        
+        Returns:
+            (matches: bool, reason: str)
+        """
+        if not rule.active:
+            return False, "Regle inactive"
+        
+        # Matching sur task_id
+        if rule.task_id:
+            ctx_task = context.get('task_id')
+            if ctx_task != rule.task_id:
+                return False, f"task_id ne correspond pas ({ctx_task} != {rule.task_id})"
+        
+        # Matching sur work_center_id
+        if rule.work_center_id:
+            ctx_wc = context.get('work_center_id')
+            if ctx_wc != rule.work_center_id:
+                return False, f"work_center_id ne correspond pas ({ctx_wc} != {rule.work_center_id})"
+        
+        # Matching sur article_id
+        if rule.article_id:
+            ctx_article = context.get('article_id')
+            if ctx_article != rule.article_id:
+                return False, f"article_id ne correspond pas ({ctx_article} != {rule.article_id})"
+        
+        return True, "Tous les criteres correspondent"
+    
+    def _get_applicable_rules(self, context: Dict) -> List[BusinessRule]:
+        """
+        Retourne toutes les règles qui correspondent au contexte.
+        
+        Args:
+            context: dict avec task_id, work_center_id, article_id
+        """
+        applicable = []
         for rule in self.rules:
-            status = "ACTIVE" if rule.active else "INACTIVE"
-            logger.info(f"  [{status}] {rule.name}: {rule.get_criteria_display()} -> {rule.rule_type.value} machine={rule.machine_id}")
+            matches, _ = self._matches_rule(rule, context)
+            if matches:
+                applicable.append(rule)
+        return applicable
     
     def evaluate_machine_for_operation(
         self, 
-        operation: Dict, 
+        context: Dict, 
         machine_id: str,
         machine_name: Optional[str] = None
     ) -> Tuple[bool, List[str], int]:
         """
-        Évalue si une machine peut exécuter une opération selon les règles.
+        Évalue si une machine peut être utilisée pour le contexte donné.
+        
+        Args:
+            context: dict avec task_id, work_center_id, article_id
+            machine_id: ID de la machine à évaluer
+            machine_name: Nom de la machine (pour les logs)
         
         Returns:
             (allowed: bool, reasons: List[str], preference_score: int)
-            - allowed: False si une règle FORBID s'applique
-            - reasons: Liste des règles appliquées
-            - preference_score: Score de préférence (plus élevé = meilleur)
         """
-        applicable_rules = self._get_applicable_rules(operation)
+        applicable_rules = self._get_applicable_rules(context)
         
         if not applicable_rules:
-            return True, ["Aucune regle specifique"], 0
+            return True, ["Aucune regle applicable"], 0
         
         allowed = True
         reasons = []
         preference_score = 0
         
         for rule in applicable_rules:
-            # La règle cible cette machine spécifique
+            # La règle cible cette machine spécifique?
             if rule.machine_id == machine_id:
                 if rule.rule_type == RuleType.FORBID:
                     allowed = False
-                    reason = f"INTERDIT par '{rule.name}' ({rule.get_criteria_display()})"
+                    reason = f"FORBID par '{rule.name}'"
                     reasons.append(reason)
-                    self._log_rule_application(operation, rule, machine_id, machine_name, "BLOQUE")
+                    self._log_application(context, rule, machine_id, machine_name, "BLOQUE")
                     
                 elif rule.rule_type == RuleType.ALLOW:
-                    reason = f"AUTORISE par '{rule.name}'"
+                    reason = f"ALLOW par '{rule.name}'"
                     reasons.append(reason)
-                    self._log_rule_application(operation, rule, machine_id, machine_name, "AUTORISE")
+                    self._log_application(context, rule, machine_id, machine_name, "AUTORISE")
                     
                 elif rule.rule_type == RuleType.PREFER:
-                    preference_score += 100  # Bonus de préférence
-                    reason = f"PREFEREE par '{rule.name}' (+100)"
+                    preference_score += 100
+                    reason = f"PREFER par '{rule.name}' (+100)"
                     reasons.append(reason)
-                    self._log_rule_application(operation, rule, machine_id, machine_name, "PREFEREE")
+                    self._log_application(context, rule, machine_id, machine_name, "PREFEREE")
         
         if not reasons:
-            reasons.append("Aucune regle applicable a cette machine")
+            reasons.append("Aucune regle ne cible cette machine")
         
         return allowed, reasons, preference_score
     
-    def _get_applicable_rules(self, operation: Dict) -> List[BusinessRule]:
-        """Retourne toutes les règles qui correspondent à l'opération."""
-        return [rule for rule in self.rules if rule.matches_operation(operation)]
-    
-    def _log_rule_application(
+    def _log_application(
         self, 
-        operation: Dict, 
+        context: Dict, 
         rule: BusinessRule, 
         machine_id: str,
         machine_name: Optional[str],
         result: str
     ):
-        """Enregistre l'application d'une règle pour le diagnostic."""
-        log_entry = {
-            'operation_id': operation.get('id'),
-            'task_id': operation.get('task_id'),
-            'work_center_id': operation.get('work_center_id'),
-            'article_id': operation.get('article_id'),
+        """Enregistre l'application d'une règle."""
+        self.applied_rules_log.append({
+            'task_id': context.get('task_id'),
+            'work_center_id': context.get('work_center_id'),
+            'article_id': context.get('article_id'),
             'rule_name': rule.name,
             'rule_type': rule.rule_type.value,
+            'rule_criteria': rule.get_criteria_display(),
             'machine_id': machine_id,
             'machine_name': machine_name,
             'result': result
-        }
-        self.applied_rules_log.append(log_entry)
-        
-        logger.info(f"    -> Regle '{rule.name}' ({rule.rule_type.value}): {result} pour machine {machine_name or machine_id}")
+        })
     
     def get_allowed_machines(
         self, 
-        operation: Dict, 
+        context: Dict, 
         available_machines: List[Dict]
     ) -> Tuple[List[Dict], List[Dict], Dict]:
         """
-        Filtre et ordonne les machines selon les règles.
+        Filtre les machines selon les règles.
+        
+        Args:
+            context: dict avec task_id, work_center_id, article_id
+            available_machines: liste des machines candidates
         
         Returns:
             (allowed_machines, forbidden_machines, diagnostics)
         """
         allowed = []
         forbidden = []
+        
+        # Log du contexte
+        task_id = context.get('task_id')
+        work_center_id = context.get('work_center_id')
+        article_id = context.get('article_id')
+        
+        logger.info(f"\n    Evaluation des regles:")
+        logger.info(f"      Contexte: task={task_id}, wc={work_center_id}, article={article_id or '-'}")
+        
+        # Récupérer les règles applicables
+        applicable_rules = self._get_applicable_rules(context)
+        
         diagnostics = {
-            'operation_id': operation.get('id'),
-            'task_id': operation.get('task_id'),
-            'work_center_id': operation.get('work_center_id'),
-            'rules_evaluated': [],
+            'task_id': task_id,
+            'work_center_id': work_center_id,
+            'article_id': article_id,
+            'applicable_rules': [
+                {
+                    'name': r.name, 
+                    'type': r.rule_type.value, 
+                    'machine_id': r.machine_id,
+                    'criteria': r.get_criteria_display()
+                }
+                for r in applicable_rules
+            ],
             'allowed_machines': [],
             'forbidden_machines': []
         }
         
-        applicable_rules = self._get_applicable_rules(operation)
-        diagnostics['applicable_rules'] = [
-            {'name': r.name, 'type': r.rule_type.value, 'machine_id': r.machine_id}
-            for r in applicable_rules
-        ]
+        if applicable_rules:
+            logger.info(f"      {len(applicable_rules)} regle(s) applicable(s):")
+            for r in applicable_rules:
+                logger.info(f"        - {r.name} ({r.rule_type.value}) -> machine {r.machine_id}")
+        else:
+            logger.info(f"      Aucune regle applicable")
         
+        # Évaluer chaque machine
         for machine in available_machines:
             machine_id = machine.get('id')
             machine_name = machine.get('name', machine_id)
             
             is_allowed, reasons, score = self.evaluate_machine_for_operation(
-                operation, machine_id, machine_name
+                context, machine_id, machine_name
             )
             
             machine_info = {
