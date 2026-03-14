@@ -95,9 +95,9 @@ export default function BusinessRules() {
       // Recherche textuelle
       if (filters.search) {
         const searchLower = filters.search.toLowerCase();
-        const matchName = rule.name?.toLowerCase().includes(searchLower);
-        const matchMachine = rule.machine_id?.toLowerCase().includes(searchLower);
-        const matchArticle = rule.article_id?.toLowerCase().includes(searchLower);
+        const matchName = String(rule.name || '').toLowerCase().includes(searchLower);
+        const matchMachine = String(rule.machine_id || '').toLowerCase().includes(searchLower);
+        const matchArticle = String(rule.article_id || '').toLowerCase().includes(searchLower);
         if (!matchName && !matchMachine && !matchArticle) return false;
       }
       

@@ -60,14 +60,14 @@ export default function ManufacturingOrders() {
       // Recherche textuelle
       if (filters.search) {
         const s = filters.search.toLowerCase();
-        const matchOrder = op.order_id?.toLowerCase().includes(s);
-        const matchArticle = op.article_id?.toLowerCase().includes(s);
-        const matchOp = op.operation_id?.toLowerCase().includes(s);
+        const matchOrder = String(op.order_id || '').toLowerCase().includes(s);
+        const matchArticle = String(op.article_id || '').toLowerCase().includes(s);
+        const matchOp = String(op.operation_id || '').toLowerCase().includes(s);
         if (!matchOrder && !matchArticle && !matchOp) return false;
       }
       
       // Filtre article
-      if (filters.article_id && !op.article_id?.includes(filters.article_id)) return false;
+      if (filters.article_id && !String(op.article_id || '').includes(filters.article_id)) return false;
       
       // Filtre statut
       if (filters.status === 'late' && !isLate(op.date_besoin)) return false;

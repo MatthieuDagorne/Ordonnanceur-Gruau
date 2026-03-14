@@ -40,7 +40,7 @@ export default function ProjectedStock() {
     
     return data.projected_stock.filter(item => {
       // Recherche textuelle
-      if (filters.search && !item.article_id?.toLowerCase().includes(filters.search.toLowerCase())) {
+      if (filters.search && !String(item.article_id || '').toLowerCase().includes(filters.search.toLowerCase())) {
         return false;
       }
       

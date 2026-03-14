@@ -50,9 +50,9 @@ export default function DiagnosticAssignment() {
       // Recherche textuelle
       if (filters.search) {
         const s = filters.search.toLowerCase();
-        const matchOp = op.operation_id?.toLowerCase().includes(s);
-        const matchOrder = op.order_id?.toLowerCase().includes(s);
-        const matchArticle = op.article_id?.toLowerCase().includes(s);
+        const matchOp = String(op.operation_id || '').toLowerCase().includes(s);
+        const matchOrder = String(op.order_id || '').toLowerCase().includes(s);
+        const matchArticle = String(op.article_id || '').toLowerCase().includes(s);
         if (!matchOp && !matchOrder && !matchArticle) return false;
       }
       
