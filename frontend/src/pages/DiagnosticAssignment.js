@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
-import { RefreshCw, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Clock } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Clock, Filter, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -10,6 +10,15 @@ export default function DiagnosticAssignment() {
   const [diagnostic, setDiagnostic] = useState(null);
   const [loading, setLoading] = useState(false);
   const [expandedOps, setExpandedOps] = useState({});
+  
+  // Filtres
+  const [filters, setFilters] = useState({
+    search: '',
+    status: '',
+    centre: '',
+    article: ''
+  });
+  const [showFilters, setShowFilters] = useState(false);
 
   const fetchDiagnostic = async () => {
     setLoading(true);
@@ -33,33 +42,173 @@ export default function DiagnosticAssignment() {
     setExpandedOps(prev => ({ ...prev, [opId]: !prev[opId] }));
   };
 
+  // Filtrage
+  const filteredDiagnostics = useMemo(() => {
+    if (!diagnostic?.diagnostics_table) return [];
+    
+    return diagnostic.diagnostics_table.filter(op => {
+      // Recherche textuelle
+      if (filters.search) {
+        const s = filters.search.toLowerCase();
+        const matchOp = op.operation_id?.toLowerCase().includes(s);
+        const matchOrder = op.order_id?.toLowerCase().includes(s);
+        const matchArticle = op.article_id?.toLowerCase().includes(s);
+        if (!matchOp && !matchOrder && !matchArticle) return false;
+      }
+      
+      // Filtre statut
+      if (filters.status === 'assigned' && !op.machine_assignee) return false;
+      if (filters.status === 'unassigned' && op.machine_assignee) return false;
+      if (filters.status === 'preferred' && !op.regle_appliquee) return false;
+      
+      // Filtre centre
+      if (filters.centre && op.centre_de_charge_id !== filters.centre) return false;
+      
+      // Filtre article
+      if (filters.article && op.article_id !== filters.article) return false;
+      
+      return true;
+    });
+  }, [diagnostic, filters]);
+
+  // Valeurs uniques pour les filtres
+  const uniqueCentres = useMemo(() => {
+    if (!diagnostic?.diagnostics_table) return [];
+    return [...new Set(diagnostic.diagnostics_table.map(op => op.centre_de_charge_id).filter(Boolean))].sort();
+  }, [diagnostic]);
+
+  const uniqueArticles = useMemo(() => {
+    if (!diagnostic?.diagnostics_table) return [];
+    return [...new Set(diagnostic.diagnostics_table.map(op => op.article_id).filter(Boolean))].sort();
+  }, [diagnostic]);
+
+  const clearFilters = () => {
+    setFilters({ search: '', status: '', centre: '', article: '' });
+  };
+
+  const activeFiltersCount = Object.values(filters).filter(v => v !== '').length;
+
   if (!diagnostic) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-slate-500">Chargement du diagnostic...</div>
+        <div style={{ color: 'var(--text-muted)' }}>Chargement du diagnostic...</div>
       </div>
     );
   }
 
-  const { summary, machines_par_centre, regles_chargees, diagnostics_table } = diagnostic;
+  const { summary, machines_par_centre, regles_chargees } = diagnostic;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="diagnostic-page">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold text-slate-800">Diagnostic d'Assignation</h3>
-          <p className="text-sm text-slate-500 mt-1">
+          <h3 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>Diagnostic d'Assignation</h3>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             Jointure order_id → article_id, date_besoin | Critères: tache_id, centre_de_charge_id
           </p>
         </div>
         <button
           onClick={fetchDiagnostic}
           disabled={loading}
-          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+          style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           Actualiser
         </button>
+      </div>
+
+      {/* Barre de filtres */}
+      <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <div className="flex items-center gap-4">
+          <div className="flex-1 relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Rechercher par opération, OF, article..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm"
+              style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+              data-testid="filter-search"
+            />
+          </div>
+          
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"
+            style={{ 
+              backgroundColor: activeFiltersCount > 0 ? 'var(--status-info-bg)' : 'var(--bg-sunken)', 
+              color: activeFiltersCount > 0 ? 'var(--status-info)' : 'var(--text-secondary)',
+              border: '1px solid var(--border-default)'
+            }}
+            data-testid="toggle-filters"
+          >
+            <Filter size={16} />
+            Filtres {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+          </button>
+          
+          {activeFiltersCount > 0 && (
+            <button onClick={clearFilters} className="text-sm font-medium" style={{ color: 'var(--status-error)' }}>
+              Réinitialiser
+            </button>
+          )}
+        </div>
+        
+        {showFilters && (
+          <div className="grid grid-cols-4 gap-4 mt-4 pt-4" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Statut</label>
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-status"
+              >
+                <option value="">Tous</option>
+                <option value="assigned">Assignées</option>
+                <option value="unassigned">Non assignées</option>
+                <option value="preferred">Avec règle</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Centre de charge</label>
+              <select
+                value={filters.centre}
+                onChange={(e) => setFilters({ ...filters, centre: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-centre"
+              >
+                <option value="">Tous</option>
+                {uniqueCentres.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Article</label>
+              <select
+                value={filters.article}
+                onChange={(e) => setFilters({ ...filters, article: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-article"
+              >
+                <option value="">Tous</option>
+                {uniqueArticles.map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                {filteredDiagnostics.length} / {diagnostic?.diagnostics_table?.length || 0} opérations
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Résumé */}
@@ -150,71 +299,73 @@ export default function DiagnosticAssignment() {
       </div>
 
       {/* Tableau de diagnostic */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
-        <div className="bg-slate-50 border-b border-slate-200 px-4 py-3">
-          <h4 className="font-semibold text-slate-800">Diagnostic par Opération</h4>
-          <p className="text-xs text-slate-500 mt-1">
+      <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <div className="px-4 py-3" style={{ backgroundColor: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-default)' }}>
+          <h4 className="font-semibold" style={{ color: 'var(--text-primary)' }}>Diagnostic par Opération</h4>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
             Triées par date_besoin (plus urgent en premier) | Jointure via order_id
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-100 border-b border-slate-200">
+            <thead style={{ backgroundColor: 'var(--bg-sunken)' }}>
               <tr>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase"></th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Order</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Article</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Date Besoin</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Tâche</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Centre</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Machines Centre</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Règles</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">Machine</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-slate-500 uppercase">OK</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}></th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Order</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Article</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Date Besoin</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Tâche</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Centre</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Machines Centre</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Règles</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Machine</th>
+                <th className="px-2 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>OK</th>
               </tr>
             </thead>
             <tbody>
-              {diagnostics_table?.map((row) => {
+              {filteredDiagnostics.map((row) => {
                 const isLate = row.urgency >= 1000;
                 const isUrgent = row.urgency >= 500 && row.urgency < 1000;
                 return (
                   <React.Fragment key={row.operation_id}>
                     <tr 
-                      className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${
-                        !row.is_assigned ? 'bg-red-50' : 
-                        isLate ? 'bg-purple-50' :
-                        isUrgent ? 'bg-amber-50' : ''
-                      }`}
+                      className="cursor-pointer transition-colors"
+                      style={{ 
+                        borderBottom: '1px solid var(--border-default)',
+                        backgroundColor: !row.is_assigned ? 'var(--status-error-bg)' : 
+                                        isLate ? 'rgba(139, 92, 246, 0.1)' :
+                                        isUrgent ? 'var(--status-warning-bg)' : 'transparent'
+                      }}
                       onClick={() => toggleExpand(row.operation_id)}
                     >
-                      <td className="px-2 py-2">
+                      <td className="px-2 py-2" style={{ color: 'var(--text-secondary)' }}>
                         {expandedOps[row.operation_id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </td>
-                      <td className="px-2 py-2 font-mono text-xs">{row.order_id}</td>
+                      <td className="px-2 py-2 font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{row.order_id}</td>
                       <td className="px-2 py-2">
                         {row.article_id ? (
-                          <span className="bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded text-xs font-mono">
+                          <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-warning-bg)', color: 'var(--status-warning)' }}>
                             {row.article_id}
                           </span>
                         ) : (
-                          <span className="text-red-500 text-xs">-</span>
+                          <span className="text-xs" style={{ color: 'var(--status-error)' }}>-</span>
                         )}
                       </td>
                       <td className="px-2 py-2">
                         {row.date_besoin ? (
-                          <span className={`text-xs font-mono flex items-center gap-1 ${
-                            isLate ? 'text-purple-700 font-bold' :
-                            isUrgent ? 'text-amber-700 font-bold' : 'text-slate-600'
-                          }`}>
+                          <span className="text-xs font-mono flex items-center gap-1" style={{ 
+                            color: isLate ? '#8B5CF6' : isUrgent ? 'var(--status-warning)' : 'var(--text-secondary)',
+                            fontWeight: isLate || isUrgent ? 'bold' : 'normal'
+                          }}>
                             {row.date_besoin?.substring(0, 16).replace('T', ' ')}
-                            {isLate && <Clock size={12} className="text-purple-600" />}
+                            {isLate && <Clock size={12} />}
                           </span>
                         ) : (
-                          <span className="text-slate-400 text-xs">-</span>
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>-</span>
                         )}
                       </td>
                       <td className="px-2 py-2">
-                        <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-xs font-mono">
+                        <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
                           {row.tache_id || '-'}
                         </span>
                       </td>
@@ -335,10 +486,12 @@ export default function DiagnosticAssignment() {
                   </React.Fragment>
                 );
               })}
-              {(!diagnostics_table || diagnostics_table.length === 0) && (
+              {filteredDiagnostics.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">
-                    Aucune opération. Importez des données via Import CSV.
+                  <td colSpan={10} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                    {diagnostic?.diagnostics_table?.length === 0 
+                      ? 'Aucune opération. Importez des données via Import CSV.'
+                      : 'Aucune opération ne correspond aux filtres.'}
                   </td>
                 </tr>
               )}

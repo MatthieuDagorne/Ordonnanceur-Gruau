@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Upload, Trash2, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { Upload, Trash2, AlertTriangle, CheckCircle, Info, Package, Database, Settings, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -54,7 +54,7 @@ export default function ImportData() {
           : `Import réussi: ${response.data.records_imported} enregistrements`;
         
         toast.success(message);
-        fetchStats(); // Refresh stats
+        fetchStats();
       } else {
         if (response.data.duplicates_found > 0) {
           toast.error(`${response.data.duplicates_found} ID(s) en double trouvés dans le fichier CSV`);
@@ -80,7 +80,7 @@ export default function ImportData() {
           `Données supprimées: ${response.data.deleted.orders} ordres, ${response.data.deleted.operations} opérations, ${response.data.deleted.scenarios} scénarios`
         );
         setShowResetConfirm(false);
-        fetchStats(); // Refresh stats
+        fetchStats();
       } else {
         toast.error('Erreur lors du reset');
       }
@@ -93,65 +93,113 @@ export default function ImportData() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Data Statistics */}
+    <div className="space-y-6" data-testid="import-page">
+      {/* Data Statistics - Main */}
       {stats && (
-        <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
+        <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-semibold text-slate-800">État des Données</h3>
+            <div className="flex items-center gap-2">
+              <Database size={20} style={{ color: 'var(--brand-primary)' }} />
+              <h3 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>État des Données</h3>
+            </div>
             <button
               data-testid="reset-data-btn"
               onClick={() => setShowResetConfirm(true)}
-              className="inline-flex items-center gap-2 bg-red-600 text-white hover:bg-red-700 rounded-sm px-4 py-2 text-sm font-medium transition-colors shadow-sm"
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              style={{ backgroundColor: 'var(--status-error)', color: 'white' }}
             >
               <Trash2 size={16} />
               Reset Données ERP
             </button>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-slate-50 p-4 rounded-sm border border-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-                Ordres Fab.
-              </p>
-              <p className="text-2xl font-mono font-bold text-slate-900">{stats.manufacturing_orders}</p>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-sm border border-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-                Opérations
-              </p>
-              <p className="text-2xl font-mono font-bold text-slate-900">{stats.operations}</p>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-sm border border-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-                Articles
-              </p>
-              <p className="text-2xl font-mono font-bold text-slate-900">{stats.articles}</p>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-sm border border-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
-                Stocks
-              </p>
-              <p className="text-2xl font-mono font-bold text-slate-900">{stats.stocks}</p>
+          {/* Données Principales (ERP) */}
+          <div className="mb-4">
+            <h4 className="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+              <Package size={14} />
+              Données ERP
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Ordres Fab.
+                </p>
+                <p className="text-2xl font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{stats.manufacturing_orders}</p>
+              </div>
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Opérations
+                </p>
+                <p className="text-2xl font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{stats.operations}</p>
+              </div>
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Articles
+                </p>
+                <p className="text-2xl font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{stats.articles}</p>
+              </div>
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Stocks
+                </p>
+                <p className="text-2xl font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{stats.stocks}</p>
+              </div>
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-blue-50 p-3 rounded-sm border border-blue-200">
-              <p className="text-xs text-blue-600 mb-1">Machines</p>
-              <p className="text-lg font-mono font-semibold text-blue-900">{stats.machines}</p>
+          {/* Données Complémentaires (Supply Chain) */}
+          <div className="mb-4">
+            <h4 className="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: 'var(--status-info)' }}>
+              <Package size={14} />
+              Supply Chain
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Matières/Op.</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.operation_materials || 0}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Réceptions Prévues</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.planned_receipts || 0}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Nomenclatures (BOM)</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.bom_lines || 0}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Indisponibilités</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.unavailabilities || 0}</p>
+              </div>
             </div>
-            <div className="bg-blue-50 p-3 rounded-sm border border-blue-200">
-              <p className="text-xs text-blue-600 mb-1">Postes</p>
-              <p className="text-lg font-mono font-semibold text-blue-900">{stats.work_centers}</p>
-            </div>
-            <div className="bg-blue-50 p-3 rounded-sm border border-blue-200">
-              <p className="text-xs text-blue-600 mb-1">Calendriers</p>
-              <p className="text-lg font-mono font-semibold text-blue-900">{stats.calendars}</p>
-            </div>
-            <div className="bg-blue-50 p-3 rounded-sm border border-blue-200">
-              <p className="text-xs text-blue-600 mb-1">Règles</p>
-              <p className="text-lg font-mono font-semibold text-blue-900">{stats.rules}</p>
+          </div>
+
+          {/* Configuration */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: 'var(--status-warning)' }}>
+              <Settings size={14} />
+              Configuration
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-warning)' }}>Machines</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.machines}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-warning)' }}>Centres Charge</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.work_centers}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-warning)' }}>Calendriers</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.calendars}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-warning-bg)', border: '1px solid var(--status-warning-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-warning)' }}>Règles Métier</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.rules}</p>
+              </div>
+              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-success-bg)', border: '1px solid var(--status-success-border)' }}>
+                <p className="text-xs mb-1" style={{ color: 'var(--status-success)' }}>Scénarios</p>
+                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.scenarios}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -159,24 +207,24 @@ export default function ImportData() {
 
       {/* Reset Confirmation Dialog */}
       {showResetConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-sm shadow-lg p-6 max-w-md mx-4">
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-lg shadow-lg p-6 max-w-md mx-4" style={{ backgroundColor: 'var(--bg-elevated)' }}>
             <div className="flex items-start gap-3 mb-4">
-              <AlertTriangle size={24} className="text-red-600 mt-0.5" />
+              <AlertTriangle size={24} style={{ color: 'var(--status-error)' }} className="mt-0.5" />
               <div>
-                <h4 className="text-lg font-semibold text-slate-900 mb-2">
+                <h4 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                   Confirmer la suppression
                 </h4>
-                <p className="text-sm text-slate-600">
+                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                   Cette action va supprimer toutes les données opérationnelles :
                 </p>
-                <ul className="text-sm text-slate-600 mt-2 space-y-1 list-disc list-inside">
+                <ul className="text-sm mt-2 space-y-1 list-disc list-inside" style={{ color: 'var(--text-secondary)' }}>
                   <li>Ordres de fabrication</li>
                   <li>Opérations</li>
                   <li>Articles et stocks</li>
                   <li>Scénarios de planification</li>
                 </ul>
-                <p className="text-sm text-slate-600 mt-2">
+                <p className="text-sm mt-2" style={{ color: 'var(--text-secondary)' }}>
                   <strong>Les données de configuration seront conservées</strong> (machines, calendriers, règles).
                 </p>
               </div>
@@ -185,7 +233,8 @@ export default function ImportData() {
               <button
                 onClick={() => setShowResetConfirm(false)}
                 disabled={resetting}
-                className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-sm px-4 py-2 text-sm font-medium transition-colors"
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
               >
                 Annuler
               </button>
@@ -193,7 +242,8 @@ export default function ImportData() {
                 data-testid="confirm-reset-btn"
                 onClick={handleReset}
                 disabled={resetting}
-                className="bg-red-600 text-white hover:bg-red-700 rounded-sm px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                style={{ backgroundColor: 'var(--status-error)', color: 'white' }}
               >
                 {resetting ? 'Suppression...' : 'Supprimer'}
               </button>
@@ -203,26 +253,26 @@ export default function ImportData() {
       )}
 
       {/* Import Mode Notice */}
-      <div className="bg-blue-50 border border-blue-200 rounded-sm p-5">
+      <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
         <div className="flex items-start gap-3">
-          <Info size={20} className="text-blue-600 mt-0.5" />
+          <Info size={20} style={{ color: 'var(--status-info)' }} className="mt-0.5" />
           <div>
-            <h4 className="text-lg font-semibold text-blue-900 mb-2">Mode Remplacement Complet</h4>
-            <p className="text-sm text-blue-800 mb-2">
+            <h4 className="text-lg font-semibold mb-2" style={{ color: 'var(--status-info)' }}>Mode Remplacement Complet</h4>
+            <p className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
               Les imports fonctionnent en mode <strong>remplacement complet</strong> : 
               les anciennes données sont supprimées avant l'import des nouvelles.
             </p>
-            <ul className="text-sm text-blue-800 space-y-1">
+            <ul className="text-sm space-y-1" style={{ color: 'var(--text-secondary)' }}>
               <li className="flex items-start gap-2">
-                <CheckCircle size={16} className="text-blue-600 mt-0.5" />
+                <CheckCircle size={16} style={{ color: 'var(--status-info)' }} className="mt-0.5" />
                 <span>Aucun doublon possible</span>
               </li>
               <li className="flex items-start gap-2">
-                <CheckCircle size={16} className="text-blue-600 mt-0.5" />
+                <CheckCircle size={16} style={{ color: 'var(--status-info)' }} className="mt-0.5" />
                 <span>Vérification d'unicité des ID dans le fichier CSV</span>
               </li>
               <li className="flex items-start gap-2">
-                <CheckCircle size={16} className="text-blue-600 mt-0.5" />
+                <CheckCircle size={16} style={{ color: 'var(--status-info)' }} className="mt-0.5" />
                 <span>Import idempotent : vous pouvez relancer sans risque</span>
               </li>
             </ul>
@@ -231,9 +281,9 @@ export default function ImportData() {
       </div>
 
       {/* Import Section */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
-        <h3 className="text-xl font-semibold text-slate-800 mb-2">Import de données ERP</h3>
-        <p className="text-sm text-slate-600 leading-normal mb-6">
+      <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <h3 className="text-xl font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Import de données ERP</h3>
+        <p className="text-sm leading-normal mb-6" style={{ color: 'var(--text-secondary)' }}>
           Importez vos fichiers CSV depuis l'ERP Infor LN. Chaque fichier doit respecter le format attendu.
         </p>
 
@@ -241,16 +291,18 @@ export default function ImportData() {
           {importTypes.map((type) => (
             <div
               key={type.key}
-              className="border border-slate-200 rounded-sm p-4 hover:border-slate-300 transition-colors"
+              className="rounded-lg p-4 transition-colors"
+              style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium text-slate-900">{type.label}</p>
-                  <p className="text-xs text-slate-500 mt-1">Format CSV requis</p>
+                  <p className="font-medium" style={{ color: 'var(--text-primary)' }}>{type.label}</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Format CSV requis</p>
                 </div>
                 <label
                   data-testid={type.testId}
-                  className="cursor-pointer inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium transition-colors shadow-sm"
+                  className="cursor-pointer inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                  style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
                 >
                   <Upload size={16} />
                   {uploading[type.key] ? 'Import...' : 'Choisir fichier'}
@@ -269,90 +321,72 @@ export default function ImportData() {
       </div>
 
       {/* CSV Format Reference */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
-        <h3 className="text-lg font-semibold text-slate-800 mb-3">Format des fichiers</h3>
-        <div className="space-y-3 text-sm text-slate-600">
+      <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Format des fichiers</h3>
+        <div className="space-y-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
           <div>
-            <p className="font-medium text-slate-900">Ordres de Fabrication:</p>
-            <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>Ordres de Fabrication:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
               id, article_id, quantity, due_date, status
             </code>
           </div>
           <div>
-            <p className="font-medium text-slate-900">Opérations:</p>
-            <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>Opérations:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
               id, order_id, article_id, operation_id, task_id, work_center_id, status, production_time_minutes, setup_time_minutes
             </code>
-            <p className="text-xs text-blue-600 mt-1">
-              ℹ️ <strong>task_id</strong> = type de tâche (ex: USINAGE, ASSEMBLAGE), <strong>work_center_id</strong> = centre de charge requis
-            </p>
-            <p className="text-xs text-green-600 mt-1">
-              ✓ Le champ <strong>machine_id</strong> est automatiquement assigné par le moteur selon les règles métier
-            </p>
           </div>
           <div>
-            <p className="font-medium text-slate-900">Articles:</p>
-            <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>Articles:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
               id, description, type_matiere, epaisseur, couleur, largeur, longueur
             </code>
-            <p className="text-xs text-slate-500 mt-1">
-              ℹ️ Les attributs permettent de créer des règles métier avancées (ex: interdire largeur &gt; 5000mm sur une machine)
-            </p>
           </div>
           <div>
-            <p className="font-medium text-slate-900">Stocks:</p>
-            <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
+            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>Stocks:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
               article_id, quantity
             </code>
           </div>
-          <div className="border-t border-slate-200 pt-3 mt-3">
-            <p className="font-medium text-slate-900 text-blue-700">Matières par Opération (Nouveau):</p>
-            <code className="text-xs font-mono bg-blue-50 px-2 py-1 rounded border border-blue-200">
+          <div className="pt-3 mt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <p className="font-medium" style={{ color: 'var(--status-info)' }}>Matières par Opération:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
               id, order_id, operation_id, article_composant_id, quantity
             </code>
-            <p className="text-xs text-slate-500 mt-1">
-              ℹ️ Une opération peut avoir plusieurs lignes (plusieurs composants nécessaires)
-            </p>
           </div>
           <div>
-            <p className="font-medium text-slate-900 text-blue-700">Réceptions Fournisseurs (Nouveau):</p>
-            <code className="text-xs font-mono bg-blue-50 px-2 py-1 rounded border border-blue-200">
+            <p className="font-medium" style={{ color: 'var(--status-info)' }}>Réceptions Fournisseurs:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
               article_id, quantity, planned_date
             </code>
-            <p className="text-xs text-slate-500 mt-1">
-              ℹ️ Format date: <span className="font-mono">YYYY-MM-DDTHH:MM:SS</span> (ex: 2026-03-16T10:00:00)
-            </p>
           </div>
-          <div className="border-t border-slate-200 pt-3 mt-3">
-            <p className="font-medium text-slate-900 text-purple-700">Nomenclatures BOM (APS):</p>
-            <code className="text-xs font-mono bg-purple-50 px-2 py-1 rounded border border-purple-200">
+          <div>
+            <p className="font-medium" style={{ color: 'var(--brand-primary)' }}>Nomenclatures BOM:</p>
+            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
               parent_article_id, child_article_id, quantity, level, unit, scrap_rate
             </code>
-            <p className="text-xs text-slate-500 mt-1">
-              ℹ️ Multi-niveaux: un composant peut lui-même avoir des composants (level=2, 3...)
-            </p>
           </div>
         </div>
       </div>
 
       {/* Workflow Guide */}
-      <div className="bg-slate-50 border border-slate-200 rounded-sm p-5">
-        <h3 className="text-lg font-semibold text-slate-800 mb-3">Workflow POC Recommandé</h3>
-        <ol className="space-y-2 text-sm text-slate-700">
+      <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
+        <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Workflow POC Recommandé</h3>
+        <ol className="space-y-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
           <li className="flex items-start gap-2">
-            <span className="font-mono font-semibold text-slate-900">1.</span>
+            <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>1.</span>
             <span>Reset des données ERP (bouton rouge ci-dessus)</span>
           </li>
           <li className="flex items-start gap-2">
-            <span className="font-mono font-semibold text-slate-900">2.</span>
+            <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>2.</span>
             <span>Import des fichiers CSV (ordres, opérations, articles, stocks)</span>
           </li>
           <li className="flex items-start gap-2">
-            <span className="font-mono font-semibold text-slate-900">3.</span>
+            <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>3.</span>
             <span>Vérification du nombre d'OF et d'opérations dans la section "État des Données"</span>
           </li>
           <li className="flex items-start gap-2">
-            <span className="font-mono font-semibold text-slate-900">4.</span>
+            <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>4.</span>
             <span>Lancement d'un scénario d'ordonnancement depuis la page Ordonnancement</span>
           </li>
         </ol>

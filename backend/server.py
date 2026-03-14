@@ -49,8 +49,10 @@ class Calendar(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     working_days: List[int] = Field(default=[1, 2, 3, 4, 5])
-    start_hour: int = Field(default=8)
-    end_hour: int = Field(default=17)
+    start_hour: int = Field(default=8)  # Kept for backward compatibility
+    end_hour: int = Field(default=17)   # Kept for backward compatibility
+    start_time: str = Field(default="08:00")  # New: HH:MM format
+    end_time: str = Field(default="17:00")    # New: HH:MM format
 
 class MachineUnavailability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -224,6 +226,10 @@ class DataStats(BaseModel):
     calendars: int = 0
     rules: int = 0
     scenarios: int = 0
+    operation_materials: int = 0     # Matières par opération
+    planned_receipts: int = 0        # Réceptions fournisseurs planifiées
+    bom_lines: int = 0               # Lignes de nomenclature
+    unavailabilities: int = 0        # Indisponibilités machines
     last_import: Optional[str] = None
 
 # ==================================================
@@ -1227,10 +1233,14 @@ async def get_data_stats():
         articles=await db.articles.count_documents({}),
         stocks=await db.stocks.count_documents({}),
         machines=await db.machines.count_documents({}),
-        work_centers=await db.work_centers.count_documents({}),
+        work_centers=await db.centres_de_charge.count_documents({}),
         calendars=await db.calendars.count_documents({}),
         rules=await db.business_rules.count_documents({}),
-        scenarios=await db.scenarios.count_documents({})
+        scenarios=await db.scenarios.count_documents({}),
+        operation_materials=await db.operation_materials.count_documents({}),
+        planned_receipts=await db.planned_supplier_receipts.count_documents({}),
+        bom_lines=await db.bom_lines.count_documents({}),
+        unavailabilities=await db.machine_unavailabilities.count_documents({})
     )
     
     last_order = await db.manufacturing_orders.find_one({}, {"_id": 0}, sort=[("id", -1)])

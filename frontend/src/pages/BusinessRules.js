@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Pencil, X, PlusCircle, MinusCircle } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Pencil, X, PlusCircle, MinusCircle, Filter, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -37,9 +37,20 @@ const EMPTY_GROUP = { conditions: [{ ...EMPTY_CONDITION }], logic: 'AND' };
 export default function BusinessRules() {
   const [rules, setRules] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [centres, setCentres] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [ruleMode, setRuleMode] = useState('simple');
+  
+  // Filtres
+  const [filters, setFilters] = useState({
+    search: '',
+    machine_id: '',
+    rule_type: '',
+    centre_de_charge_id: '',
+    active: ''
+  });
+  const [showFilters, setShowFilters] = useState(false);
   
   // Formulaire de base
   const [formData, setFormData] = useState({
@@ -64,17 +75,54 @@ export default function BusinessRules() {
 
   const fetchData = async () => {
     try {
-      const [rulesRes, machinesRes] = await Promise.all([
+      const [rulesRes, machinesRes, centresRes] = await Promise.all([
         axios.get(`${API}/rules`),
-        axios.get(`${API}/machines`)
+        axios.get(`${API}/machines`),
+        axios.get(`${API}/centres-de-charge`)
       ]);
       setRules(rulesRes.data);
       setMachines(machinesRes.data);
+      setCentres(centresRes.data);
     } catch (error) {
       console.error('Error:', error);
       toast.error('Erreur lors du chargement');
     }
   };
+
+  // Filtrage des règles
+  const filteredRules = useMemo(() => {
+    return rules.filter(rule => {
+      // Recherche textuelle
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        const matchName = rule.name?.toLowerCase().includes(searchLower);
+        const matchMachine = rule.machine_id?.toLowerCase().includes(searchLower);
+        const matchArticle = rule.article_id?.toLowerCase().includes(searchLower);
+        if (!matchName && !matchMachine && !matchArticle) return false;
+      }
+      
+      // Filtre par machine
+      if (filters.machine_id && rule.machine_id !== filters.machine_id) return false;
+      
+      // Filtre par type
+      if (filters.rule_type && rule.rule_type !== filters.rule_type) return false;
+      
+      // Filtre par centre
+      if (filters.centre_de_charge_id && rule.centre_de_charge_id !== filters.centre_de_charge_id) return false;
+      
+      // Filtre par état
+      if (filters.active === 'true' && !rule.active) return false;
+      if (filters.active === 'false' && rule.active) return false;
+      
+      return true;
+    });
+  }, [rules, filters]);
+
+  const clearFilters = () => {
+    setFilters({ search: '', machine_id: '', rule_type: '', centre_de_charge_id: '', active: '' });
+  };
+
+  const activeFiltersCount = Object.values(filters).filter(v => v !== '').length;
 
   // === Gestion des conditions ===
   const addConditionGroup = () => {
@@ -316,22 +364,138 @@ export default function BusinessRules() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="business-rules-page">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold text-slate-800">Règles Métier</h3>
-          <p className="text-sm text-slate-500 mt-1">
+          <h3 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>Règles Métier</h3>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             Règles d'affectation machine avec conditions ET/OU sur attributs
           </p>
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); }}
-          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg px-4 py-2 text-sm font-medium"
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
+          style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
           data-testid="new-rule-btn"
         >
           <Plus size={16} />
           Nouvelle Règle
         </button>
+      </div>
+
+      {/* Barre de filtres */}
+      <div className="rounded-lg p-4" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <div className="flex items-center gap-4">
+          {/* Recherche */}
+          <div className="flex-1 relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Rechercher par nom, machine, article..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              className="w-full h-9 pl-9 pr-3 rounded-lg border text-sm"
+              style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+              data-testid="filter-search"
+            />
+          </div>
+          
+          {/* Toggle filtres avancés */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeFiltersCount > 0 ? '' : ''}`}
+            style={{ 
+              backgroundColor: activeFiltersCount > 0 ? 'var(--status-info-bg)' : 'var(--bg-sunken)', 
+              color: activeFiltersCount > 0 ? 'var(--status-info)' : 'var(--text-secondary)',
+              border: '1px solid var(--border-default)'
+            }}
+            data-testid="toggle-filters"
+          >
+            <Filter size={16} />
+            Filtres {activeFiltersCount > 0 && `(${activeFiltersCount})`}
+          </button>
+          
+          {activeFiltersCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="text-sm font-medium transition-colors"
+              style={{ color: 'var(--status-error)' }}
+              data-testid="clear-filters"
+            >
+              Réinitialiser
+            </button>
+          )}
+        </div>
+        
+        {/* Filtres avancés */}
+        {showFilters && (
+          <div className="grid grid-cols-4 gap-4 mt-4 pt-4" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Machine</label>
+              <select
+                value={filters.machine_id}
+                onChange={(e) => setFilters({ ...filters, machine_id: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-machine"
+              >
+                <option value="">Toutes</option>
+                {machines.map(m => (
+                  <option key={m.id} value={m.id}>{m.id}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Type</label>
+              <select
+                value={filters.rule_type}
+                onChange={(e) => setFilters({ ...filters, rule_type: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-type"
+              >
+                <option value="">Tous</option>
+                <option value="ALLOW">ALLOW</option>
+                <option value="FORBID">FORBID</option>
+                <option value="PREFER">PREFER</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>Centre</label>
+              <select
+                value={filters.centre_de_charge_id}
+                onChange={(e) => setFilters({ ...filters, centre_de_charge_id: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-centre"
+              >
+                <option value="">Tous</option>
+                {centres.map(c => (
+                  <option key={c.id} value={c.id}>{c.id}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>État</label>
+              <select
+                value={filters.active}
+                onChange={(e) => setFilters({ ...filters, active: e.target.value })}
+                className="w-full h-9 rounded-lg border px-2 text-sm"
+                style={{ backgroundColor: 'var(--bg-sunken)', borderColor: 'var(--border-default)', color: 'var(--text-primary)' }}
+                data-testid="filter-active"
+              >
+                <option value="">Tous</option>
+                <option value="true">Actif</option>
+                <option value="false">Inactif</option>
+              </select>
+            </div>
+          </div>
+        )}
+        
+        {/* Compteur de résultats */}
+        <div className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+          {filteredRules.length} règle(s) sur {rules.length}
+        </div>
       </div>
 
       {showForm && (
@@ -627,34 +791,36 @@ export default function BusinessRules() {
       )}
 
       {/* Liste des règles */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
+      <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <table className="min-w-full">
+          <thead style={{ backgroundColor: 'var(--bg-sunken)' }}>
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Nom</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Type</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Conditions</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Machine</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">État</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Actions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Nom</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Type</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Conditions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Machine</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>État</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-slate-200">
-            {rules.length === 0 ? (
+          <tbody>
+            {filteredRules.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                  Aucune règle métier. Cliquez sur "Nouvelle Règle" pour en créer une.
+                <td colSpan={6} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {rules.length === 0 
+                    ? 'Aucune règle métier. Cliquez sur "Nouvelle Règle" pour en créer une.'
+                    : 'Aucune règle ne correspond aux filtres.'}
                 </td>
               </tr>
             ) : (
-              rules.map((rule) => {
+              filteredRules.map((rule) => {
                 const typeInfo = getRuleTypeDisplay(rule.rule_type);
                 const Icon = typeInfo.icon;
                 
                 return (
-                  <tr key={rule.id} className="hover:bg-slate-50">
+                  <tr key={rule.id} className="transition-colors" style={{ borderBottom: '1px solid var(--border-default)' }}>
                     <td className="px-4 py-3">
-                      <span className="font-medium text-slate-900">{rule.name}</span>
+                      <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{rule.name}</span>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
@@ -663,39 +829,39 @@ export default function BusinessRules() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-sm text-slate-600 font-mono">
+                      <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>
                         {renderRuleConditions(rule)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-mono text-sm text-slate-700">{rule.machine_id}</span>
+                      <span className="font-mono text-sm" style={{ color: 'var(--text-primary)' }}>{rule.machine_id}</span>
                     </td>
                     <td className="px-4 py-3">
                       {rule.active ? (
-                        <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
+                        <span className="inline-flex items-center gap-1 text-xs font-medium" style={{ color: 'var(--status-success)' }}>
                           <CheckCircle size={12} /> Actif
                         </span>
                       ) : (
-                        <span className="text-slate-400 text-xs">Inactif</span>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Inactif</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
                         <button
                           onClick={() => handleEdit(rule)}
-                          className="text-slate-600 hover:text-slate-800 p-1"
+                          className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
                           title="Modifier"
                           data-testid={`edit-rule-${rule.id}`}
                         >
-                          <Pencil size={16} />
+                          <Pencil size={16} style={{ color: 'var(--text-secondary)' }} />
                         </button>
                         <button
                           onClick={() => handleDelete(rule.id, rule.name)}
-                          className="text-red-600 hover:text-red-800 p-1"
+                          className="p-1.5 rounded-lg transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
                           title="Supprimer"
                           data-testid={`delete-rule-${rule.id}`}
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={16} className="text-red-600" />
                         </button>
                       </div>
                     </td>
