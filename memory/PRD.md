@@ -1,70 +1,91 @@
 # Shop Scheduler Pro - PRD
 
 ## Énoncé du Problème
-Application web d'ordonnancement industriel pour un site de production, permettant de planifier les opérations de fabrication sur les machines disponibles en respectant les contraintes métier.
+Application web d'ordonnancement industriel pour un site de production.
 
 ## Architecture Technique
 - **Backend**: Python FastAPI
 - **Frontend**: React
-- **Base de données**: MongoDB (V1 - migration PostgreSQL prévue)
+- **Base de données**: MongoDB
 - **Moteur d'ordonnancement**: Google OR-Tools (CP-SAT)
+
+## Modèle de Données (Codes Métier)
+
+### Principes Clés
+- **Pas d'UUID** pour les entités métier
+- **Codes lisibles** : PLI01, PLIEUSE_01, PLIAGE
+- **Terminologie française** : centre_de_charge_id, tache_id
+
+### Entités
+
+**Centre de Charge**
+```json
+{ "id": "PLI01", "nom": "Centre de Pliage" }
+```
+
+**Machine**
+```json
+{ "id": "PLIEUSE_01", "nom": "Plieuse hydraulique", "centre_de_charge_id": "PLI01" }
+```
+
+**Opération**
+```json
+{
+  "id": "OF001_10",
+  "order_id": "OF001",
+  "tache_id": "PLIAGE",
+  "centre_de_charge_id": "PLI01",
+  "production_time_minutes": 60
+}
+```
+
+**Règle Métier**
+```json
+{
+  "name": "Interdire PLIAGE sur PLIEUSE_01",
+  "tache_id": "PLIAGE",
+  "centre_de_charge_id": "PLI01",
+  "rule_type": "FORBID",
+  "machine_id": "PLIEUSE_01"
+}
+```
 
 ## Fonctionnalités Implémentées
 
-### Module de Diagnostic d'Assignation ✅ (NOUVEAU)
-**Dernière mise à jour: 14 Mars 2026**
-
-Page `/diagnostic` avec tableau détaillé affichant pour chaque opération:
-- operation_id, task_id, work_center_id
-- Machines du work_center
-- Règles métier appliquées
+### Module de Diagnostic d'Assignation ✅
+Page `/diagnostic` affichant pour chaque opération:
+- tache_id, centre_de_charge_id
+- Machines du centre (codes métier)
+- Règles applicables
 - Machines interdites (FORBID)
 - Machines préférées (PREFER)
-- Machine finale choisie
-- Cause d'échec si aucune machine
+- Machine choisie
+- Cause d'échec
 
-Causes d'échec identifiées:
-- `AUCUNE_MACHINE_DANS_WORK_CENTER_XXX` : Aucune machine rattachée à ce work_center_id
-- `WORK_CENTER_ID_MANQUANT` : L'opération n'a pas de work_center_id
-- `TOUTES_MACHINES_INTERDITES_PAR_FORBID` : Toutes les machines sont bloquées par des règles
+### Moteur d'Auto-Assignation ✅
+1. Extraire tache_id et centre_de_charge_id de l'opération
+2. Trouver les machines du centre_de_charge_id
+3. Appliquer règles FORBID/ALLOW/PREFER
+4. Sélectionner la meilleure machine
 
-### Module de Règles Métier (POC - Simplifié) ✅
-Structure d'une règle:
-- `id`, `name`
-- `task_id`, `work_center_id`, `article_id` (critères de matching)
-- `rule_type`: ALLOW | FORBID | PREFER
-- `machine_id`: machine cible
-- `active`: état de la règle
+### Règles Métier ✅
+Types: ALLOW, FORBID, PREFER
+Critères: tache_id, centre_de_charge_id, article_id (codes métier)
 
-**IMPORTANT - Logique de matching:**
-- Les règles utilisent UNIQUEMENT `task_id`, `work_center_id` et `article_id`
-- L'`id` de l'opération n'est JAMAIS utilisé pour le matching
+## Endpoints API
+- `GET/POST /api/centres-de-charge`
+- `GET/POST /api/machines`
+- `GET/POST /api/rules`
+- `GET /api/diagnostic/assignment`
+- `POST /api/scheduling/calculate`
 
-### Moteur d'Auto-Assignation des Machines ✅
-Logique étape par étape:
-1. Extraire `task_id` et `work_center_id` de l'opération
-2. Trouver les machines du `work_center_id` requis
-3. Appliquer les règles métier (FORBID exclut, PREFER donne +100 score)
-4. Sélectionner la machine avec le meilleur score
-
-Logs détaillés à chaque étape dans la console backend.
-
-## Endpoints API Principaux
-- `GET /api/diagnostic/assignment` - Diagnostic complet d'assignation
-- `GET/POST /api/rules` - Gestion des règles métier
-- `POST /api/scheduling/calculate` - Lancement ordonnancement
-
-## PROBLÈME IDENTIFIÉ
-Les opérations importées utilisent des `work_center_id` (LVC001, LVC002...) qui ne correspondent pas aux `work_center_id` des machines (qui sont des UUIDs).
-**Solution**: S'assurer que les machines sont rattachées aux mêmes work_center_id que ceux utilisés dans les opérations importées.
+## Validation Effectuée
+- 23/27 opérations assignées avec succès
+- Règle FORBID correctement appliquée (M001 exclue)
+- Règle PREFER correctement appliquée (M003 prioritaire)
+- 10 opérations avec machine préférée
 
 ## Backlog
-
-### P1 - Prochaines Tâches
-- [ ] Aligner les work_center_id des machines avec ceux des opérations
-- [ ] Créer un jeu de données de démonstration cohérent
-
-### P2 - Fonctionnalités Futures
+- [ ] Import CSV avec terminologie française
 - [ ] Vue matricielle compatibilités machine/tâche
-- [ ] Comparaison de scénarios
-- [ ] Export du planning en CSV
+- [ ] Export planning en CSV

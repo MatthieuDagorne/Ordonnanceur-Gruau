@@ -33,18 +33,20 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Pydantic Models - Structure révisée
-class WorkCenter(BaseModel):
+# Pydantic Models - Terminologie française, codes métier
+class CentreDeCharge(BaseModel):
+    """Centre de charge (ex: PLI01, USI01)"""
     model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
+    id: str  # Code métier (ex: PLI01), pas UUID
+    nom: str
     description: Optional[str] = None
 
 class Machine(BaseModel):
+    """Machine rattachée à un centre de charge"""
     model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    work_center_id: str
+    id: str  # Code métier (ex: PLIEUSE_01), pas UUID
+    nom: str
+    centre_de_charge_id: str  # Référence au code du centre de charge
     description: Optional[str] = None
 
 class Calendar(BaseModel):
@@ -65,51 +67,53 @@ class MachineUnavailability(BaseModel):
 
 class BusinessRule(BaseModel):
     """
-    Règles métier simplifiées pour le POC.
-    Types: ALLOW, FORBID, PREFER
+    Règle métier pour le POC.
+    Utilise des codes métier (pas UUID).
     """
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     
-    # Critères de ciblage (au moins task_id ou work_center_id requis)
-    task_id: Optional[str] = None
-    work_center_id: Optional[str] = None
+    # Critères de ciblage (codes métier)
+    tache_id: Optional[str] = None
+    centre_de_charge_id: Optional[str] = None
     article_id: Optional[str] = None
     
-    # Type de règle: ALLOW, FORBID, PREFER
+    # Type: ALLOW, FORBID, PREFER
     rule_type: str
     
-    # Machine cible (obligatoire)
+    # Machine cible (code métier)
     machine_id: str
     
     # État
     active: bool = Field(default=True)
 
 class ManufacturingOrder(BaseModel):
+    """Ordre de fabrication"""
     model_config = ConfigDict(extra="ignore")
-    id: str
-    article_id: str  # Renommé de 'article' vers 'article_id'
+    id: str  # Code OF (ex: OF001)
+    article_id: str
     quantity: float
     due_date: str
     status: str
 
 class Operation(BaseModel):
     """
-    Structure complète des opérations avec task_id et work_center_id.
+    Opération de fabrication.
+    Utilise tache_id et centre_de_charge_id (codes métier).
     """
     model_config = ConfigDict(extra="ignore")
-    id: str
-    order_id: str
+    id: str  # Code opération (ex: OF001_10)
+    order_id: str  # Référence à l'OF
     article_id: str
-    operation_id: int  # Numéro d'opération dans la gamme
-    task_id: str  # Type de tâche (ex: USINAGE, ASSEMBLAGE)
-    work_center_id: str  # Centre de charge requis
+    operation_id: int  # Numéro dans la gamme (10, 20, 30...)
+    tache_id: str  # Type de tâche (ex: PLIAGE, USINAGE)
+    centre_de_charge_id: str  # Centre de charge requis (ex: PLI01)
     status: Optional[str] = "pending"
     production_time_minutes: int
     setup_time_minutes: int
     
-    # Assignation machine (optionnelle, déterminée par le moteur)
+    # Assignation (déterminée par le moteur)
     machine_id: Optional[str] = None
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
@@ -158,34 +162,46 @@ class DataStats(BaseModel):
     scenarios: int
     last_import: Optional[str] = None
 
-# Work Centers endpoints
-@api_router.post("/work-centers", response_model=WorkCenter)
-async def create_work_center(work_center: WorkCenter):
-    doc = work_center.model_dump()
-    await db.work_centers.insert_one(doc)
-    return work_center
+# Centres de Charge endpoints
+@api_router.post("/centres-de-charge")
+async def create_centre_de_charge(centre: CentreDeCharge):
+    """Créer un centre de charge avec un code métier."""
+    doc = centre.model_dump()
+    # Vérifier que l'ID n'existe pas déjà
+    existing = await db.centres_de_charge.find_one({"id": centre.id})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Le centre de charge '{centre.id}' existe déjà")
+    await db.centres_de_charge.insert_one(doc)
+    return centre
 
-@api_router.get("/work-centers", response_model=List[WorkCenter])
-async def get_work_centers():
-    work_centers = await db.work_centers.find({}, {"_id": 0}).to_list(1000)
-    return work_centers
+@api_router.get("/centres-de-charge")
+async def get_centres_de_charge():
+    """Liste tous les centres de charge."""
+    centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(1000)
+    return centres
 
-@api_router.delete("/work-centers/{work_center_id}")
-async def delete_work_center(work_center_id: str):
-    result = await db.work_centers.delete_one({"id": work_center_id})
+@api_router.delete("/centres-de-charge/{centre_id}")
+async def delete_centre_de_charge(centre_id: str):
+    result = await db.centres_de_charge.delete_one({"id": centre_id})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Work center not found")
-    return {"message": "Deleted successfully"}
+        raise HTTPException(status_code=404, detail="Centre de charge non trouvé")
+    return {"message": "Supprimé avec succès"}
 
 # Machines endpoints
-@api_router.post("/machines", response_model=Machine)
+@api_router.post("/machines")
 async def create_machine(machine: Machine):
+    """Créer une machine avec un code métier."""
     doc = machine.model_dump()
+    # Vérifier que l'ID n'existe pas déjà
+    existing = await db.machines.find_one({"id": machine.id})
+    if existing:
+        raise HTTPException(status_code=400, detail=f"La machine '{machine.id}' existe déjà")
     await db.machines.insert_one(doc)
     return machine
 
-@api_router.get("/machines", response_model=List[Machine])
+@api_router.get("/machines")
 async def get_machines():
+    """Liste toutes les machines."""
     machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
     return machines
 
@@ -193,8 +209,8 @@ async def get_machines():
 async def delete_machine(machine_id: str):
     result = await db.machines.delete_one({"id": machine_id})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Machine not found")
-    return {"message": "Deleted successfully"}
+        raise HTTPException(status_code=404, detail="Machine non trouvée")
+    return {"message": "Supprimé avec succès"}
 
 # Calendars endpoints
 @api_router.post("/calendars", response_model=Calendar)
@@ -235,19 +251,18 @@ async def delete_unavailability(unavailability_id: str):
     return {"message": "Deleted successfully"}
 
 # Business Rules endpoints
-@api_router.post("/rules", response_model=BusinessRule)
+@api_router.post("/rules")
 async def create_rule(rule: BusinessRule):
+    """Créer une règle métier."""
     doc = rule.model_dump()
-    # Normaliser rule_type en majuscules
     if 'rule_type' in doc and doc['rule_type']:
         doc['rule_type'] = doc['rule_type'].upper()
     await db.business_rules.insert_one(doc)
-    # Retourner la règle normalisée
     return {
         'id': doc.get('id'),
         'name': doc.get('name'),
-        'task_id': doc.get('task_id'),
-        'work_center_id': doc.get('work_center_id'),
+        'tache_id': doc.get('tache_id'),
+        'centre_de_charge_id': doc.get('centre_de_charge_id'),
         'article_id': doc.get('article_id'),
         'rule_type': doc.get('rule_type', 'ALLOW').upper(),
         'machine_id': doc.get('machine_id'),
@@ -256,35 +271,20 @@ async def create_rule(rule: BusinessRule):
 
 @api_router.get("/rules")
 async def get_rules():
-    """Retourne toutes les règles métier (format simplifié POC)."""
+    """Liste toutes les règles métier."""
     rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
-    # Filtrer pour ne garder que les règles conformes au nouveau format
     valid_rules = []
     for rule in rules:
-        # Vérifier que les champs obligatoires sont présents
         if rule.get('name') and rule.get('machine_id') and rule.get('rule_type'):
-            # Normaliser rule_type en majuscules
             rule_type = rule.get('rule_type', '').upper()
-            
-            # Convertir les anciens types vers le nouveau format
             if rule_type not in ['ALLOW', 'FORBID', 'PREFER']:
-                if rule_type in ['COMPATIBILITY', 'MACHINE_OPERATION', 'TASK_WORKCENTER']:
-                    if rule.get('allowed') is False:
-                        rule_type = 'FORBID'
-                    else:
-                        rule_type = 'ALLOW'
-                elif rule_type == 'PROHIBITION':
-                    rule_type = 'FORBID'
-                elif rule_type == 'PREFERENCE':
-                    rule_type = 'PREFER'
-                else:
-                    rule_type = 'ALLOW'  # Valeur par défaut
+                rule_type = 'ALLOW'
             
             valid_rules.append({
                 'id': rule.get('id'),
                 'name': rule.get('name'),
-                'task_id': rule.get('task_id'),
-                'work_center_id': rule.get('work_center_id'),
+                'tache_id': rule.get('tache_id') or rule.get('task_id'),  # Compatibilité
+                'centre_de_charge_id': rule.get('centre_de_charge_id') or rule.get('work_center_id'),
                 'article_id': rule.get('article_id'),
                 'rule_type': rule_type,
                 'machine_id': rule.get('machine_id'),
@@ -314,9 +314,24 @@ async def get_manufacturing_orders():
 
 @api_router.get("/operations")
 async def get_operations():
-    """Retourne toutes les opérations."""
+    """Retourne toutes les opérations avec terminologie française."""
     operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
-    return operations
+    # Adapter la terminologie si nécessaire
+    result = []
+    for op in operations:
+        result.append({
+            'id': op.get('id'),
+            'order_id': op.get('order_id'),
+            'article_id': op.get('article_id'),
+            'operation_id': op.get('operation_id'),
+            'tache_id': op.get('tache_id') or op.get('task_id'),  # Compatibilité
+            'centre_de_charge_id': op.get('centre_de_charge_id') or op.get('work_center_id'),
+            'status': op.get('status'),
+            'production_time_minutes': op.get('production_time_minutes'),
+            'setup_time_minutes': op.get('setup_time_minutes'),
+            'machine_id': op.get('machine_id')
+        })
+    return result
 
 # Scenarios endpoints
 @api_router.post("/scenarios", response_model=Scenario)
@@ -634,24 +649,44 @@ async def export_schedule(scenario_id: str):
 @api_router.get("/diagnostic/assignment")
 async def get_assignment_diagnostic():
     """
-    Retourne un diagnostic complet de l'assignation des machines.
-    Affiche pour chaque opération:
-    - task_id, work_center_id
-    - machines du work_center
-    - règles appliquées
-    - machine choisie ou cause d'échec
+    Diagnostic complet de l'assignation des machines.
+    Utilise la terminologie française et les codes métier.
     """
     try:
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
-        machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
+        operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        machines_raw = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         
-        # Créer le moteur de règles et l'assignateur
-        rules_engine = RulesEngine(rules)
+        # Adapter la terminologie des opérations
+        operations = []
+        for op in operations_raw:
+            operations.append({
+                **op,
+                'tache_id': op.get('tache_id') or op.get('task_id'),
+                'centre_de_charge_id': op.get('centre_de_charge_id') or op.get('work_center_id')
+            })
+        
+        # Adapter la terminologie des machines
+        machines = []
+        for m in machines_raw:
+            machines.append({
+                **m,
+                'centre_de_charge_id': m.get('centre_de_charge_id') or m.get('work_center_id')
+            })
+        
+        # Adapter la terminologie des règles
+        adapted_rules = []
+        for r in rules:
+            adapted_rules.append({
+                **r,
+                'tache_id': r.get('tache_id') or r.get('task_id'),
+                'centre_de_charge_id': r.get('centre_de_charge_id') or r.get('work_center_id')
+            })
+        
+        rules_engine = RulesEngine(adapted_rules)
         assigner = MachineAssigner(machines, rules_engine)
         
-        # Exécuter l'assignation avec diagnostic complet
         result = assigner.assign_machines_to_operations(operations, orders)
         
         return {
@@ -662,16 +697,16 @@ async def get_assignment_diagnostic():
                 'preferred': result['preferred_count'],
                 'failure_causes': result['failure_causes']
             },
-            'machines_by_workcenter': {
-                wc: [{'id': m.get('id'), 'name': m.get('name')} for m in ms]
-                for wc, ms in assigner.machines_by_workcenter.items()
+            'machines_par_centre': {
+                centre: [{'id': m.get('id')} for m in ms]
+                for centre, ms in assigner.machines_by_centre.items()
             },
-            'rules_loaded': [
+            'regles_chargees': [
                 {
                     'name': r['name'],
                     'type': r['type'],
-                    'task_id': r.get('task_id'),
-                    'work_center_id': r.get('work_center_id'),
+                    'tache_id': r.get('tache_id'),
+                    'centre_de_charge_id': r.get('centre_de_charge_id'),
                     'machine_id': r['machine_id']
                 }
                 for r in result['rules_diagnostics']['rules_detail']

@@ -16,7 +16,7 @@ import {
 const navigation = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
   { name: 'Import CSV', path: '/import', icon: Upload },
-  { name: 'Postes', path: '/work-centers', icon: Building2 },
+  { name: 'Centres de Charge', path: '/centres-de-charge', icon: Building2 },
   { name: 'Machines', path: '/machines', icon: Cpu },
   { name: 'Calendriers', path: '/calendars', icon: Calendar },
   { name: 'Indisponibilités', path: '/unavailability', icon: AlertCircle },

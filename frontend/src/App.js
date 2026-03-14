@@ -3,7 +3,7 @@ import { Toaster } from '@/components/ui/sonner';
 import Layout from '@/components/Layout';
 import Dashboard from '@/pages/Dashboard';
 import ImportData from '@/pages/ImportData';
-import WorkCenters from '@/pages/WorkCenters';
+import CentresDeCharge from '@/pages/CentresDeCharge';
 import Machines from '@/pages/Machines';
 import Calendars from '@/pages/Calendars';
 import Unavailability from '@/pages/Unavailability';
@@ -23,7 +23,7 @@ function App() {
           <Route path="/" element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="import" element={<ImportData />} />
-            <Route path="work-centers" element={<WorkCenters />} />
+            <Route path="centres-de-charge" element={<CentresDeCharge />} />
             <Route path="machines" element={<Machines />} />
             <Route path="calendars" element={<Calendars />} />
             <Route path="unavailability" element={<Unavailability />} />

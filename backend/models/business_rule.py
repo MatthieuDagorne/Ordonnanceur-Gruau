@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional
 from enum import Enum
-import uuid
 
 
 class RuleType(str, Enum):
@@ -12,23 +11,33 @@ class RuleType(str, Enum):
 
 class BusinessRule(BaseModel):
     """
-    Modèle simplifié de règle métier pour le POC.
-    Gère uniquement les règles d'affectation machine.
+    Règle métier simplifiée pour le POC.
+    Utilise des codes métier lisibles (pas d'UUID).
+    
+    Champs:
+    - id: code métier unique de la règle
+    - name: nom descriptif
+    - tache_id: code de la tâche (ex: PLIAGE, USINAGE)
+    - centre_de_charge_id: code du centre de charge (ex: PLI01, USI01)
+    - article_id: code article (optionnel)
+    - rule_type: ALLOW, FORBID, PREFER
+    - machine_id: code de la machine cible (ex: PLIEUSE_01)
+    - active: état de la règle
     """
     model_config = ConfigDict(extra="ignore")
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=lambda: "")
     name: str
     
-    # Critères de ciblage (au moins task_id ou work_center_id requis)
-    task_id: Optional[str] = None
-    work_center_id: Optional[str] = None
-    article_id: Optional[str] = None  # Ne peut pas être seul
+    # Critères de ciblage (codes métier, pas UUID)
+    tache_id: Optional[str] = None
+    centre_de_charge_id: Optional[str] = None
+    article_id: Optional[str] = None
     
     # Type de règle
-    rule_type: RuleType  # ALLOW, FORBID, PREFER
+    rule_type: RuleType
     
-    # Machine cible (obligatoire)
+    # Machine cible (code métier, pas UUID)
     machine_id: str
     
     # État
@@ -41,38 +50,34 @@ class BusinessRule(BaseModel):
             return v.upper()
         return v
 
-    def matches_operation(self, operation: dict) -> bool:
+    def matches_operation(self, tache_id: str, centre_de_charge_id: str, article_id: str = None) -> bool:
         """
-        Vérifie si cette règle s'applique à l'opération donnée.
-        Une règle correspond si TOUS ses critères définis correspondent.
+        Vérifie si cette règle s'applique aux critères donnés.
         """
         if not self.active:
             return False
         
-        # Vérifier task_id si défini
-        if self.task_id:
-            if operation.get('task_id') != self.task_id:
-                return False
+        # Vérifier tache_id si défini dans la règle
+        if self.tache_id and self.tache_id != tache_id:
+            return False
         
-        # Vérifier work_center_id si défini
-        if self.work_center_id:
-            if operation.get('work_center_id') != self.work_center_id:
-                return False
+        # Vérifier centre_de_charge_id si défini dans la règle
+        if self.centre_de_charge_id and self.centre_de_charge_id != centre_de_charge_id:
+            return False
         
-        # Vérifier article_id si défini
-        if self.article_id:
-            if operation.get('article_id') != self.article_id:
-                return False
+        # Vérifier article_id si défini dans la règle
+        if self.article_id and self.article_id != article_id:
+            return False
         
         return True
 
     def get_criteria_display(self) -> str:
         """Retourne une représentation lisible des critères."""
         parts = []
-        if self.task_id:
-            parts.append(f"task={self.task_id}")
-        if self.work_center_id:
-            parts.append(f"wc={self.work_center_id}")
+        if self.tache_id:
+            parts.append(f"tâche={self.tache_id}")
+        if self.centre_de_charge_id:
+            parts.append(f"centre={self.centre_de_charge_id}")
         if self.article_id:
             parts.append(f"article={self.article_id}")
         return " + ".join(parts) if parts else "Aucun critère"
