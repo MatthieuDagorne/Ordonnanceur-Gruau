@@ -21,94 +21,93 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Édition CRUD complète des règles
 - Logique ET/OU dans les conditions
 - Groupes de conditions multiples
-- Opérateurs avancés (GT, GE, LT, LE, EQ, NE, IN, NOT_IN)
 
 ### Phase 3 - Transformation APS ✅
 - Page Ordonnancement avec scénarios
 - Options de priorité (Date, Matière, Équilibré)
-- Paramètres solveur (durée, gap optimalité)
 - Dashboard APS avec KPIs
 
-### Phase 4 - P1/P2 Features (14 mars 2026) ✅
+### Phase 4 - P1/P2 Features ✅
+- Vue Matricielle Compatibilités (/matrix)
+- Comparaison de Scénarios (/scenarios)
+- Gantt Interactif (/gantt/:id)
+- Stock Projeté Avancé avec dates ordonnancées
 
-#### Vue Matricielle Compatibilités (/matrix)
-- Affichage matrice machines × tâches
-- Indicateurs visuels : Autorisé, Interdit, Préféré, Compatible, Incompatible
-- Légende explicative
-- Statistiques (8 machines, 4 tâches, 5 règles, 32 combinaisons)
+### Phase 5 - Améliorations Ergonomiques (14 mars 2026) ✅
 
-#### Comparaison de Scénarios (/scenarios)
-- Sélection multiple de scénarios (checkboxes)
-- Bouton "Comparer" dynamique (2+ sélections)
-- Modal de comparaison avec :
-  - Indicateurs "Best" : Moins de conflits, Plus court, Moins de retards, Plus rapide
-  - Tableau comparatif : opérations, conflits, makespan, retards, machines, temps calcul
-  - Trophées pour les meilleurs scores
-- Suppression de scénarios
+#### 1. Calendriers en Quarts d'Heure
+- **Inputs** : `type="time"` avec `step="900"` (15 min)
+- **Format** : HH:MM (ex: 07:45, 16:45)
+- **Exemples** : Affichés sous les inputs
+- **Calcul** : Durée/jour automatique
 
-#### Gantt Interactif (/gantt/:id)
-- Visualisation temporelle par machine
-- Barres de tâches colorées par machine
-- Zoom (50% - 300%)
-- Tooltips au survol : ID, ordre, article, dates, durée
-- Indicateurs visuels pour retards (rouge)
-- Export CSV
-- Statistiques : opérations, durée totale, machines, statut
+#### 2. État des Données Complet
+- **Section ERP** : Ordres Fab., Opérations, Articles, Stocks
+- **Section Supply Chain** : Matières/Op., Réceptions Prévues, Nomenclatures (BOM), Indisponibilités
+- **Section Configuration** : Machines, Centres Charge, Calendriers, Règles Métier, Scénarios
 
-#### Stock Projeté Avancé
-- API `/api/projected-stock/advanced`
-- Utilise les dates de début d'opération ordonnancées
-- Distingue consommations ordonnancées vs non-ordonnancées
-- Timeline détaillée avec détection de ruptures
+#### 3. Filtres Intelligents par Page
+| Page | Filtres |
+|------|---------|
+| Règles Métier | Recherche, Machine, Type (ALLOW/FORBID/PREFER), Centre, État actif |
+| Ordres Fab. | Recherche, Article, Statut (retard/urgent/ok), Date début/fin |
+| Diagnostic | Recherche, Statut (assignées/non assignées), Centre, Article |
+| Stock Projeté | Recherche, Statut stock (rupture/ok/faible) |
 
-### Phase 5 - UI/UX Refonte ✅
-- Système de thème clair/sombre
-- Variables CSS cohérentes
-- Classes personnalisées pour composants spéciaux
-- Coins arrondis (rounded-lg)
-- Lisibilité validée sur toutes les pages
+**Caractéristiques** :
+- Recherche textuelle instantanée
+- Compteur de résultats (X / Y)
+- Bouton "Réinitialiser"
+- Performance avec `useMemo`
 
 ## APIs Principales
 
-### Nouvelles (P1/P2)
-- `GET /api/matrix/machine-task` - Matrice compatibilités
-- `GET /api/scenarios/compare?ids=...` - Comparaison scénarios
-- `DELETE /api/scenarios/{id}` - Suppression scénario
-- `GET /api/gantt/data/{id}` - Données Gantt formatées
-- `GET /api/projected-stock/advanced` - Stock projeté avec dates ordonnancées
+### Data Stats (mis à jour)
+```json
+GET /api/data/stats
+{
+  "manufacturing_orders": 10,
+  "operations": 24,
+  "articles": 10,
+  "stocks": 10,
+  "machines": 8,
+  "work_centers": 4,
+  "calendars": 2,
+  "rules": 5,
+  "scenarios": 2,
+  "operation_materials": 10,
+  "planned_receipts": 9,
+  "bom_lines": 0,
+  "unavailabilities": 0
+}
+```
 
-### Existantes
-- `POST /api/schedule/run` - Lancer ordonnancement
-- `GET /api/aps/kpis` - Dashboard APS
-- `POST /api/rules` - Créer règle
-- `PUT /api/rules/{id}` - Modifier règle
+### Calendars (mis à jour)
+```json
+POST /api/calendars
+{
+  "name": "Équipe Matin",
+  "working_days": [1, 2, 3, 4, 5],
+  "start_time": "07:45",
+  "end_time": "16:45",
+  "start_hour": 7,
+  "end_hour": 16
+}
+```
 
 ## Validation Tests (14 mars 2026)
 
-### Backend : 100% (12/12 tests)
-- Matrix API ✅
-- Scenarios Compare API ✅
-- Gantt Data API ✅
-- Projected Stock Advanced API ✅
-- Scenario Delete API ✅
+### Backend : 100% (9/9 tests)
+- DataStats API ✅
+- Calendars HH:MM ✅
+- Rules, Operations, Diagnostic, Stock APIs ✅
 
-### Frontend : 100%
-- Navigation complète ✅
-- Matrice compatibilités ✅
-- Comparaison scénarios (modal) ✅
-- Gantt interactif (zoom, tooltips) ✅
-- Thème clair/sombre ✅
+### Frontend : 100% (6/6 tests)
+- Calendars time inputs ✅
+- Import stats sections ✅
+- Filtres sur 4 pages ✅
 
 ## Backlog
-
-### P1 - Complété ✅
-- ~~Logique MRP dans aps_engine.py~~
-- ~~Dates consommation avec ordonnancement~~
-
-### P2 - Complété ✅
-- ~~Vue matricielle compatibilités~~
-- ~~Comparaison What-if scénarios~~
-- ~~Gantt interactif~~
 
 ### P3 - À Faire
 - [ ] Export CSV du planning
@@ -118,27 +117,16 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - [ ] IA prédictive
 - [ ] Intégration ERP
 
-## Fichiers Clés
+## Fichiers Modifiés (Phase 5)
 
 ```
-/app/
-├── backend/
-│   ├── server.py          # Tous endpoints API
-│   ├── services/
-│   │   ├── aps_engine.py    # MRP, BOM, Capacité
-│   │   ├── scheduler_engine.py  # OR-Tools
-│   │   └── rules_engine.py    # Moteur règles
-│   └── tests/
-│       └── test_p1p2_features.py  # Tests régression
-└── frontend/
-    └── src/
-        ├── pages/
-        │   ├── MatrixView.js         # Nouvelle
-        │   ├── ScenariosComparison.js # Nouvelle
-        │   ├── GanttInteractive.js   # Nouvelle
-        │   ├── BusinessRules.js
-        │   └── ...
-        ├── components/
-        │   └── Layout.js
-        └── App.css
+backend/
+├── server.py              # DataStats model, Calendar model
+frontend/src/pages/
+├── Calendars.js           # Time inputs HH:MM
+├── ImportData.js          # 3 sections de stats
+├── BusinessRules.js       # Filtres avec useMemo
+├── ManufacturingOrders.js # Filtres avec useMemo
+├── DiagnosticAssignment.js# Filtres avec useMemo
+├── ProjectedStock.js      # Filtres avec useMemo
 ```
