@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, Clock } from 'lucide-react';
+import { Plus, Trash2, Clock, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -9,6 +9,7 @@ const API = `${BACKEND_URL}/api`;
 export default function Calendars() {
   const [calendars, setCalendars] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingCalendar, setEditingCalendar] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     working_days: [1, 2, 3, 4, 5],
@@ -27,6 +28,28 @@ export default function Calendars() {
     } catch (error) {
       console.error('Error fetching calendars:', error);
     }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      working_days: [1, 2, 3, 4, 5],
+      start_time: '08:00',
+      end_time: '17:00',
+    });
+    setEditingCalendar(null);
+  };
+
+  const handleEdit = (calendar) => {
+    // Charger les données du calendrier dans le formulaire
+    setFormData({
+      name: calendar.name,
+      working_days: calendar.working_days || [1, 2, 3, 4, 5],
+      start_time: calendar.start_time || `${String(calendar.start_hour || 8).padStart(2, '0')}:00`,
+      end_time: calendar.end_time || `${String(calendar.end_hour || 17).padStart(2, '0')}:00`,
+    });
+    setEditingCalendar(calendar);
+    setShowForm(true);
   };
 
   const handleSubmit = async (e) => {
@@ -49,13 +72,21 @@ export default function Calendars() {
         end_hour: parseInt(endParts[0]),
       };
       
-      await axios.post(`${API}/calendars`, payload);
-      toast.success('Calendrier créé');
-      setFormData({ name: '', working_days: [1, 2, 3, 4, 5], start_time: '08:00', end_time: '17:00' });
+      if (editingCalendar) {
+        // Mode édition
+        await axios.put(`${API}/calendars/${editingCalendar.id}`, payload);
+        toast.success('Calendrier modifié');
+      } else {
+        // Mode création
+        await axios.post(`${API}/calendars`, payload);
+        toast.success('Calendrier créé');
+      }
+      
+      resetForm();
       setShowForm(false);
       fetchCalendars();
     } catch (error) {
-      toast.error('Erreur lors de la création');
+      toast.error(editingCalendar ? 'Erreur lors de la modification' : 'Erreur lors de la création');
     }
   };
 
@@ -68,6 +99,11 @@ export default function Calendars() {
     } catch (error) {
       toast.error('Erreur lors de la suppression');
     }
+  };
+
+  const handleCancel = () => {
+    resetForm();
+    setShowForm(false);
   };
 
   const daysOfWeek = [
@@ -96,7 +132,6 @@ export default function Calendars() {
 
   // Format display time from calendar data
   const formatTime = (calendar) => {
-    // Use new format if available, fallback to old format
     const start = calendar.start_time || `${String(calendar.start_hour || 8).padStart(2, '0')}:00`;
     const end = calendar.end_time || `${String(calendar.end_hour || 17).padStart(2, '0')}:00`;
     return `${start} - ${end}`;
@@ -132,7 +167,7 @@ export default function Calendars() {
         </div>
         <button
           data-testid="create-calendar-btn"
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => { resetForm(); setShowForm(true); }}
           className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
           style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
         >
@@ -143,6 +178,18 @@ export default function Calendars() {
 
       {showForm && (
         <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {editingCalendar ? `Modifier: ${editingCalendar.name}` : 'Nouveau Calendrier'}
+            </h3>
+            <button 
+              onClick={handleCancel}
+              className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X size={18} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+          
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
@@ -175,11 +222,7 @@ export default function Calendars() {
                     type="button"
                     data-testid={`day-${day.value}-btn`}
                     onClick={() => toggleDay(day.value)}
-                    className={`px-4 py-2 text-sm rounded-lg border font-medium transition-all ${
-                      formData.working_days.includes(day.value)
-                        ? 'border-transparent'
-                        : ''
-                    }`}
+                    className={`px-4 py-2 text-sm rounded-lg border font-medium transition-all`}
                     style={{
                       backgroundColor: formData.working_days.includes(day.value) 
                         ? 'var(--brand-primary)' 
@@ -254,11 +297,11 @@ export default function Calendars() {
                 className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                 style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
               >
-                Créer
+                {editingCalendar ? 'Enregistrer' : 'Créer'}
               </button>
               <button
                 type="button"
-                onClick={() => setShowForm(false)}
+                onClick={handleCancel}
                 className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                 style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
               >
@@ -306,13 +349,24 @@ export default function Calendars() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <button
-                    data-testid="delete-calendar-btn"
-                    onClick={() => handleDelete(calendar.id)}
-                    className="p-1.5 rounded-lg transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
-                  >
-                    <Trash2 size={16} className="text-red-600" />
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      data-testid={`edit-calendar-${calendar.id}`}
+                      onClick={() => handleEdit(calendar)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+                      title="Modifier"
+                    >
+                      <Pencil size={16} style={{ color: 'var(--text-secondary)' }} />
+                    </button>
+                    <button
+                      data-testid={`delete-calendar-${calendar.id}`}
+                      onClick={() => handleDelete(calendar.id)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={16} className="text-red-600" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

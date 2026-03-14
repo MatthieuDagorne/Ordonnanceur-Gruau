@@ -354,6 +354,26 @@ async def get_calendars():
     calendars = await db.calendars.find({}, {"_id": 0}).to_list(1000)
     return calendars
 
+@api_router.get("/calendars/{calendar_id}", response_model=Calendar)
+async def get_calendar(calendar_id: str):
+    calendar = await db.calendars.find_one({"id": calendar_id}, {"_id": 0})
+    if not calendar:
+        raise HTTPException(status_code=404, detail="Calendar not found")
+    return calendar
+
+@api_router.put("/calendars/{calendar_id}", response_model=Calendar)
+async def update_calendar(calendar_id: str, calendar: Calendar):
+    # Vérifier que le calendrier existe
+    existing = await db.calendars.find_one({"id": calendar_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Calendar not found")
+    
+    # Mettre à jour
+    update_data = calendar.model_dump()
+    update_data["id"] = calendar_id  # Garder l'ID original
+    await db.calendars.replace_one({"id": calendar_id}, update_data)
+    return Calendar(**update_data)
+
 @api_router.delete("/calendars/{calendar_id}")
 async def delete_calendar(calendar_id: str):
     result = await db.calendars.delete_one({"id": calendar_id})
