@@ -258,6 +258,17 @@ h1, h2, h3, h4, h5, h6 {
 .border-blue-200, .border-blue-300 { border-color: var(--status-info-border) !important; }
 .bg-blue-500, .bg-blue-600 { background-color: var(--brand-primary) !important; color: white !important; }
 
+/* Ensure blue section text is readable in dark mode */
+.dark .bg-blue-50 .text-blue-800,
+.dark .bg-blue-50 .text-blue-700,
+.dark .bg-blue-50 .text-blue-600 { 
+  color: #93C5FD !important; /* Lighter blue for dark backgrounds */
+}
+.dark .bg-blue-50 .text-xs.text-blue-500,
+.dark .bg-blue-50 .text-xs.text-blue-600 {
+  color: #BFDBFE !important;
+}
+
 /* Cyan/Sky */
 .bg-cyan-50, .bg-cyan-100, .bg-sky-50, .bg-sky-100 { background-color: var(--status-info-bg) !important; }
 .text-cyan-500, .text-cyan-600, .text-cyan-700,
@@ -565,4 +576,43 @@ button, .btn {
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+
+
+/* ========================================
+   Conditions Box - Theme aware
+   ======================================== */
+.conditions-box {
+  background-color: var(--status-info-bg);
+  border: 1px solid var(--status-info-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+}
+
+.conditions-box-title {
+  color: var(--status-info);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.conditions-group {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--status-info-border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+}
+
+.conditions-group-label {
+  color: var(--status-info);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.conditions-add-btn {
+  color: var(--status-info);
+  transition: opacity 0.15s ease;
+}
+
+.conditions-add-btn:hover {
+  opacity: 0.8;
 }

@@ -326,7 +326,7 @@ export default function BusinessRules() {
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); }}
-          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
+          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg px-4 py-2 text-sm font-medium"
           data-testid="new-rule-btn"
         >
           <Plus size={16} />
@@ -335,7 +335,7 @@ export default function BusinessRules() {
       </div>
 
       {showForm && (
-        <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5" data-testid="rule-form">
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5" data-testid="rule-form">
           <div className="flex items-center justify-between mb-4">
             <h4 className="text-lg font-semibold text-slate-800">
               {editingRule ? `Modifier la règle "${editingRule.name}"` : 'Nouvelle Règle d\'Affectation'}
@@ -346,7 +346,7 @@ export default function BusinessRules() {
           </div>
           
           {formError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-sm flex items-center gap-2 text-red-700 text-sm">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700 text-sm">
               <AlertCircle size={16} />
               {formError}
             </div>
@@ -361,7 +361,7 @@ export default function BusinessRules() {
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="mt-1 w-full h-10 rounded-sm border border-slate-300 bg-transparent px-3 text-sm"
+                  className="mt-1 w-full h-10 rounded-lg border border-slate-300 bg-transparent px-3 text-sm"
                   placeholder="Ex: Interdiction largeur > 5000mm"
                   data-testid="rule-name-input"
                 />
@@ -371,7 +371,7 @@ export default function BusinessRules() {
                 <select
                   value={formData.machine_id}
                   onChange={(e) => setFormData({ ...formData, machine_id: e.target.value })}
-                  className="mt-1 w-full h-10 rounded-sm border border-slate-300 bg-white px-3 text-sm"
+                  className="mt-1 w-full h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm"
                   data-testid="rule-machine-select"
                 >
                   <option value="">-- Sélectionner --</option>
@@ -393,7 +393,7 @@ export default function BusinessRules() {
                       key={type.value}
                       type="button"
                       onClick={() => setFormData({ ...formData, rule_type: type.value })}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-sm border-2 transition-all ${
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
                         formData.rule_type === type.value
                           ? `border-slate-900 ${type.bg}`
                           : 'border-slate-200 hover:border-slate-300'
@@ -415,7 +415,7 @@ export default function BusinessRules() {
                 <button
                   type="button"
                   onClick={() => setRuleMode('simple')}
-                  className={`px-4 py-2 rounded-sm border-2 text-sm font-medium transition-all ${
+                  className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
                     ruleMode === 'simple' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'
                   }`}
                   data-testid="mode-simple"
@@ -425,7 +425,7 @@ export default function BusinessRules() {
                 <button
                   type="button"
                   onClick={() => setRuleMode('attribute')}
-                  className={`px-4 py-2 rounded-sm border-2 text-sm font-medium transition-all ${
+                  className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
                     ruleMode === 'attribute' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'
                   }`}
                   data-testid="mode-attribute"
@@ -437,7 +437,7 @@ export default function BusinessRules() {
 
             {/* Critères simples */}
             {ruleMode === 'simple' && (
-              <div className="p-4 bg-slate-50 rounded-sm border border-slate-200">
+              <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
                 <h5 className="text-sm font-semibold text-slate-700 mb-3">Critères Simples</h5>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
@@ -446,7 +446,7 @@ export default function BusinessRules() {
                       type="text"
                       value={formData.tache_id}
                       onChange={(e) => setFormData({ ...formData, tache_id: e.target.value })}
-                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-sm"
                       placeholder="LVT001"
                     />
                   </div>
@@ -456,7 +456,7 @@ export default function BusinessRules() {
                       type="text"
                       value={formData.centre_de_charge_id}
                       onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value })}
-                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-sm"
                       placeholder="LVC001"
                     />
                   </div>
@@ -466,7 +466,7 @@ export default function BusinessRules() {
                       type="text"
                       value={formData.article_id}
                       onChange={(e) => setFormData({ ...formData, article_id: e.target.value })}
-                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-sm"
                       placeholder="100235570"
                     />
                   </div>
@@ -476,18 +476,18 @@ export default function BusinessRules() {
 
             {/* Conditions sur attributs avec ET/OU */}
             {ruleMode === 'attribute' && (
-              <div className="p-4 bg-blue-50 rounded-sm border border-blue-200">
+              <div className="conditions-box">
                 <div className="flex items-center justify-between mb-3">
-                  <h5 className="text-sm font-semibold text-blue-800">Conditions sur Attributs</h5>
+                  <h5 className="conditions-box-title">Conditions sur Attributs</h5>
                   
                   {/* Logique entre groupes */}
                   {conditionGroups.length > 1 && (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-blue-600">Entre groupes:</span>
+                      <span className="conditions-group-label">Entre groupes:</span>
                       <select
                         value={conditionsLogic}
                         onChange={(e) => setConditionsLogic(e.target.value)}
-                        className="h-8 rounded-sm border border-blue-300 bg-white px-2 text-xs font-medium"
+                        className="h-8 rounded-lg border px-2 text-xs font-medium"
                         data-testid="conditions-logic"
                       >
                         <option value="AND">ET (toutes)</option>
@@ -500,15 +500,15 @@ export default function BusinessRules() {
                 {/* Groupes de conditions */}
                 <div className="space-y-4">
                   {conditionGroups.map((group, gi) => (
-                    <div key={gi} className="p-3 bg-white rounded-sm border border-blue-200">
+                    <div key={gi} className="conditions-group">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-blue-700">Groupe {gi + 1}</span>
+                          <span className="conditions-group-label">Groupe {gi + 1}</span>
                           {group.conditions.length > 1 && (
                             <select
                               value={group.logic}
                               onChange={(e) => updateGroupLogic(gi, e.target.value)}
-                              className="h-6 rounded border border-blue-200 bg-blue-50 px-2 text-xs font-medium text-blue-700"
+                              className="h-6 rounded-lg border px-2 text-xs font-medium"
                               data-testid={`group-logic-${gi}`}
                             >
                               <option value="AND">ET</option>
@@ -550,7 +550,7 @@ export default function BusinessRules() {
                             <select
                               value={cond.attribute_name}
                               onChange={(e) => updateCondition(gi, ci, 'attribute_name', e.target.value)}
-                              className="flex-1 h-9 rounded-sm border border-slate-300 bg-white px-2 text-sm"
+                              className="flex-1 h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm"
                               data-testid={`attr-name-${gi}-${ci}`}
                             >
                               <option value="">Attribut...</option>
@@ -561,7 +561,7 @@ export default function BusinessRules() {
                             <select
                               value={cond.operator}
                               onChange={(e) => updateCondition(gi, ci, 'operator', e.target.value)}
-                              className="w-40 h-9 rounded-sm border border-slate-300 bg-white px-2 text-sm"
+                              className="w-40 h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm"
                               data-testid={`attr-op-${gi}-${ci}`}
                             >
                               {OPERATORS.map(o => (
@@ -572,7 +572,7 @@ export default function BusinessRules() {
                               type="text"
                               value={cond.value}
                               onChange={(e) => updateCondition(gi, ci, 'value', e.target.value)}
-                              className="w-32 h-9 rounded-sm border border-slate-300 px-2 text-sm"
+                              className="w-32 h-9 rounded-lg border border-slate-300 px-2 text-sm"
                               placeholder="Valeur"
                               data-testid={`attr-val-${gi}-${ci}`}
                             />
@@ -596,7 +596,7 @@ export default function BusinessRules() {
                 <button
                   type="button"
                   onClick={addConditionGroup}
-                  className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                  className="conditions-add-btn mt-3 inline-flex items-center gap-1 text-sm font-medium"
                   data-testid="add-group-btn"
                 >
                   <PlusCircle size={16} />
@@ -609,7 +609,7 @@ export default function BusinessRules() {
             <div className="flex gap-2">
               <button 
                 type="submit" 
-                className="bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
+                className="bg-slate-900 text-white hover:bg-slate-800 rounded-lg px-4 py-2 text-sm font-medium"
                 data-testid="submit-rule-btn"
               >
                 {editingRule ? 'Mettre à jour' : 'Créer la règle'}
@@ -617,7 +617,7 @@ export default function BusinessRules() {
               <button 
                 type="button" 
                 onClick={resetForm} 
-                className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-sm px-4 py-2 text-sm font-medium"
+                className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-lg px-4 py-2 text-sm font-medium"
               >
                 Annuler
               </button>
@@ -627,7 +627,7 @@ export default function BusinessRules() {
       )}
 
       {/* Liste des règles */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
@@ -657,7 +657,7 @@ export default function BusinessRules() {
                       <span className="font-medium text-slate-900">{rule.name}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
                         <Icon size={12} />
                         {rule.rule_type}
                       </span>

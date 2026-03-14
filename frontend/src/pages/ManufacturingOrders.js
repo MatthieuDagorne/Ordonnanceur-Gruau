@@ -72,10 +72,10 @@ export default function ManufacturingOrders() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex bg-slate-100 rounded-sm p-0.5">
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
             <button
               onClick={() => setViewMode('flat')}
-              className={`px-3 py-1 text-sm font-medium rounded-sm transition-colors ${
+              className={`px-3 py-1 text-sm font-medium rounded-lg transition-colors ${
                 viewMode === 'flat' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
               }`}
             >
@@ -83,7 +83,7 @@ export default function ManufacturingOrders() {
             </button>
             <button
               onClick={() => setViewMode('grouped')}
-              className={`px-3 py-1 text-sm font-medium rounded-sm transition-colors ${
+              className={`px-3 py-1 text-sm font-medium rounded-lg transition-colors ${
                 viewMode === 'grouped' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
               }`}
             >
@@ -93,7 +93,7 @@ export default function ManufacturingOrders() {
           <button
             onClick={fetchEnrichedOperations}
             disabled={loading}
-            className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Actualiser
@@ -103,21 +103,21 @@ export default function ManufacturingOrders() {
 
       {/* Statistiques */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white border border-slate-200 rounded-sm p-4">
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
           <div className="text-3xl font-bold text-slate-800">{operations.length}</div>
           <div className="text-sm text-slate-500">Opérations</div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-sm p-4">
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
           <div className="text-3xl font-bold text-slate-800">{ordersArray.length}</div>
           <div className="text-sm text-slate-500">Ordres de Fab.</div>
         </div>
-        <div className="bg-red-50 border border-red-200 rounded-sm p-4">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="text-3xl font-bold text-red-700">
             {operations.filter(op => isLate(op.date_besoin)).length}
           </div>
           <div className="text-sm text-red-600">En retard</div>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-sm p-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
           <div className="text-3xl font-bold text-amber-700">
             {operations.filter(op => isUrgent(op.date_besoin)).length}
           </div>
@@ -127,7 +127,7 @@ export default function ManufacturingOrders() {
 
       {/* Vue à plat */}
       {viewMode === 'flat' && (
-        <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
           <div className="bg-slate-50 border-b border-slate-200 px-4 py-3">
             <h4 className="font-semibold text-slate-800">Opérations Enrichies (Vue à Plat)</h4>
             <p className="text-xs text-slate-500 mt-1">
@@ -227,7 +227,7 @@ export default function ManufacturingOrders() {
       {viewMode === 'grouped' && (
         <div className="space-y-4">
           {ordersArray.map((order) => (
-            <div key={order.order_id} className={`bg-white border rounded-sm shadow-sm overflow-hidden ${
+            <div key={order.order_id} className={`bg-white border rounded-lg shadow-sm overflow-hidden ${
               isLate(order.date_besoin) ? 'border-red-300' : 
               isUrgent(order.date_besoin) ? 'border-amber-300' : 'border-slate-200'
             }`}>
@@ -298,7 +298,7 @@ export default function ManufacturingOrders() {
             </div>
           ))}
           {ordersArray.length === 0 && (
-            <div className="bg-white border border-slate-200 rounded-sm p-8 text-center text-sm text-slate-500">
+            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-sm text-slate-500">
               Aucun ordre de fabrication. Importez des données via Import CSV.
             </div>
           )}
@@ -306,7 +306,7 @@ export default function ManufacturingOrders() {
       )}
 
       {/* Légende */}
-      <div className="bg-slate-50 border border-slate-200 rounded-sm p-4">
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
         <h4 className="font-semibold text-slate-800 mb-2">Légende</h4>
         <div className="flex gap-6 text-sm">
           <div className="flex items-center gap-2">

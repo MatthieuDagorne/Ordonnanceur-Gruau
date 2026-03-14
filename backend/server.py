@@ -681,10 +681,11 @@ async def get_projected_stock():
         # Calculer le stock projeté par article avec projection temporelle
         projected_stock = []
         
-        # Collecter tous les articles concernés
+        # Collecter tous les articles concernés (filtrer les None)
         all_articles = set(stock_by_article.keys()) | set(consumption_by_article.keys()) | set(receipts_by_article.keys())
+        all_articles = {a for a in all_articles if a is not None}
         
-        for article_id in sorted(all_articles):
+        for article_id in sorted(all_articles, key=lambda x: str(x)):
             initial_stock = stock_by_article.get(article_id, 0)
             consumptions = consumption_by_article.get(article_id, [])
             receipts = receipts_by_article.get(article_id, [])
