@@ -32,72 +32,96 @@ Exemples : `2026-03-20T14:30:00`
 - Matching sur : `tache_id`, `centre_de_charge_id`, `article_id`
 - **article_id récupéré depuis l'ordre** via jointure `order_id`
 
-### 2. Date de Besoin avec Heure ✅ (Corrigé 14 mars 2026)
+### 2. Règles sur Attributs Articles ✅ (14 mars 2026)
+- **Nouveaux attributs articles** : `largeur`, `epaisseur`, `couleur`, `type_matiere`, `longueur`
+- **Format CSV import** : `id,description,type_matiere,epaisseur,couleur,largeur,longueur`
+- **Mapping automatique** : FR → EN (type_matiere → material_type, etc.)
+- **Opérateurs** : GT, GE, LT, LE, EQ, NE, IN, NOT_IN
+- **Exemple** : FORBID si largeur > 5000mm sur machine X
+
+### 3. Calendriers par Centre de Charge ✅ (14 mars 2026)
+- **Affectation calendrier** : chaque centre peut avoir un calendrier spécifique
+- **Interface UI** : dropdown dans la page Centres de Charge
+- **Contraintes OR-Tools** : le scheduler respecte les plages horaires de travail
+- **Exemple** : Horaires Usine (Lun-Ven 8h-17h) assigné à LVC001
+
+### 4. Stock Projeté avec Timestamps ✅ (14 mars 2026)
+- **Timeline temporelle** : stock à chaque instant basé sur l'ordonnancement
+- **Dates de consommation** : `scheduled_datetime` si ordonnancé, sinon `due_date`
+- **Indicateur** : compteur "Ordonnancées X/Y" dans le résumé
+- **Détection ruptures** : date de première rupture et date de disponibilité
+
+### 5. Date de Besoin avec Heure ✅
 - Format `YYYY-MM-DDTHH:MM:SS` supporté
 - Utilisé pour priorisation et calcul de retard
 - Affiché avec heure dans la page Diagnostic
 
-### 3. Non-Chevauchement Garanti ✅
+### 6. Non-Chevauchement Garanti ✅
 - Contrainte `NoOverlap` de OR-Tools par machine
 - Une machine ne traite qu'une opération à la fois
 
-### 4. Gestion des Matières ✅ (14 mars 2026)
+### 7. Gestion des Matières ✅
 - **Nouvelles collections** :
   - `operation_materials` : besoins composants par opération
   - `planned_supplier_receipts` : réceptions fournisseurs planifiées
 - **Stock projeté** : initial + réceptions - consommations
 - **Report automatique** si manque matière
-- **Diagnostic matière** affiché par opération
 
-### 5. Temps Maximum de Calcul ✅
+### 8. Temps Maximum de Calcul ✅
 - Paramètre `max_solver_time_seconds` (défaut 60s)
 - Le solveur retourne la meilleure solution trouvée
 
 ## Endpoints API
 
-### Nouvelles Collections
-- `GET/POST/DELETE /api/operation-materials` - Besoins matière
-- `GET/POST/DELETE /api/planned-supplier-receipts` - Réceptions planifiées
-- `POST /api/import/operation-materials` - Import CSV
-- `POST /api/import/planned-supplier-receipts` - Import CSV
+### Centres de Charge
+- `GET /api/centres-de-charge` - Liste avec calendar_id
+- `PUT /api/centres-de-charge/{id}` - Met à jour calendar_id
+
+### Règles Métier
+- `POST /api/rules` - Crée règle simple ou sur attribut
+- `GET /api/rules` - Liste toutes les règles
+
+### Stock Projeté
+- `GET /api/projected-stock` - Avec timestamps et timeline
+
+### Import CSV
+- `POST /api/import/articles` - Avec mapping FR→EN des attributs
+- `POST /api/import/operation-materials`
+- `POST /api/import/planned-supplier-receipts`
 
 ### Ordonnancement
 - `POST /api/scheduling/calculate`
-  - `ignore_rules`, `ignore_material`, `auto_assign_machines`
-  - `max_solver_time_seconds`
-
-### Diagnostic
-- `GET /api/diagnostic/assignment` - Avec diagnostic matière
+  - `ignore_rules`, `ignore_material`, `ignore_calendars`
+  - `auto_assign_machines`, `max_solver_time_seconds`
 
 ## Validation (14 mars 2026)
 
-### Test date_besoin
-```
-Ordre: LV1100007 avec due_date=2026-03-20T14:30:00
-Diagnostic affiche: date_besoin=2026-03-20 14:30 ✅
-```
-
-### Test Règle FORBID sur Article
+### Test Règle FORBID sur Article (Bug Récurrent Corrigé)
 ```
 Règle: FORBID article=100235570, machine=TP5000_1
-Résultat: TP5000_1 interdite → TP5000_2 choisie ✅
+Résultat: OF_TEST_001 assigné à TP5000_2 ✅
 ```
 
-### Test Contrainte Matière
+### Test Règle sur Attribut
 ```
-Stock 100541201=2, Besoin=5
-Réception planifiée le 2026-03-16T10:00:00 (+5)
-Résultat: Opération reportée jusqu'à disponibilité ✅
+Règle: FORBID width > 600mm, machine=TP5000_1
+Article 100235570 largeur=1000mm → TP5000_1 interdite ✅
+```
+
+### Test Calendriers
+```
+Centre LVC001 avec calendrier "Horaires Usine" (8h-17h)
+24 contraintes de calendrier appliquées ✅
 ```
 
 ## Documentation
-- `/app/docs/CSV_FORMAT.md` - Format des fichiers CSV (mis à jour)
+- `/app/docs/CSV_FORMAT.md` - Format des fichiers CSV
 
 ## Backlog
 
 ### P1 - Prioritaires
 - [ ] Afficher les ordres en retard sur le dashboard
-- [ ] Persister les assignations en BDD
+- [ ] Persister les assignations en BDD après ordonnancement
 
 ### P2 - Secondaires
 - [ ] Import CSV avec validation UI améliorée
@@ -105,6 +129,6 @@ Résultat: Opération reportée jusqu'à disponibilité ✅
 - [ ] Export planning CSV enrichi
 
 ### P3 - Futurs
-- [ ] Intégration Gantt avec vraie librairie
+- [ ] Intégration Gantt avec vraie librairie (frappe-gantt, etc.)
 - [ ] Drag-and-drop sur le Gantt
 - [ ] Comparaison de scénarios
