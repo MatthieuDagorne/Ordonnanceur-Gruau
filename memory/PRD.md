@@ -4,98 +4,74 @@
 Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement industriel.
 
 ## Architecture Technique
-- **Backend**: Python FastAPI
-- **Frontend**: React
-- **Base de données**: MongoDB
+- **Backend**: Python FastAPI + MongoDB
+- **Frontend**: React + Tailwind CSS
 - **Moteur d'ordonnancement**: Google OR-Tools (CP-SAT)
+- **Design System**: Thème clair/sombre avec variables CSS
 
-## Fonctionnalités APS Implémentées
+## Design System ✅ (14 mars 2026)
 
-### 1. Règles Métier avec Conditions Multiples ET/OU ✅ (14 mars 2026)
+### Thème Clair/Sombre
+- **Toggle** dans la sidebar avec icônes Sun/Moon
+- **Persistence** dans localStorage (clé: `aps-theme`)
+- **Transition** fluide avec 200ms ease
 
-#### Structure des Conditions
-```json
-{
-  "name": "Règle complexe",
-  "rule_type": "FORBID",
-  "machine_id": "TP5000_1",
-  "attribute_conditions": [
-    {
-      "conditions": [
-        {"attribute_name": "width", "operator": "GT", "value": "500"},
-        {"attribute_name": "thickness", "operator": "LT", "value": "10"}
-      ],
-      "logic": "AND"
-    },
-    {
-      "conditions": [
-        {"attribute_name": "material_type", "operator": "EQ", "value": "Acier"}
-      ],
-      "logic": "AND"
-    }
-  ],
-  "conditions_logic": "OR"
-}
-```
+### Couleurs
+| Variable | Sombre | Clair |
+|----------|--------|-------|
+| --bg-primary | #0F172A | #F8FAFC |
+| --surface | #1E293B | #FFFFFF |
+| --text-primary | #F8FAFC | #0F172A |
+| --accent-blue | #0284C7 | #0284C7 |
+| --accent-orange | #F97316 | #F97316 |
 
-#### Exemple Logique
-`(largeur > 500 ET épaisseur < 10) OU (type_matière = Acier)`
+### Typographie
+- **Titres**: Chivo (Bold 700-900)
+- **Corps**: IBM Plex Sans
+- **Données**: JetBrains Mono
 
-#### Interface UI
-- Mode **"Simple (ID)"** : article_id, tache_id, centre_de_charge_id
-- Mode **"Attributs (ET/OU)"** : Groupes de conditions avec opérateurs
-- **Dropdown "Entre groupes"** : ET / OU
-- **Dropdown dans groupe** : ET / OU
-- **Boutons +/-** : Ajouter/supprimer des conditions
-- **Bouton "Ajouter un groupe"** : Créer un nouveau groupe
+### Animations
+- `animate-fade-in-up` - Entrée des pages
+- `animate-slide-in-left` - Sidebar
+- `hover-lift` - Cards avec translateY(-2px)
+- `animate-pulse-slow` - Indicateur de statut
 
-#### Opérateurs Supportés
-- `GT` (>), `GE` (>=), `LT` (<), `LE` (<=)
-- `EQ` (=), `NE` (!=)
-- `IN` (dans la liste), `NOT_IN` (pas dans la liste)
+## Fonctionnalités APS
 
-#### Attributs Disponibles
-- `width` (Largeur mm)
-- `length` (Longueur mm)
-- `thickness` (Épaisseur mm)
-- `material_type` (Type de matière)
-- `color` (Couleur)
+### 1. Règles Métier avec ET/OU ✅
+- Conditions multiples combinées
+- Opérateurs: GT, GE, LT, LE, EQ, NE, IN, NOT_IN
+- Attributs: largeur, épaisseur, type_matière, couleur, longueur
 
-### 2. Page Ordonnancement APS Complète ✅
+### 2. Page Ordonnancement ✅
+- 3 modes de priorité (Date, Matière, Équilibré)
+- Durée max optimisation (30s à 10min)
+- Gap d'optimalité (1-20%)
+- Options avancées collapsibles
 
-#### Modes de Priorité
-- **Priorité Date de Besoin**
-- **Priorité Disponibilité Matière**
-- **Mode Équilibré** (avec sliders de poids)
+### 3. Dashboard APS ✅
+- KPIs: OTD, Retards, Utilisation, WIP
+- Barres de capacité par machine
+- Alertes temps réel
 
-#### Paramètres du Solveur
-- Durée Maximum : 30s à 10min
-- Gap d'Optimalité : 1-20%
-
-#### Options Avancées
-- Ignorer règles/matière/calendriers
-- Respecter séquence des gammes
-
-### 3. Dashboard APS avec KPIs ✅
-- OTD, Ordres en retard, Utilisation machines, WIP
-
-### 4. Capacité Finie avec Calendriers ✅
+### 4. Capacité Finie ✅
 - production_time + setup_time
 - Calendriers par centre de charge
+- Contraintes NoOverlap
 
-### 5. Planification Multi-Niveaux (BOM/MRP) ✅
-- Import BOM
-- Explosion de nomenclature
-- Calcul MRP
+### 5. BOM/MRP ✅
+- Explosion de nomenclature multi-niveaux
+- Calcul des besoins nets
+- Dates de consommation ordonnancées
 
 ## Validation (14 mars 2026)
 
-### Tests Conditions Multiples: 13/13 PASSED
-- POST /api/rules avec attribute_conditions
-- GET /api/rules retourne attribute_conditions
-- PUT /api/rules accepte attribute_conditions
-- Frontend groupes et dropdowns ET/OU
-- Évaluation correcte des conditions
+### Tests Système de Thème: 100% PASSED
+- Toggle dans sidebar
+- Persistence localStorage
+- 21 éléments avec animations
+- Hover effects sur cards
+- KPI cards avec gradients
 
 ## Backlog
 
@@ -105,10 +81,11 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - [ ] Persister assignations
 
 ### P2 - Secondaires
+- [ ] Gantt interactif
 - [ ] Replanification dynamique
 - [ ] Intégration ERP
-- [ ] Export CSV
 
 ### P3 - Futurs
-- [ ] Gantt interactif
-- [ ] Dashboard temps réel
+- [ ] Dashboard temps réel WebSockets
+- [ ] Multi-sites
+- [ ] IA prédictive
