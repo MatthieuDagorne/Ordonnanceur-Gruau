@@ -11,84 +11,55 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 
 ## Fonctionnalités Implémentées
 
-### Phase 1-4 - Fondations et APS ✅
-- Calendriers par centre de charge
+### Phase 1-5 - Fondations et APS ✅
+- Calendriers par centre de charge avec horaires personnalisables
 - Règles métier avec logique ET/OU
-- Page Ordonnancement avec scénarios
 - Vue Matricielle, Comparaison de Scénarios
 - Gantt Interactif, Stock Projeté Avancé
-
-### Phase 5 - Améliorations Ergonomiques (14 mars 2026) ✅
-- Calendriers en quarts d'heure (HH:MM)
-- État des données complet (ERP, Supply Chain, Configuration)
-- Filtres intelligents sur 4 pages
+- Filtres intelligents sur toutes les pages
 
 ### Phase 6 - UI Uniformisation + CRUD Edit (14 mars 2026) ✅
-- **Machines**: Variables CSS, rounded-lg, PUT /api/machines/{id}
-- **Centres de Charge**: Variables CSS, rounded-lg, PUT existant
-- **Indisponibilités**: Variables CSS, rounded-lg, PUT /api/unavailability/{id}
-- **Tests**: Backend 17/17 (100%), Frontend 10/10 (100%)
+- Machines, Centres de Charge, Indisponibilités : Design moderne + boutons Modifier
+- Tests: Backend 17/17 (100%), Frontend 10/10 (100%)
 
-### Phase 7 - Améliorations Gantt (14 mars 2026) ✅
+### Phase 7 - Améliorations Gantt + Correction Calendriers (14 mars 2026) ✅
 
-#### 1. Infobulles Enrichies
-- Affichage du centre de charge
-- Section "Matières premières" avec disponibilité en stock
-- Format: `{article_id}: {in_stock} / {needed} ✓/✗`
-- Indicateur visuel (badge orange) pour matière manquante
+#### Améliorations Gantt
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Infobulles enrichies | Section "Matières premières" avec disponibilité stock |
+| Axe temporel absolu | Dates réelles (ex: "16 mars, 08:01") au lieu de "+1h" |
+| Périodes de fermeture | Zones grisées "Hors horaires" basées sur calendriers |
+| Filtre Centre de Charge | Boutons de filtre multi-sélection + compteur machines |
 
-#### 2. Axe Temporel Absolu
-- Remplacement de "+1h, +2h" par dates réelles
-- Format: "14 mars, 14:55", "14 mars, 15:55"
-- Basé sur `scheduling_start` du scénario
+#### Correction Bug Critique Calendriers ✅
+**Problème résolu**: Les opérations étaient planifiées en dehors des heures de travail du calendrier.
 
-#### 3. Périodes de Fermeture
-- Zones grisées pour les horaires hors travail
-- Calculées à partir des calendriers (start_time/end_time)
-- Légende "Hors horaires" ajoutée
+**Corrections apportées**:
+1. `scheduling_start` arrondi à la minute supérieure (évite les microsecondes)
+2. Calcul des zones interdites avec `math.ceil()` pour être conservateur
+3. **Zone interdite immédiate**: Si l'ordonnancement démarre après l'heure de fermeture ou avant l'ouverture, une zone interdite est créée de t=0 jusqu'au prochain créneau de travail
+4. Fusion des plages interdites qui se chevauchent
 
-#### 4. Filtre par Centre de Charge
-- Boutons de filtre pour chaque centre
-- Sélection multiple possible
-- Compteur de machines filtrées (X / Y)
-- Bouton "Réinitialiser" pour effacer les filtres
+**Résultat**: Toutes les opérations sont maintenant strictement planifiées entre les heures d'ouverture et de fermeture définies dans les calendriers (ex: 08:00-17:00).
 
 ## APIs Principales
 
-### Gantt Data Enrichi (mis à jour)
+### Gantt Data Enrichi
 ```json
 GET /api/gantt/data/{scenario_id}
 {
-  "scenario_id": "...",
-  "scenario_name": "...",
-  "scheduling_start": "2026-03-14T14:55:00",
+  "scheduling_start": "2026-03-14T18:19:00",
   "machines": [{
     "machine_id": "...",
-    "centre_de_charge_id": "LVC002",
-    "centre_de_charge_nom": "PLIAGE",
+    "centre_de_charge_id": "...",
     "tasks": [{
-      "operation_id": "...",
-      "centre_de_charge_nom": "PLIAGE",
-      "materials": [{
-        "article_id": "...",
-        "needed": 5,
-        "in_stock": 10,
-        "available": true
-      }],
-      "materials_ok": true,
-      "materials_count": 1
+      "materials": [{"article_id": "...", "needed": 5, "in_stock": 10, "available": true}],
+      "materials_ok": true
     }]
   }],
-  "centres_de_charge": [
-    {"id": "LVC001", "nom": "POINCONNAGE"},
-    {"id": "LVC002", "nom": "PLIAGE"}
-  ],
-  "calendars": [{
-    "id": "...",
-    "name": "Horaires Usine",
-    "start_time": "08:00",
-    "end_time": "17:00"
-  }]
+  "centres_de_charge": [{"id": "...", "nom": "..."}],
+  "calendars": [{"start_hour": 8, "end_hour": 17, "working_days": [0,1,2,3,4,5]}]
 }
 ```
 
@@ -96,19 +67,18 @@ GET /api/gantt/data/{scenario_id}
 
 ### P3 - À Faire
 - [ ] Export CSV du planning
+- [ ] Horizon ferme (geler planning court terme)
 - [ ] Dashboard temps réel WebSockets
 - [ ] Replanification dynamique
-- [ ] Multi-sites
-- [ ] Horizon ferme (geler planning court terme)
 
 ## Fichiers Modifiés (Phase 7)
 
 ```
 backend/
-├── server.py                     # Endpoint /gantt/data enrichi avec matières, centres, calendriers
+├── services/scheduler_engine.py  # Correction critique: zones interdites calendrier
 
 frontend/src/pages/
-├── GanttInteractive.js           # Filtres, axe temporel absolu, infobulles enrichies, zones fermeture
+├── GanttInteractive.js           # Filtres, axe temporel, infobulles, zones fermeture
 ```
 
 ## Tests Reports

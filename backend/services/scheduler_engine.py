@@ -1,5 +1,6 @@
 from ortools.sat.python import cp_model
 import logging
+import math
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from services.diagnostics import SchedulingDiagnostics
@@ -98,6 +99,9 @@ class CalendarManager:
         
         Retourne une liste de tuples (start_minute, end_minute) relatifs au scheduling_start.
         Ces plages représentent les périodes où la machine ne peut pas travailler.
+        
+        IMPORTANT: Utilise ceil() pour être conservateur et garantir qu'aucune opération
+        ne puisse commencer ou se terminer dans une plage interdite.
         """
         calendar = self.get_calendar_for_machine(machine_id)
         working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
@@ -109,32 +113,94 @@ class CalendarManager:
             return []
         
         forbidden_slots = []
-        current_date = scheduling_start.replace(hour=0, minute=0, second=0, microsecond=0)
         
+        # Normaliser scheduling_start au début de la journée pour les calculs
+        base_date = scheduling_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # IMPORTANT: Ajouter une zone interdite immédiate si on est hors des heures de travail
+        # au moment du scheduling_start
+        current_hour = scheduling_start.hour + scheduling_start.minute / 60
+        current_weekday = scheduling_start.weekday()
+        
+        if current_weekday not in working_days:
+            # On démarre un jour non travaillé - tout est interdit jusqu'au prochain jour travaillé
+            # Cette situation sera gérée par la boucle ci-dessous
+            pass
+        elif current_hour >= end_hour:
+            # On est APRÈS l'heure de fermeture - zone interdite de maintenant jusqu'au lendemain matin
+            # Chercher le prochain jour travaillé
+            next_work_day = base_date + timedelta(days=1)
+            for d in range(7):
+                check_day = base_date + timedelta(days=1 + d)
+                if check_day.weekday() in working_days:
+                    next_work_day = check_day
+                    break
+            
+            # Zone interdite de 0 (maintenant) jusqu'à l'heure d'ouverture du prochain jour travaillé
+            next_opening = next_work_day + timedelta(hours=start_hour)
+            slot_end = math.ceil((next_opening - scheduling_start).total_seconds() / 60) + 1
+            forbidden_slots.append((0, slot_end))
+            logger.info(f"      Zone immédiate (après fermeture): [0 - {slot_end}]")
+        elif current_hour < start_hour:
+            # On est AVANT l'heure d'ouverture - zone interdite de maintenant jusqu'à l'ouverture
+            today_opening = base_date + timedelta(hours=start_hour)
+            slot_end = math.ceil((today_opening - scheduling_start).total_seconds() / 60) + 1
+            forbidden_slots.append((0, slot_end))
+            logger.info(f"      Zone immédiate (avant ouverture): [0 - {slot_end}]")
+        
+        # Calculer les zones interdites pour chaque jour de l'horizon
         for day_offset in range(horizon_days + 1):
-            day_start = current_date + timedelta(days=day_offset)
+            day_start = base_date + timedelta(days=day_offset)
             day_weekday = day_start.weekday()
             
             if day_weekday not in working_days:
-                # Journée entière non travaillée
-                slot_start = int((day_start - scheduling_start).total_seconds() / 60)
-                slot_end = slot_start + 24 * 60
-                if slot_start >= 0:  # Ne pas inclure les périodes avant le début
+                # Journée entière non travaillée (weekend ou jour férié)
+                slot_start_dt = day_start
+                slot_end_dt = day_start + timedelta(days=1)
+                
+                # Convertir en minutes relatives au scheduling_start
+                slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
+                slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60)
+                
+                if slot_end > 0:  # La plage chevauche ou est après le scheduling_start
                     forbidden_slots.append((max(0, slot_start), slot_end))
             else:
-                # Ajouter les plages hors heures de travail
-                # Avant le début du travail
+                # Jour travaillé - ajouter les plages hors heures de travail
+                
+                # MATIN: De minuit jusqu'à l'heure d'ouverture
                 if start_hour > 0:
-                    slot_start = int((day_start - scheduling_start).total_seconds() / 60)
-                    slot_end = slot_start + start_hour * 60
+                    slot_start_dt = day_start  # 00:00
+                    slot_end_dt = day_start + timedelta(hours=start_hour)  # Ex: 08:00
+                    
+                    slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
+                    # +1 pour s'assurer que 08:00:00 est APRÈS la zone interdite
+                    slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60) + 1
+                    
                     if slot_end > 0:
                         forbidden_slots.append((max(0, slot_start), slot_end))
                 
-                # Après la fin du travail
+                # SOIR: De l'heure de fermeture jusqu'à minuit
                 if end_hour < 24:
-                    slot_start = int((day_start - scheduling_start).total_seconds() / 60) + end_hour * 60
-                    slot_end = slot_start + (24 - end_hour) * 60
-                    forbidden_slots.append((slot_start, slot_end))
+                    slot_start_dt = day_start + timedelta(hours=end_hour)  # Ex: 17:00
+                    slot_end_dt = day_start + timedelta(days=1)  # Minuit du jour suivant
+                    
+                    slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
+                    slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60)
+                    
+                    # Ajouter même si slot_start < 0 (on est déjà dans la zone interdite)
+                    if slot_end > 0:
+                        forbidden_slots.append((max(0, slot_start), slot_end))
+        
+        # Fusionner les plages qui se chevauchent pour optimiser
+        if forbidden_slots:
+            forbidden_slots.sort()
+            merged = [forbidden_slots[0]]
+            for current in forbidden_slots[1:]:
+                if current[0] <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], current[1]))
+                else:
+                    merged.append(current)
+            return merged
         
         return forbidden_slots
 
@@ -219,7 +285,10 @@ class SchedulerEngine:
         max_solver_time_seconds = options.get('max_solver_time_seconds', 60)
         
         # Point de départ pour l'horizon de planification
-        self.scheduling_start = datetime.now()
+        # IMPORTANT: Arrondir à la minute supérieure pour éviter les problèmes de microsecondes
+        # qui pourraient permettre des opérations juste avant les heures d'ouverture
+        now = datetime.now()
+        self.scheduling_start = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         
         # Initialiser le diagnostic
         self.diagnostics = SchedulingDiagnostics(self.db)
@@ -458,6 +527,11 @@ class SchedulerEngine:
                     
                     logger.info(f"   ✓ Machine {machine_id}: {len(forbidden_slots)} plages interdites")
                     logger.info(f"      Calendrier: jours={list(working_days)}, heures={start_hour}-{end_hour}")
+                    # Log des premières plages pour debug
+                    for i, (fs, fe) in enumerate(forbidden_slots[:3]):
+                        fs_dt = self.scheduling_start + timedelta(minutes=fs)
+                        fe_dt = self.scheduling_start + timedelta(minutes=fe)
+                        logger.info(f"      Plage {i+1}: [{fs}-{fe}] = [{fs_dt.strftime('%d/%m %H:%M')} - {fe_dt.strftime('%d/%m %H:%M')}]")
                     
                     # Pour chaque opération sur cette machine, contraindre le début et la fin
                     # pour éviter les plages interdites
