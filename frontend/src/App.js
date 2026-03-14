@@ -12,6 +12,7 @@ import ManufacturingOrders from '@/pages/ManufacturingOrders';
 import Scheduling from '@/pages/Scheduling';
 import GanttView from '@/pages/GanttView';
 import Scenarios from '@/pages/Scenarios';
+import DiagnosticAssignment from '@/pages/DiagnosticAssignment';
 import '@/App.css';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
             <Route path="rules" element={<BusinessRules />} />
             <Route path="orders" element={<ManufacturingOrders />} />
             <Route path="scheduling" element={<Scheduling />} />
+            <Route path="diagnostic" element={<DiagnosticAssignment />} />
             <Route path="gantt/:scenarioId" element={<GanttView />} />
             <Route path="scenarios" element={<Scenarios />} />
           </Route>

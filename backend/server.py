@@ -16,6 +16,7 @@ import uuid
 from services.scheduler_engine import SchedulerEngine
 from services.material_checker import MaterialChecker
 from services.rules_engine import RulesEngine
+from services.machine_assigner import MachineAssigner
 from services.demo_data import load_demo_data
 from models.business_rule import BusinessRule as BusinessRuleModel
 
@@ -628,6 +629,58 @@ async def export_schedule(scenario_id: str):
         media_type='text/csv',
         filename=f'schedule_{scenario_id}.csv'
     )
+
+# Diagnostic endpoint - Tableau complet d'assignation
+@api_router.get("/diagnostic/assignment")
+async def get_assignment_diagnostic():
+    """
+    Retourne un diagnostic complet de l'assignation des machines.
+    Affiche pour chaque opération:
+    - task_id, work_center_id
+    - machines du work_center
+    - règles appliquées
+    - machine choisie ou cause d'échec
+    """
+    try:
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
+        rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
+        
+        # Créer le moteur de règles et l'assignateur
+        rules_engine = RulesEngine(rules)
+        assigner = MachineAssigner(machines, rules_engine)
+        
+        # Exécuter l'assignation avec diagnostic complet
+        result = assigner.assign_machines_to_operations(operations, orders)
+        
+        return {
+            'summary': {
+                'total_operations': result['total_operations'],
+                'assigned': result['assigned_count'],
+                'unassigned': result['unassigned_count'],
+                'preferred': result['preferred_count'],
+                'failure_causes': result['failure_causes']
+            },
+            'machines_by_workcenter': {
+                wc: [{'id': m.get('id'), 'name': m.get('name')} for m in ms]
+                for wc, ms in assigner.machines_by_workcenter.items()
+            },
+            'rules_loaded': [
+                {
+                    'name': r['name'],
+                    'type': r['type'],
+                    'task_id': r.get('task_id'),
+                    'work_center_id': r.get('work_center_id'),
+                    'machine_id': r['machine_id']
+                }
+                for r in result['rules_diagnostics']['rules_detail']
+            ],
+            'diagnostics_table': result['diagnostics_table']
+        }
+    except Exception as e:
+        logger.error(f"Diagnostic error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Demo data
 @api_router.post("/demo/load")

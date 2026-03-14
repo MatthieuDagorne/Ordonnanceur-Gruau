@@ -8,12 +8,13 @@ class MachineAssigner:
     """
     Service d'auto-assignation des machines aux opérations.
     
-    Logique basée sur:
-    - task_id (de l'opération)
-    - work_center_id (de l'opération)
-    - article_id (de l'ordre de fabrication via jointure)
+    LOGIQUE DE MATCHING:
+    1. Récupérer task_id et work_center_id de l'opération
+    2. Trouver les machines du work_center_id
+    3. Appliquer les règles métier (FORBID, ALLOW, PREFER)
+    4. Sélectionner la meilleure machine
     
-    N'utilise JAMAIS l'id de l'opération pour le matching des règles.
+    N'utilise JAMAIS l'id de l'opération pour le matching.
     """
     
     def __init__(self, machines: List[Dict], rules_engine):
@@ -29,16 +30,19 @@ class MachineAssigner:
                     self.machines_by_workcenter[wc_id] = []
                 self.machines_by_workcenter[wc_id].append(machine)
         
-        # Log l'index des machines
-        logger.info("\n" + "-"*60)
-        logger.info("INDEX DES MACHINES PAR WORK_CENTER")
-        logger.info("-"*60)
-        for wc_id, wc_machines in self.machines_by_workcenter.items():
-            machine_names = [m.get('name', m.get('id')) for m in wc_machines]
-            logger.info(f"  {wc_id}: {', '.join(machine_names)}")
-        if not self.machines_by_workcenter:
-            logger.warning("  AUCUNE MACHINE INDEXEE!")
-        logger.info("-"*60 + "\n")
+        # Log l'index complet
+        logger.info("\n" + "="*80)
+        logger.info("INDEX DES MACHINES PAR WORK_CENTER_ID")
+        logger.info("="*80)
+        if self.machines_by_workcenter:
+            for wc_id, wc_machines in self.machines_by_workcenter.items():
+                machine_names = [f"{m.get('name')} ({m.get('id')[:8]}...)" for m in wc_machines]
+                logger.info(f"  work_center_id={wc_id}")
+                for name in machine_names:
+                    logger.info(f"    -> {name}")
+        else:
+            logger.warning("  AUCUNE MACHINE INDEXEE - Verifiez que les machines ont un work_center_id!")
+        logger.info("="*80 + "\n")
     
     def assign_machine_to_operation(
         self, 
@@ -46,187 +50,209 @@ class MachineAssigner:
         order: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
-        Assigne automatiquement une machine à une opération.
-        
-        Critères utilisés (PAS l'id de l'opération):
-        - task_id: de l'opération
-        - work_center_id: de l'opération
-        - article_id: de l'ordre de fabrication (jointure)
+        Diagnostic complet étape par étape pour l'assignation d'une machine.
         """
-        # Extraire les critères de l'opération
-        operation_id = operation.get('id')
+        # === ÉTAPE 1: Extraire les critères ===
+        op_id = operation.get('id')
         task_id = operation.get('task_id')
         work_center_id = operation.get('work_center_id')
+        article_id = order.get('article_id') if order else operation.get('article_id')
         
-        # article_id vient de l'ordre de fabrication (pas de l'opération directement)
-        article_id = None
-        if order:
-            article_id = order.get('article_id') or order.get('article')
-        
-        # Log détaillé de l'opération
-        logger.info(f"\n{'='*60}")
-        logger.info(f"ASSIGNATION MACHINE - Operation: {operation_id}")
-        logger.info(f"{'='*60}")
-        logger.info(f"  Criteres de matching:")
-        logger.info(f"    - task_id:        {task_id or 'NON DEFINI'}")
-        logger.info(f"    - work_center_id: {work_center_id or 'NON DEFINI'}")
-        logger.info(f"    - article_id:     {article_id or 'NON DEFINI (depuis ordre)'}")
-        
-        # Validation des critères obligatoires
-        if not task_id and not work_center_id:
-            logger.error(f"  [ERREUR] task_id ET work_center_id manquants!")
-            return self._error_result(
-                'task_id et work_center_id manquants - impossible de matcher les regles',
-                'DONNEES_INCOMPLETES'
-            )
-        
-        if not work_center_id:
-            logger.error(f"  [ERREUR] work_center_id manquant - impossible de trouver les machines candidates")
-            return self._error_result(
-                f'work_center_id manquant pour operation {operation_id}',
-                'WORK_CENTER_MANQUANT'
-            )
-        
-        # ÉTAPE 1: Récupérer les machines candidates du work_center
-        candidate_machines = self.machines_by_workcenter.get(work_center_id, [])
-        candidate_names = [m.get('name', m.get('id')) for m in candidate_machines]
-        
-        logger.info(f"\n  ETAPE 1: Machines du work_center '{work_center_id}'")
-        if len(candidate_machines) == 0:
-            logger.error(f"    -> AUCUNE MACHINE rattachee au work_center {work_center_id}")
-            logger.error(f"    -> Work centers disponibles: {list(self.machines_by_workcenter.keys())}")
-            return self._error_result(
-                f'Aucune machine rattachee au work_center {work_center_id}',
-                'AUCUNE_MACHINE_DANS_WORK_CENTER'
-            )
-        else:
-            logger.info(f"    -> {len(candidate_machines)} machine(s) trouvee(s): {', '.join(candidate_names)}")
-        
-        # ÉTAPE 2: Appliquer les règles métier
-        logger.info(f"\n  ETAPE 2: Application des regles metier")
-        
-        # Construire le contexte pour le matching (sans l'id de l'opération!)
-        matching_context = {
+        # Créer le diagnostic détaillé
+        diagnostic = {
+            'operation_id': op_id,
             'task_id': task_id,
             'work_center_id': work_center_id,
             'article_id': article_id,
-            # Note: on n'inclut PAS 'id' de l'opération
+            'step1_criteria': {},
+            'step2_machines_in_wc': [],
+            'step3_rules_found': [],
+            'step4_machines_forbidden': [],
+            'step5_machines_preferred': [],
+            'step6_machines_allowed': [],
+            'step7_final_candidates': [],
+            'step8_selected_machine': None,
+            'step9_failure_cause': None,
+            'is_assigned': False
         }
         
-        allowed_machines, forbidden_machines, diagnostics = self.rules_engine.get_allowed_machines(
-            matching_context, 
-            candidate_machines
-        )
+        logger.info(f"\n{'='*80}")
+        logger.info(f"DIAGNOSTIC ASSIGNATION - Operation: {op_id}")
+        logger.info(f"{'='*80}")
         
-        # Log des règles appliquées
-        applicable_rules = diagnostics.get('applicable_rules', [])
-        if applicable_rules:
-            logger.info(f"    -> {len(applicable_rules)} regle(s) applicable(s):")
-            for r in applicable_rules:
-                logger.info(f"       - {r['name']} ({r['type']}) -> machine {r['machine_id']}")
-        else:
-            logger.info(f"    -> Aucune regle specifique applicable")
+        # === ÉTAPE 1: Afficher les critères ===
+        logger.info(f"\n[ETAPE 1] CRITERES DE L'OPERATION")
+        logger.info(f"  operation_id:   {op_id}")
+        logger.info(f"  task_id:        {task_id if task_id else 'NON DEFINI'}")
+        logger.info(f"  work_center_id: {work_center_id if work_center_id else 'NON DEFINI'}")
+        logger.info(f"  article_id:     {article_id if article_id else 'NON DEFINI'}")
         
-        # Log des machines interdites
-        if forbidden_machines:
-            logger.info(f"\n    Machines INTERDITES par les regles:")
-            for m in forbidden_machines:
-                reasons = m.get('rule_reasons', ['Interdit'])
-                logger.info(f"       - {m.get('name')}: {', '.join(reasons)}")
+        diagnostic['step1_criteria'] = {
+            'operation_id': op_id,
+            'task_id': task_id,
+            'work_center_id': work_center_id,
+            'article_id': article_id
+        }
         
-        # Log des machines autorisées
-        logger.info(f"\n    Machines AUTORISEES apres regles:")
-        if allowed_machines:
-            for m in allowed_machines:
-                score = m.get('preference_score', 0)
-                score_str = f" (PREFEREE +{score})" if score > 0 else ""
-                logger.info(f"       - {m.get('name')}{score_str}")
-        else:
-            logger.warning(f"       -> AUCUNE MACHINE AUTORISEE!")
+        # Validation
+        if not work_center_id:
+            diagnostic['step9_failure_cause'] = 'WORK_CENTER_ID_MANQUANT'
+            logger.error(f"\n[ECHEC] work_center_id non defini - impossible de trouver les machines")
+            return self._build_result(diagnostic)
         
-        # ÉTAPE 3: Sélection finale
-        logger.info(f"\n  ETAPE 3: Selection finale")
+        # === ÉTAPE 2: Machines du work_center_id ===
+        logger.info(f"\n[ETAPE 2] MACHINES RATTACHEES AU WORK_CENTER '{work_center_id}'")
         
-        if len(allowed_machines) == 0:
-            if len(forbidden_machines) == len(candidate_machines):
-                cause = 'Toutes les machines interdites par les regles'
-            else:
-                cause = 'Aucune machine compatible trouvee'
+        candidate_machines = self.machines_by_workcenter.get(work_center_id, [])
+        
+        if not candidate_machines:
+            # Chercher si le work_center existe avec un autre format
+            logger.error(f"  AUCUNE MACHINE trouvee pour work_center_id='{work_center_id}'")
+            logger.info(f"\n  Work_center_id disponibles dans l'index:")
+            for wc in self.machines_by_workcenter.keys():
+                logger.info(f"    - {wc}")
             
-            logger.error(f"    -> ECHEC: {cause}")
-            return self._error_result(
-                cause,
-                'TOUTES_MACHINES_INTERDITES' if forbidden_machines else 'AUCUNE_MACHINE_COMPATIBLE',
-                blocked_machines=[
-                    {
-                        'machine_id': m.get('id'),
-                        'machine_name': m.get('name'),
-                        'reason': ', '.join(m.get('rule_reasons', []))
-                    }
-                    for m in forbidden_machines
-                ],
-                rules_applied=applicable_rules
-            )
+            diagnostic['step9_failure_cause'] = f'AUCUNE_MACHINE_DANS_WORK_CENTER_{work_center_id}'
+            return self._build_result(diagnostic)
         
-        # Sélectionner la meilleure machine (triées par score décroissant)
-        selected = allowed_machines[0]
+        for m in candidate_machines:
+            machine_info = f"{m.get('name')} (id={m.get('id')})"
+            logger.info(f"  -> {machine_info}")
+            diagnostic['step2_machines_in_wc'].append({
+                'id': m.get('id'),
+                'name': m.get('name')
+            })
+        
+        logger.info(f"  Total: {len(candidate_machines)} machine(s)")
+        
+        # === ÉTAPE 3: Recherche des règles applicables ===
+        logger.info(f"\n[ETAPE 3] REGLES METIER APPLICABLES")
+        logger.info(f"  Recherche pour: task_id={task_id}, work_center_id={work_center_id}")
+        
+        matching_context = {
+            'task_id': task_id,
+            'work_center_id': work_center_id,
+            'article_id': article_id
+        }
+        
+        applicable_rules = self.rules_engine._get_applicable_rules(matching_context)
+        
+        if not applicable_rules:
+            logger.info(f"  Aucune regle trouvee pour ces criteres")
+        else:
+            for rule in applicable_rules:
+                rule_info = {
+                    'name': rule.name,
+                    'type': rule.rule_type.value,
+                    'task_id': rule.task_id,
+                    'work_center_id': rule.work_center_id,
+                    'machine_id': rule.machine_id
+                }
+                logger.info(f"  -> {rule.name}")
+                logger.info(f"     Type: {rule.rule_type.value}")
+                logger.info(f"     Cible machine: {rule.machine_id}")
+                diagnostic['step3_rules_found'].append(rule_info)
+        
+        # === ÉTAPE 4-6: Appliquer les règles ===
+        logger.info(f"\n[ETAPE 4-6] APPLICATION DES REGLES")
+        
+        machines_forbidden = []
+        machines_preferred = []
+        machines_allowed = []
+        
+        for machine in candidate_machines:
+            machine_id = machine.get('id')
+            machine_name = machine.get('name')
+            
+            is_allowed, reasons, score = self.rules_engine.evaluate_machine_for_operation(
+                matching_context, machine_id, machine_name
+            )
+            
+            machine_entry = {
+                'id': machine_id,
+                'name': machine_name,
+                'reasons': reasons,
+                'score': score
+            }
+            
+            if not is_allowed:
+                machines_forbidden.append(machine_entry)
+                diagnostic['step4_machines_forbidden'].append(machine_entry)
+                logger.info(f"  [FORBID] {machine_name}: {', '.join(reasons)}")
+            elif score > 0:
+                machines_preferred.append({**machine, 'preference_score': score, 'rule_reasons': reasons})
+                diagnostic['step5_machines_preferred'].append(machine_entry)
+                logger.info(f"  [PREFER] {machine_name}: score +{score}")
+            else:
+                machines_allowed.append({**machine, 'preference_score': 0, 'rule_reasons': reasons})
+                diagnostic['step6_machines_allowed'].append(machine_entry)
+                logger.info(f"  [OK] {machine_name}: autorisee")
+        
+        # === ÉTAPE 7: Liste finale des candidates ===
+        logger.info(f"\n[ETAPE 7] MACHINES CANDIDATES FINALES")
+        
+        # Combiner préférées + autorisées, triées par score
+        final_candidates = machines_preferred + machines_allowed
+        final_candidates.sort(key=lambda m: m.get('preference_score', 0), reverse=True)
+        
+        diagnostic['step7_final_candidates'] = [
+            {'id': m.get('id'), 'name': m.get('name'), 'score': m.get('preference_score', 0)}
+            for m in final_candidates
+        ]
+        
+        if not final_candidates:
+            logger.error(f"  AUCUNE MACHINE CANDIDATE!")
+            if machines_forbidden:
+                logger.error(f"  Cause: Toutes les {len(machines_forbidden)} machine(s) sont interdites par FORBID")
+                diagnostic['step9_failure_cause'] = 'TOUTES_MACHINES_INTERDITES_PAR_FORBID'
+            else:
+                diagnostic['step9_failure_cause'] = 'AUCUNE_MACHINE_CANDIDATE_BUG_MOTEUR'
+            return self._build_result(diagnostic)
+        
+        for m in final_candidates:
+            score_str = f" (PREFEREE +{m.get('preference_score')})" if m.get('preference_score', 0) > 0 else ""
+            logger.info(f"  -> {m.get('name')}{score_str}")
+        
+        # === ÉTAPE 8: Sélection finale ===
+        logger.info(f"\n[ETAPE 8] MACHINE SELECTIONNEE")
+        
+        selected = final_candidates[0]
         selected_id = selected.get('id')
         selected_name = selected.get('name')
-        preference_score = selected.get('preference_score', 0)
         
-        logger.info(f"    -> SUCCES: Machine selectionnee = {selected_name}")
-        if preference_score > 0:
-            logger.info(f"       (Machine preferee avec score +{preference_score})")
-        
-        # Résumé final
-        logger.info(f"\n  RESUME:")
-        logger.info(f"    Operation:      {operation_id}")
-        logger.info(f"    task_id:        {task_id}")
-        logger.info(f"    work_center_id: {work_center_id}")
-        logger.info(f"    article_id:     {article_id or '-'}")
-        logger.info(f"    Machines WC:    {', '.join(candidate_names)}")
-        if applicable_rules:
-            logger.info(f"    Regles:         {', '.join([r['name'] for r in applicable_rules])}")
-        logger.info(f"    Machine finale: {selected_name}")
-        logger.info(f"{'='*60}\n")
-        
-        return {
-            'machine_id': selected_id,
-            'machine_name': selected_name,
-            'is_assigned': True,
-            'reason': f'Machine {selected_name} selectionnee (task={task_id}, wc={work_center_id})',
-            'compatible_count': len(allowed_machines),
-            'blocked_machines': [
-                {
-                    'machine_id': m.get('id'),
-                    'machine_name': m.get('name'),
-                    'reason': ', '.join(m.get('rule_reasons', []))
-                }
-                for m in forbidden_machines
-            ],
-            'preference_score': preference_score,
-            'rules_applied': applicable_rules,
-            'failure_cause': None
+        diagnostic['step8_selected_machine'] = {
+            'id': selected_id,
+            'name': selected_name,
+            'score': selected.get('preference_score', 0)
         }
+        diagnostic['is_assigned'] = True
+        
+        logger.info(f"  >>> MACHINE CHOISIE: {selected_name} (id={selected_id})")
+        
+        # === RÉSUMÉ ===
+        logger.info(f"\n[RESUME]")
+        logger.info(f"  Operation: {op_id}")
+        logger.info(f"  task_id: {task_id} | work_center_id: {work_center_id}")
+        logger.info(f"  Machines du WC: {[m['name'] for m in diagnostic['step2_machines_in_wc']]}")
+        logger.info(f"  Regles: {[r['name'] for r in diagnostic['step3_rules_found']] or 'Aucune'}")
+        logger.info(f"  Interdites: {[m['name'] for m in diagnostic['step4_machines_forbidden']] or 'Aucune'}")
+        logger.info(f"  Preferees: {[m['name'] for m in diagnostic['step5_machines_preferred']] or 'Aucune'}")
+        logger.info(f"  >>> Machine finale: {selected_name}")
+        logger.info(f"{'='*80}\n")
+        
+        return self._build_result(diagnostic)
     
-    def _error_result(
-        self, 
-        reason: str, 
-        failure_cause: str,
-        blocked_machines: List[Dict] = None,
-        rules_applied: List[Dict] = None
-    ) -> Dict[str, Any]:
-        """Génère un résultat d'échec standardisé."""
+    def _build_result(self, diagnostic: Dict) -> Dict[str, Any]:
+        """Construit le résultat à partir du diagnostic."""
+        selected = diagnostic.get('step8_selected_machine')
+        
         return {
-            'machine_id': None,
-            'machine_name': None,
-            'is_assigned': False,
-            'reason': reason,
-            'compatible_count': 0,
-            'blocked_machines': blocked_machines or [],
-            'preference_score': 0,
-            'rules_applied': rules_applied or [],
-            'failure_cause': failure_cause
+            'machine_id': selected['id'] if selected else None,
+            'machine_name': selected['name'] if selected else None,
+            'is_assigned': diagnostic['is_assigned'],
+            'reason': diagnostic.get('step9_failure_cause') or 'OK',
+            'failure_cause': diagnostic.get('step9_failure_cause'),
+            'diagnostic': diagnostic  # Inclure le diagnostic complet
         }
     
     def assign_machines_to_operations(
@@ -235,74 +261,85 @@ class MachineAssigner:
         orders: List[Dict]
     ) -> Dict[str, Any]:
         """
-        Assigne automatiquement les machines à toutes les opérations.
+        Assigne les machines à toutes les opérations avec diagnostic complet.
         """
-        logger.info("\n" + "="*80)
-        logger.info("AUTO-ASSIGNATION DES MACHINES")
-        logger.info("Criteres: task_id + work_center_id + article_id (depuis ordre)")
-        logger.info("="*80)
+        logger.info("\n" + "#"*80)
+        logger.info("DEBUT AUTO-ASSIGNATION DES MACHINES")
+        logger.info(f"Total operations: {len(operations)}")
+        logger.info(f"Total ordres: {len(orders)}")
+        logger.info("#"*80)
         
-        # Index des ordres pour jointure rapide
+        # Index des ordres
         orders_by_id = {o.get('id'): o for o in orders}
         
-        # Réinitialiser les logs des règles
+        # Reset logs
         self.rules_engine.clear_applied_rules_log()
         
-        # Compteurs
         stats = {
             'assigned': 0,
             'unassigned': 0,
             'preferred': 0,
             'by_failure_cause': {}
         }
+        
         assignment_details = []
+        diagnostics_table = []  # Tableau de diagnostic pour le frontend
         
         for operation in operations:
-            # Jointure avec l'ordre pour récupérer article_id
             order_id = operation.get('order_id')
             order = orders_by_id.get(order_id)
             
-            # Assigner la machine
-            assignment = self.assign_machine_to_operation(operation, order)
+            result = self.assign_machine_to_operation(operation, order)
             
-            if assignment['is_assigned']:
-                # Mettre à jour l'opération avec la machine assignée
-                operation['machine_id'] = assignment['machine_id']
+            if result['is_assigned']:
+                operation['machine_id'] = result['machine_id']
                 stats['assigned'] += 1
-                if assignment.get('preference_score', 0) > 0:
+                if result.get('diagnostic', {}).get('step5_machines_preferred'):
                     stats['preferred'] += 1
             else:
                 stats['unassigned'] += 1
-                # Compter par cause d'échec
-                cause = assignment.get('failure_cause', 'INCONNU')
+                cause = result.get('failure_cause', 'INCONNU')
                 stats['by_failure_cause'][cause] = stats['by_failure_cause'].get(cause, 0) + 1
             
-            # Enregistrer le détail
+            # Ajouter au tableau de diagnostic
+            diag = result.get('diagnostic', {}) or {}
+            selected_machine = diag.get('step8_selected_machine')
+            diagnostics_table.append({
+                'operation_id': operation.get('id'),
+                'task_id': operation.get('task_id'),
+                'work_center_id': operation.get('work_center_id'),
+                'machines_in_wc': [m['name'] for m in diag.get('step2_machines_in_wc', [])],
+                'rules_applied': [f"{r['name']} ({r['type']})" for r in diag.get('step3_rules_found', [])],
+                'machines_forbidden': [m['name'] for m in diag.get('step4_machines_forbidden', [])],
+                'machines_preferred': [m['name'] for m in diag.get('step5_machines_preferred', [])],
+                'final_candidates': [m['name'] for m in diag.get('step7_final_candidates', [])],
+                'selected_machine': selected_machine.get('name') if selected_machine else None,
+                'failure_cause': diag.get('step9_failure_cause'),
+                'is_assigned': result['is_assigned']
+            })
+            
             assignment_details.append({
                 'operation_id': operation.get('id'),
                 'task_id': operation.get('task_id'),
                 'work_center_id': operation.get('work_center_id'),
-                'article_id': order.get('article_id') if order else None,
-                'order_id': order_id,
-                **assignment
+                **result
             })
         
         # Résumé final
-        logger.info("\n" + "="*80)
-        logger.info("RESUME ASSIGNATION")
-        logger.info("="*80)
+        logger.info("\n" + "#"*80)
+        logger.info("RESUME FINAL ASSIGNATION")
+        logger.info("#"*80)
         logger.info(f"  Total operations:    {len(operations)}")
         logger.info(f"  Assignees:           {stats['assigned']}")
-        if stats['preferred'] > 0:
-            logger.info(f"  Avec preference:     {stats['preferred']}")
+        logger.info(f"  Avec preference:     {stats['preferred']}")
         logger.info(f"  Non assignees:       {stats['unassigned']}")
         
         if stats['by_failure_cause']:
-            logger.info(f"\n  Causes d'echec:")
+            logger.info(f"\n  CAUSES D'ECHEC:")
             for cause, count in stats['by_failure_cause'].items():
-                logger.info(f"    - {cause}: {count}")
+                logger.info(f"    - {cause}: {count} operation(s)")
         
-        logger.info("="*80 + "\n")
+        logger.info("#"*80 + "\n")
         
         return {
             'assigned_count': stats['assigned'],
@@ -311,5 +348,6 @@ class MachineAssigner:
             'total_operations': len(operations),
             'failure_causes': stats['by_failure_cause'],
             'assignment_details': assignment_details,
+            'diagnostics_table': diagnostics_table,  # Nouveau: tableau pour le frontend
             'rules_diagnostics': self.rules_engine.get_diagnostics()
         }

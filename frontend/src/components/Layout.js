@@ -9,7 +9,8 @@ import {
   Shield, 
   ClipboardList, 
   BarChart3, 
-  FolderKanban 
+  FolderKanban,
+  Bug
 } from 'lucide-react';
 
 const navigation = [
@@ -22,6 +23,7 @@ const navigation = [
   { name: 'Règles Métier', path: '/rules', icon: Shield },
   { name: 'Ordres Fab.', path: '/orders', icon: ClipboardList },
   { name: 'Ordonnancement', path: '/scheduling', icon: BarChart3 },
+  { name: 'Diagnostic', path: '/diagnostic', icon: Bug },
   { name: 'Scénarios', path: '/scenarios', icon: FolderKanban },
 ];
 
