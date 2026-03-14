@@ -37,12 +37,12 @@ def create_demo_data():
             {'article_id': 'ART003', 'quantity': 80}
         ],
         'manufacturing_orders': [
-            # Ordre 1 - Urgent (date proche)
+            # Ordre 1 - Urgent (date proche avec heure)
             {
                 'id': 'OF001',
                 'article_id': 'ART001',
                 'quantity': 10,
-                'due_date': '2026-03-18',
+                'due_date': '2026-03-18T14:00:00',  # Format datetime complet
                 'status': 'pending',
                 'priority': 1
             },
@@ -51,7 +51,7 @@ def create_demo_data():
                 'id': 'OF002',
                 'article_id': 'ART002',
                 'quantity': 25,
-                'due_date': '2026-03-25',
+                'due_date': '2026-03-25T09:00:00',
                 'status': 'pending',
                 'priority': 0
             },
@@ -60,7 +60,7 @@ def create_demo_data():
                 'id': 'OF003',
                 'article_id': 'ART003',
                 'quantity': 5,
-                'due_date': '2026-03-10',
+                'due_date': '2026-03-10T08:00:00',
                 'status': 'pending',
                 'priority': 2
             }

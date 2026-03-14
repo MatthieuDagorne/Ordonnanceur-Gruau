@@ -89,34 +89,43 @@ class BusinessRule(BaseModel):
     active: bool = Field(default=True)
 
 class ManufacturingOrder(BaseModel):
-    """Ordre de fabrication"""
+    """
+    Ordre de fabrication.
+    
+    Format due_date: ISO 8601 (YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD)
+    Exemples: "2026-03-18T14:30:00", "2026-03-18 14:30:00", "2026-03-18"
+    """
     model_config = ConfigDict(extra="ignore")
-    id: str  # Code OF (ex: OF001)
-    article_id: str
+    id: str  # Code OF (ex: OF001, LV1100007)
+    article_id: str  # Code article (ex: ART001, 100235570)
     quantity: float
-    due_date: str
+    due_date: str  # Format: YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD
     status: str
+    priority: Optional[int] = 0  # 0=normal, 1=prioritaire, 2=urgent
 
 class Operation(BaseModel):
     """
     Opération de fabrication.
-    Utilise tache_id et centre_de_charge_id (codes métier).
+    
+    Clé de jointure: order_id -> ManufacturingOrder.id
+    L'article_id est récupéré depuis l'ordre via cette jointure.
     """
     model_config = ConfigDict(extra="ignore")
-    id: str  # Code opération (ex: OF001_10)
-    order_id: str  # Référence à l'OF
-    article_id: str
+    id: str  # Code opération (ex: OF001_10, LV1100007_10)
+    order_id: str  # Clé de jointure vers ManufacturingOrder.id
     operation_id: int  # Numéro dans la gamme (10, 20, 30...)
-    tache_id: str  # Type de tâche (ex: PLIAGE, USINAGE)
-    centre_de_charge_id: str  # Centre de charge requis (ex: PLI01)
+    tache_id: str  # Type de tâche (ex: PLIAGE, LVT001)
+    centre_de_charge_id: str  # Centre de charge requis (ex: PLI01, LVC001)
     status: Optional[str] = "pending"
     production_time_minutes: int
     setup_time_minutes: int
     
+    # Note: article_id n'est PAS dans l'opération, il vient de l'ordre via order_id
+    
     # Assignation (déterminée par le moteur)
     machine_id: Optional[str] = None
-    scheduled_start: Optional[str] = None
-    scheduled_end: Optional[str] = None
+    scheduled_start: Optional[str] = None  # Format: ISO 8601
+    scheduled_end: Optional[str] = None    # Format: ISO 8601
 
 class Article(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -760,14 +769,25 @@ async def export_schedule(scenario_id: str):
 async def get_assignment_diagnostic():
     """
     Diagnostic complet de l'assignation des machines.
+    
     Jointure opérations + ordres via order_id.
-    Utilise article_id et date_besoin pour le tri et les règles.
+    L'article_id est récupéré depuis l'ordre pour le matching des règles.
+    
+    Format due_date: ISO 8601 (YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD)
     """
     try:
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
         operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
         machines_raw = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(f"DIAGNOSTIC D'ASSIGNATION")
+        logger.info(f"{'='*80}")
+        logger.info(f"Ordres: {len(orders)}")
+        logger.info(f"Opérations: {len(operations_raw)}")
+        logger.info(f"Machines: {len(machines_raw)}")
+        logger.info(f"Règles: {len(rules)}")
         
         # Adapter la terminologie des opérations
         operations = []
@@ -795,6 +815,13 @@ async def get_assignment_diagnostic():
                 'centre_de_charge_id': r.get('centre_de_charge_id') or r.get('work_center_id')
             })
         
+        # Log des règles pour debug
+        logger.info(f"\nRègles chargées:")
+        for r in adapted_rules:
+            logger.info(f"  [{r.get('rule_type', 'UNKNOWN')}] {r.get('name')}")
+            logger.info(f"    tache={r.get('tache_id')}, centre={r.get('centre_de_charge_id')}, article={r.get('article_id')}")
+            logger.info(f"    -> machine={r.get('machine_id')}")
+        
         rules_engine = RulesEngine(adapted_rules)
         assigner = MachineAssigner(machines, rules_engine)
         
@@ -806,7 +833,8 @@ async def get_assignment_diagnostic():
                 'assigned': result['assigned_count'],
                 'unassigned': result['unassigned_count'],
                 'preferred': result['preferred_count'],
-                'en_retard': result.get('en_retard_count', 0),
+                'late': result.get('late_count', 0),
+                'urgent': result.get('urgent_count', 0),
                 'failure_causes': result['failure_causes']
             },
             'machines_par_centre': {
