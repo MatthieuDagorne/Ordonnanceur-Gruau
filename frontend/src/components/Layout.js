@@ -10,7 +10,8 @@ import {
   ClipboardList, 
   BarChart3, 
   FolderKanban,
-  Bug
+  Bug,
+  Package
 } from 'lucide-react';
 
 const navigation = [
@@ -22,6 +23,7 @@ const navigation = [
   { name: 'Indisponibilités', path: '/unavailability', icon: AlertCircle },
   { name: 'Règles Métier', path: '/rules', icon: Shield },
   { name: 'Ordres Fab.', path: '/orders', icon: ClipboardList },
+  { name: 'Stock Projeté', path: '/projected-stock', icon: Package },
   { name: 'Ordonnancement', path: '/scheduling', icon: BarChart3 },
   { name: 'Diagnostic', path: '/diagnostic', icon: Bug },
   { name: 'Scénarios', path: '/scenarios', icon: FolderKanban },

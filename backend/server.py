@@ -75,10 +75,15 @@ class BusinessRule(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     
-    # Critères de ciblage (codes métier)
+    # Critères de ciblage (codes métier) - règles simples
     tache_id: Optional[str] = None
     centre_de_charge_id: Optional[str] = None
     article_id: Optional[str] = None
+    
+    # Critères sur attributs article - règles avancées
+    attribute_name: Optional[str] = None      # width, thickness, material_type, color, length
+    attribute_operator: Optional[str] = None  # GT, GE, LT, LE, EQ, NE, IN, NOT_IN
+    attribute_value: Optional[Any] = None     # Valeur de comparaison
     
     # Type: ALLOW, FORBID, PREFER
     rule_type: str
@@ -129,9 +134,26 @@ class Operation(BaseModel):
     scheduled_end: Optional[str] = None    # Format: ISO 8601
 
 class Article(BaseModel):
+    """
+    Article avec caractéristiques pour règles métier avancées.
+    """
     model_config = ConfigDict(extra="ignore")
     id: str  # article_id
     description: str
+    # Nouveaux champs pour règles sur attributs
+    material_type: Optional[str] = None  # Type de matière (ex: ACIER, INOX, ALU)
+    thickness: Optional[float] = None    # Épaisseur en mm
+    color: Optional[str] = None          # Couleur
+    width: Optional[float] = None        # Largeur en mm
+    length: Optional[float] = None       # Longueur en mm
+
+class CentreDeCharge(BaseModel):
+    """Centre de charge avec calendrier associé."""
+    model_config = ConfigDict(extra="ignore")
+    id: str  # Code centre (ex: PLI01, LVC001)
+    nom: str
+    description: Optional[str] = None
+    calendar_id: Optional[str] = None  # Référence au calendrier
 
 class Stock(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -214,6 +236,25 @@ async def delete_centre_de_charge(centre_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Centre de charge non trouvé")
     return {"message": "Supprimé avec succès"}
+
+@api_router.put("/centres-de-charge/{centre_id}")
+async def update_centre_de_charge(centre_id: str, updates: Dict[str, Any]):
+    """Met à jour un centre de charge (notamment le calendrier associé)."""
+    # Filtrer les champs modifiables
+    allowed_fields = {'nom', 'description', 'calendar_id'}
+    update_data = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    
+    result = await db.centres_de_charge.update_one(
+        {"id": centre_id},
+        {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Centre de charge non trouvé")
+    
+    return {"message": "Mis à jour avec succès", "updated": update_data}
 
 # Machines endpoints
 @api_router.post("/machines")
@@ -418,6 +459,134 @@ async def get_operations_enrichies():
     result.sort(key=lambda x: (x.get('date_besoin') or '9999-99-99', x.get('order_id') or '', x.get('operation_id') or 0))
     
     return result
+
+# ==========================================
+# STOCK PROJETE - Vue du stock dans le temps
+# ==========================================
+@api_router.get("/projected-stock")
+async def get_projected_stock():
+    """
+    Calcule et retourne le stock projeté avec :
+    - Stock initial par article
+    - Consommations planifiées (besoins matière des opérations)
+    - Réceptions fournisseurs planifiées
+    - Dates de rupture et de disponibilité
+    """
+    try:
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+        planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        
+        # Index des ordres par ID
+        orders_by_id = {o.get('id'): o for o in orders}
+        
+        # Index des opérations par ID
+        operations_by_id = {op.get('id'): op for op in operations}
+        
+        # Stock initial par article
+        stock_by_article = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
+        
+        # Consommations par article (depuis operation_materials)
+        consumption_by_article = {}
+        consumption_details = []
+        
+        for mat in operation_materials:
+            article_id = mat.get('article_composant_id')
+            qty = mat.get('quantity', 0)
+            op_id = mat.get('id')
+            order_id = mat.get('order_id')
+            
+            # Récupérer la date de besoin depuis l'ordre
+            order = orders_by_id.get(order_id, {})
+            due_date = order.get('due_date')
+            
+            if article_id not in consumption_by_article:
+                consumption_by_article[article_id] = 0
+            consumption_by_article[article_id] += qty
+            
+            consumption_details.append({
+                'article_id': article_id,
+                'quantity': qty,
+                'operation_id': op_id,
+                'order_id': order_id,
+                'due_date': due_date
+            })
+        
+        # Réceptions planifiées par article
+        receipts_by_article = {}
+        for receipt in planned_receipts:
+            article_id = receipt.get('article_id')
+            if article_id not in receipts_by_article:
+                receipts_by_article[article_id] = []
+            receipts_by_article[article_id].append({
+                'quantity': receipt.get('quantity', 0),
+                'planned_date': receipt.get('planned_date')
+            })
+        
+        # Trier les réceptions par date
+        for article_id in receipts_by_article:
+            receipts_by_article[article_id].sort(key=lambda x: x.get('planned_date') or '9999-99-99')
+        
+        # Calculer le stock projeté par article
+        projected_stock = []
+        
+        # Collecter tous les articles concernés
+        all_articles = set(stock_by_article.keys()) | set(consumption_by_article.keys()) | set(receipts_by_article.keys())
+        
+        for article_id in sorted(all_articles):
+            initial_stock = stock_by_article.get(article_id, 0)
+            total_consumption = consumption_by_article.get(article_id, 0)
+            receipts = receipts_by_article.get(article_id, [])
+            total_receipts = sum(r.get('quantity', 0) for r in receipts)
+            
+            # Stock projeté final
+            final_stock = initial_stock + total_receipts - total_consumption
+            
+            # Déterminer s'il y a rupture
+            has_shortage = initial_stock < total_consumption
+            shortage_quantity = max(0, total_consumption - initial_stock)
+            
+            # Calculer la date de disponibilité
+            availability_date = None
+            if has_shortage:
+                cumulative_receipts = 0
+                needed = total_consumption - initial_stock
+                for receipt in receipts:
+                    cumulative_receipts += receipt.get('quantity', 0)
+                    if cumulative_receipts >= needed:
+                        availability_date = receipt.get('planned_date')
+                        break
+            
+            projected_stock.append({
+                'article_id': article_id,
+                'initial_stock': initial_stock,
+                'total_consumption': total_consumption,
+                'total_receipts': total_receipts,
+                'final_stock': final_stock,
+                'has_shortage': has_shortage,
+                'shortage_quantity': shortage_quantity,
+                'availability_date': availability_date,
+                'receipts': receipts
+            })
+        
+        # Trier par rupture (en premier) puis par article_id
+        projected_stock.sort(key=lambda x: (0 if x['has_shortage'] else 1, x['article_id']))
+        
+        return {
+            'projected_stock': projected_stock,
+            'consumption_details': consumption_details,
+            'summary': {
+                'total_articles': len(projected_stock),
+                'articles_with_shortage': len([p for p in projected_stock if p['has_shortage']]),
+                'articles_ok': len([p for p in projected_stock if not p['has_shortage']])
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Projected stock error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
 # OPERATION MATERIALS - Besoins matière par opération
@@ -910,6 +1079,7 @@ async def get_assignment_diagnostic():
     
     Jointure opérations + ordres via order_id.
     L'article_id est récupéré depuis l'ordre pour le matching des règles.
+    Les données article complètes sont utilisées pour les règles sur attributs.
     
     Format due_date: ISO 8601 (YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD)
     """
@@ -918,6 +1088,7 @@ async def get_assignment_diagnostic():
         operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
         machines_raw = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
+        articles = await db.articles.find({}, {"_id": 0}).to_list(1000)
         
         # Charger les données matière pour le diagnostic
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
@@ -931,6 +1102,7 @@ async def get_assignment_diagnostic():
         logger.info(f"Opérations: {len(operations_raw)}")
         logger.info(f"Machines: {len(machines_raw)}")
         logger.info(f"Règles: {len(rules)}")
+        logger.info(f"Articles: {len(articles)}")
         logger.info(f"Besoins matière: {len(operation_materials)}")
         logger.info(f"Stocks: {len(stocks)}")
         logger.info(f"Réceptions planifiées: {len(planned_receipts)}")
@@ -966,10 +1138,13 @@ async def get_assignment_diagnostic():
         for r in adapted_rules:
             logger.info(f"  [{r.get('rule_type', 'UNKNOWN')}] {r.get('name')}")
             logger.info(f"    tache={r.get('tache_id')}, centre={r.get('centre_de_charge_id')}, article={r.get('article_id')}")
+            if r.get('attribute_name'):
+                logger.info(f"    attribut: {r.get('attribute_name')} {r.get('attribute_operator')} {r.get('attribute_value')}")
             logger.info(f"    -> machine={r.get('machine_id')}")
         
-        rules_engine = RulesEngine(adapted_rules)
-        assigner = MachineAssigner(machines, rules_engine)
+        # Passer les articles au moteur de règles pour les règles sur attributs
+        rules_engine = RulesEngine(adapted_rules, articles)
+        assigner = MachineAssigner(machines, rules_engine, articles)
         
         result = assigner.assign_machines_to_operations(operations, orders)
         

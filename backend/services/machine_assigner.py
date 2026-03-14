@@ -13,16 +13,25 @@ class MachineAssigner:
     - tache_id: type de tâche
     - centre_de_charge_id: centre de charge
     - article_id: article (depuis l'ordre de fabrication via order_id)
-    - due_date: date/heure de besoin (pour la priorité)
+    - article_data: données complètes de l'article (pour règles sur attributs)
+    - date_besoin: date/heure de besoin (pour la priorité)
     
     Clé de jointure: order_id
     
     Format datetime: ISO 8601 (YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD)
     """
     
-    def __init__(self, machines: List[Dict], rules_engine):
+    def __init__(self, machines: List[Dict], rules_engine, articles: List[Dict] = None):
         self.machines = machines
         self.rules_engine = rules_engine
+        
+        # Index des articles par ID
+        self.articles_by_id: Dict[str, Dict] = {}
+        if articles:
+            for article in articles:
+                article_id = article.get('id')
+                if article_id:
+                    self.articles_by_id[str(article_id)] = article
         
         # Index machines par centre_de_charge_id
         self.machines_by_centre: Dict[str, List[Dict]] = {}
@@ -42,6 +51,7 @@ class MachineAssigner:
                 logger.info(f"  {centre_id}: {machine_ids}")
         else:
             logger.warning("  AUCUNE MACHINE INDEXEE!")
+        logger.info(f"\nArticles indexés: {len(self.articles_by_id)}")
         logger.info("="*80 + "\n")
     
     def _enrich_operation(self, operation: Dict, order: Optional[Dict]) -> Dict:
@@ -65,18 +75,26 @@ class MachineAssigner:
         # Enrichir avec les données de l'ordre (jointure sur order_id)
         if order:
             # article_id DEPUIS L'ORDRE (pas l'opération!)
-            enriched['article_id'] = order.get('article_id') or order.get('article')
+            article_id = order.get('article_id') or order.get('article')
+            enriched['article_id'] = article_id
             # date_besoin = due_date de l'ordre (format datetime complet)
             enriched['date_besoin'] = order.get('due_date') or order.get('date_besoin')
             enriched['priority'] = order.get('priority', 0)
             enriched['quantity'] = order.get('quantity')
             enriched['ordre_trouve'] = True
+            
+            # Récupérer les données complètes de l'article pour les règles sur attributs
+            if article_id and str(article_id) in self.articles_by_id:
+                enriched['article_data'] = self.articles_by_id[str(article_id)]
+            else:
+                enriched['article_data'] = None
         else:
             enriched['article_id'] = None
             enriched['date_besoin'] = None
             enriched['priority'] = 0
             enriched['quantity'] = None
             enriched['ordre_trouve'] = False
+            enriched['article_data'] = None
         
         return enriched
     
@@ -169,6 +187,7 @@ class MachineAssigner:
         
         # IMPORTANT: article_id vient de L'ORDRE, pas de l'opération!
         article_id = enriched['article_id']
+        article_data = enriched.get('article_data')
         date_besoin = enriched['date_besoin']
         
         # Calculer l'urgence
@@ -179,7 +198,8 @@ class MachineAssigner:
             'operation_id': op_id,
             'order_id': order_id,
             'article_id': article_id,
-            'date_besoin': date_besoin,  # Renommé de due_date
+            'article_data': article_data,  # Données complètes pour règles sur attributs
+            'date_besoin': date_besoin,
             'tache_id': tache_id,
             'centre_de_charge_id': centre_de_charge_id,
             'urgency': urgency,
@@ -205,6 +225,8 @@ class MachineAssigner:
         logger.info(f"  operation_id:        {op_id}")
         logger.info(f"  order_id:            {order_id}")
         logger.info(f"  article_id:          {article_id or 'NON TROUVE'} (depuis l'ordre)")
+        if article_data:
+            logger.info(f"  article_data:        width={article_data.get('width')}, thickness={article_data.get('thickness')}, material={article_data.get('material_type')}")
         logger.info(f"  date_besoin:         {date_besoin or 'NON TROUVE'}")
         logger.info(f"  tache_id:            {tache_id or 'NON DEFINI'}")
         logger.info(f"  centre_de_charge_id: {centre_de_charge_id or 'NON DEFINI'}")
@@ -246,18 +268,21 @@ class MachineAssigner:
             diagnostic['machines_du_centre'].append(m.get('id'))
         
         # ÉTAPE 3: Règles métier applicables
-        # IMPORTANT: Passer article_id depuis l'ordre!
+        # IMPORTANT: Passer article_id et article_data depuis l'ordre!
         logger.info(f"\n[ETAPE 3] REGLES METIER")
         logger.info(f"  Critères de matching:")
         logger.info(f"    - tache_id:            {tache_id}")
         logger.info(f"    - centre_de_charge_id: {centre_de_charge_id}")
         logger.info(f"    - article_id:          {article_id} (DEPUIS L'ORDRE)")
+        if article_data:
+            logger.info(f"    - article_data:        width={article_data.get('width')}, thickness={article_data.get('thickness')}")
         
         allowed_machines, forbidden_machines, rules_diag = self.rules_engine.get_allowed_machines(
             tache_id or '',
             centre_de_charge_id,
             candidate_machines,
-            article_id  # article_id DEPUIS L'ORDRE!
+            article_id,  # article_id DEPUIS L'ORDRE!
+            article_data  # Données complètes pour règles sur attributs
         )
         
         diagnostic['regles_applicables'] = [
