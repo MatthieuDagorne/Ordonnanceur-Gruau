@@ -1,0 +1,85 @@
+{
+  "summary": "Completed comprehensive testing of 5 features: Calendriers par Centre de Charge, Stock Projeté, Règles métier sur article_id (bug fix validated), Attributs articles étendus, et Règles métier sur attributs. All 17 backend tests PASSED. All frontend UI tests PASSED.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_features_iteration3.py",
+    "/app/test_reports/pytest/pytest_results_iteration3.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_features_iteration3.py"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "seed_data_creation": "Test data already in place: 2 orders, 2 operations, 10 articles with attributes, 2 FORBID rules (article_id + width), 2 calendars",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 features tested and working: 1) Calendar dropdown on Centres de Charge - LVC001 has 'Horaires Usine' calendar, 2) Stock Projeté page shows 10 articles with OK status and scheduled/unscheduled counters, 3) FORBID rule on article_id 100235570 correctly blocks TP5000_1 - OF_TEST_001 assigned to TP5000_2, 4) Articles have extended attributes (width, thickness, material_type, color, length), 5) Règles Métier form has Simple and Attribute modes",
+  "tests_executed": {
+    "backend_api": {
+      "TestCalendars": {
+        "test_get_calendars": "PASS - Returns 2 calendars (Default, Horaires Usine)",
+        "test_create_calendar": "PASS - Can create calendar with working_days, start_hour, end_hour"
+      },
+      "TestCentresDeChargeWithCalendar": {
+        "test_get_centres_de_charge": "PASS - Returns 4 centres with calendar_id field",
+        "test_put_centres_de_charge_calendar": "PASS - PUT /api/centres-de-charge/{id} updates calendar_id"
+      },
+      "TestProjectedStock": {
+        "test_get_projected_stock": "PASS - Returns projected_stock, consumption_details, summary",
+        "test_projected_stock_has_timestamps": "PASS - Has scheduled_datetime, consumption_datetime"
+      },
+      "TestArticlesWithAttributes": {
+        "test_get_articles": "PASS - 10 articles in DB",
+        "test_diagnostic_shows_article_attributes": "PASS - article_id visible in diagnostic"
+      },
+      "TestBusinessRulesOnArticleId": {
+        "test_get_rules_with_article_id": "PASS - Found FORBID rule on article 100235570",
+        "test_create_forbid_rule_on_article_id": "PASS - Can create FORBID rule with article_id",
+        "test_diagnostic_forbid_rule_article_id": "PASS - OF_TEST_001 with article 100235570 assigned to TP5000_2 (not TP5000_1)"
+      },
+      "TestBusinessRulesOnAttributes": {
+        "test_get_rules_with_attributes": "PASS - Found rule 'Largeur max 600mm sur TP5000_1'",
+        "test_create_forbid_rule_on_width_attribute": "PASS - Can create rule with width > 600",
+        "test_create_forbid_rule_on_thickness_attribute": "PASS - Can create rule with thickness",
+        "test_create_forbid_rule_on_material_type": "PASS - Can create rule with material_type=ACIER"
+      },
+      "TestSchedulingWithCalendarConstraints": {
+        "test_scheduling_calculate": "PASS - Scheduling works with calendar constraints"
+      },
+      "TestEndToEndFlow": {
+        "test_complete_flow": "PASS - Full flow: data stats, centres, rules, stock, diagnostic"
+      }
+    },
+    "frontend_ui": {
+      "CentresDeCharge": "PASS - Table with calendar dropdowns for each centre (4 dropdowns)",
+      "StockProjete": "PASS - Summary cards (Total: 10, En Rupture: 0, Stock OK: 10, Ordonnancées: 0/6)",
+      "ReglesMétier": "PASS - Form with Simple and Attribute modes, 2 existing FORBID rules",
+      "Diagnostic": "PASS - Shows 2 ops, rules loaded, OF_TEST_001 correctly assigned to TP5000_2",
+      "Calendriers": "PASS - Shows Default and Horaires Usine calendars",
+      "Ordonnancement": "PASS - Shows calendar constraints option"
+    }
+  },
+  "business_rules_verification": {
+    "FORBID_Article_100235570": "✓ OF_TEST_001 (article 100235570) correctly assigned to TP5000_2, NOT TP5000_1",
+    "FORBID_Largeur_600mm": "✓ Rule 'Largeur max 600mm sur TP5000_1' visible in Règles Métier table"
+  },
+  "features_verified": {
+    "1_Calendriers_par_Centre": "✓ LVC001 has 'Horaires Usine' calendar (8h-17h, Mon-Fri)",
+    "2_Stock_Projete_Timestamps": "✓ Shows scheduled_consumptions counter and consumption_datetime",
+    "3_Regles_Article_ID": "✓ FORBID rule on article_id 100235570 blocks TP5000_1 - bug fix validated",
+    "4_Attributs_Articles": "✓ Import with largeur, épaisseur, couleur, type_matiere, longueur supported",
+    "5_Regles_Attributs": "✓ Can create rules with attribute_name, attribute_operator, attribute_value"
+  }
+}

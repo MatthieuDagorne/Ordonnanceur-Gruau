@@ -35,13 +35,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Pydantic Models - Terminologie française, codes métier
-class CentreDeCharge(BaseModel):
-    """Centre de charge (ex: PLI01, USI01)"""
-    model_config = ConfigDict(extra="ignore")
-    id: str  # Code métier (ex: PLI01), pas UUID
-    nom: str
-    description: Optional[str] = None
-
 class Machine(BaseModel):
     """Machine rattachée à un centre de charge"""
     model_config = ConfigDict(extra="ignore")
@@ -470,7 +463,11 @@ async def get_projected_stock():
     - Stock initial par article
     - Consommations planifiées (besoins matière des opérations)
     - Réceptions fournisseurs planifiées
-    - Dates de rupture et de disponibilité
+    - Dates de rupture et de disponibilité basées sur l'ordonnancement
+    
+    Les dates sont déterminées par :
+    1. scheduled_start des opérations si elles ont été ordonnancées
+    2. due_date des ordres si non ordonnancées
     """
     try:
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
@@ -489,6 +486,7 @@ async def get_projected_stock():
         stock_by_article = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
         
         # Consommations par article (depuis operation_materials)
+        # Avec timestamp de l'ordonnanceur ou date de besoin
         consumption_by_article = {}
         consumption_details = []
         
@@ -498,21 +496,44 @@ async def get_projected_stock():
             op_id = mat.get('id')
             order_id = mat.get('order_id')
             
-            # Récupérer la date de besoin depuis l'ordre
+            # Récupérer l'opération pour obtenir scheduled_start
+            operation = operations_by_id.get(op_id, {})
+            scheduled_start = operation.get('scheduled_start')
+            
+            # Récupérer la date de besoin depuis l'ordre si pas de scheduled_start
             order = orders_by_id.get(order_id, {})
             due_date = order.get('due_date')
             
+            # Timestamp de consommation : scheduled_start prioritaire, sinon due_date
+            consumption_datetime = scheduled_start or due_date
+            
             if article_id not in consumption_by_article:
-                consumption_by_article[article_id] = 0
-            consumption_by_article[article_id] += qty
+                consumption_by_article[article_id] = []
+            
+            consumption_by_article[article_id].append({
+                'quantity': qty,
+                'datetime': consumption_datetime,
+                'operation_id': op_id,
+                'order_id': order_id,
+                'is_scheduled': scheduled_start is not None
+            })
             
             consumption_details.append({
                 'article_id': article_id,
                 'quantity': qty,
                 'operation_id': op_id,
                 'order_id': order_id,
-                'due_date': due_date
+                'scheduled_datetime': scheduled_start,
+                'due_date': due_date,
+                'consumption_datetime': consumption_datetime,
+                'is_scheduled': scheduled_start is not None
             })
+        
+        # Trier les consommations par datetime
+        for article_id in consumption_by_article:
+            consumption_by_article[article_id].sort(
+                key=lambda x: x.get('datetime') or '9999-99-99'
+            )
         
         # Réceptions planifiées par article
         receipts_by_article = {}
@@ -529,7 +550,7 @@ async def get_projected_stock():
         for article_id in receipts_by_article:
             receipts_by_article[article_id].sort(key=lambda x: x.get('planned_date') or '9999-99-99')
         
-        # Calculer le stock projeté par article
+        # Calculer le stock projeté par article avec projection temporelle
         projected_stock = []
         
         # Collecter tous les articles concernés
@@ -537,27 +558,62 @@ async def get_projected_stock():
         
         for article_id in sorted(all_articles):
             initial_stock = stock_by_article.get(article_id, 0)
-            total_consumption = consumption_by_article.get(article_id, 0)
+            consumptions = consumption_by_article.get(article_id, [])
             receipts = receipts_by_article.get(article_id, [])
+            
+            total_consumption = sum(c.get('quantity', 0) for c in consumptions)
             total_receipts = sum(r.get('quantity', 0) for r in receipts)
             
             # Stock projeté final
             final_stock = initial_stock + total_receipts - total_consumption
             
-            # Déterminer s'il y a rupture
-            has_shortage = initial_stock < total_consumption
-            shortage_quantity = max(0, total_consumption - initial_stock)
+            # Calculer la projection temporelle
+            # Construire la timeline : événements triés par date
+            events = []
+            for cons in consumptions:
+                events.append({
+                    'datetime': cons.get('datetime'),
+                    'type': 'consumption',
+                    'quantity': -cons.get('quantity', 0),
+                    'operation_id': cons.get('operation_id')
+                })
+            for rec in receipts:
+                events.append({
+                    'datetime': rec.get('planned_date'),
+                    'type': 'receipt',
+                    'quantity': rec.get('quantity', 0)
+                })
             
-            # Calculer la date de disponibilité
+            # Trier par datetime
+            events.sort(key=lambda x: x.get('datetime') or '9999-99-99')
+            
+            # Calculer le stock à chaque instant et détecter les ruptures
+            current_stock = initial_stock
+            has_shortage = False
+            shortage_quantity = 0
+            first_shortage_datetime = None
             availability_date = None
-            if has_shortage:
-                cumulative_receipts = 0
-                needed = total_consumption - initial_stock
-                for receipt in receipts:
-                    cumulative_receipts += receipt.get('quantity', 0)
-                    if cumulative_receipts >= needed:
-                        availability_date = receipt.get('planned_date')
-                        break
+            timeline = []
+            
+            for event in events:
+                current_stock += event['quantity']
+                
+                timeline.append({
+                    'datetime': event.get('datetime'),
+                    'type': event['type'],
+                    'quantity_change': event['quantity'],
+                    'stock_after': current_stock,
+                    'operation_id': event.get('operation_id')
+                })
+                
+                if current_stock < 0 and not has_shortage:
+                    has_shortage = True
+                    first_shortage_datetime = event.get('datetime')
+                    shortage_quantity = abs(current_stock)
+                
+                # Date de disponibilité : quand le stock redevient >= 0
+                if has_shortage and current_stock >= 0 and availability_date is None:
+                    availability_date = event.get('datetime')
             
             projected_stock.append({
                 'article_id': article_id,
@@ -567,12 +623,22 @@ async def get_projected_stock():
                 'final_stock': final_stock,
                 'has_shortage': has_shortage,
                 'shortage_quantity': shortage_quantity,
+                'first_shortage_datetime': first_shortage_datetime,
                 'availability_date': availability_date,
-                'receipts': receipts
+                'receipts': receipts,
+                'timeline': timeline[:20]  # Limiter pour l'affichage
             })
         
-        # Trier par rupture (en premier) puis par article_id
-        projected_stock.sort(key=lambda x: (0 if x['has_shortage'] else 1, x['article_id']))
+        # Trier par rupture (en premier) puis par datetime de rupture puis par article_id
+        projected_stock.sort(key=lambda x: (
+            0 if x['has_shortage'] else 1, 
+            x.get('first_shortage_datetime') or '9999-99-99',
+            x['article_id']
+        ))
+        
+        # Compter les opérations ordonnancées vs non ordonnancées
+        scheduled_consumptions = len([c for c in consumption_details if c.get('is_scheduled')])
+        unscheduled_consumptions = len([c for c in consumption_details if not c.get('is_scheduled')])
         
         return {
             'projected_stock': projected_stock,
@@ -580,7 +646,9 @@ async def get_projected_stock():
             'summary': {
                 'total_articles': len(projected_stock),
                 'articles_with_shortage': len([p for p in projected_stock if p['has_shortage']]),
-                'articles_ok': len([p for p in projected_stock if not p['has_shortage']])
+                'articles_ok': len([p for p in projected_stock if not p['has_shortage']]),
+                'scheduled_consumptions': scheduled_consumptions,
+                'unscheduled_consumptions': unscheduled_consumptions
             }
         }
         
@@ -853,6 +921,20 @@ async def import_operations(file: UploadFile = File(...)):
 
 @api_router.post("/import/articles", response_model=ImportResult)
 async def import_articles(file: UploadFile = File(...)):
+    """
+    Import CSV des articles avec attributs pour règles métier.
+    
+    Format CSV attendu:
+    id,description,type_matiere,epaisseur,couleur,largeur,longueur
+    100235560,PORTE DROITE,Acier,10,blanc,500,1000
+    
+    Mapping CSV -> MongoDB:
+    - type_matiere -> material_type
+    - epaisseur -> thickness
+    - couleur -> color
+    - largeur -> width
+    - longueur -> length
+    """
     try:
         previous_count = await db.articles.count_documents({})
         contents = await file.read()
@@ -870,19 +952,43 @@ async def import_articles(file: UploadFile = File(...)):
         await db.articles.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens articles supprimés")
         
+        # Mapping des colonnes CSV françaises vers les champs MongoDB anglais
+        column_mapping = {
+            'type_matiere': 'material_type',
+            'epaisseur': 'thickness',
+            'couleur': 'color',
+            'largeur': 'width',
+            'longueur': 'length'
+        }
+        
         records = df.to_dict('records')
         for record in records:
+            # Assurer l'ID
             if 'id' not in record or pd.isna(record['id']):
                 record['id'] = str(uuid.uuid4())
             else:
                 record['id'] = str(record['id'])
+            
+            # Mapper les colonnes françaises vers anglaises
+            for fr_col, en_col in column_mapping.items():
+                if fr_col in record:
+                    value = record.pop(fr_col)
+                    # Convertir les valeurs numériques
+                    if en_col in ['thickness', 'width', 'length'] and not pd.isna(value):
+                        try:
+                            record[en_col] = float(value)
+                        except (ValueError, TypeError):
+                            record[en_col] = value
+                    elif not pd.isna(value):
+                        record[en_col] = str(value)
+            
             await db.articles.insert_one(record)
         
-        logger.info(f"✅ {len(records)} nouveaux articles importés")
+        logger.info(f"✅ {len(records)} nouveaux articles importés (avec attributs)")
         
         return ImportResult(
             success=True,
-            message=f"Import réussi: {len(records)} articles (remplace {previous_count} anciens)",
+            message=f"Import réussi: {len(records)} articles avec attributs (remplace {previous_count} anciens)",
             records_imported=len(records),
             previous_records=previous_count
         )
@@ -1096,7 +1202,7 @@ async def get_assignment_diagnostic():
         planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
         
         logger.info(f"\n{'='*80}")
-        logger.info(f"DIAGNOSTIC D'ASSIGNATION")
+        logger.info("DIAGNOSTIC D'ASSIGNATION")
         logger.info(f"{'='*80}")
         logger.info(f"Ordres: {len(orders)}")
         logger.info(f"Opérations: {len(operations_raw)}")
@@ -1134,7 +1240,7 @@ async def get_assignment_diagnostic():
             })
         
         # Log des règles pour debug
-        logger.info(f"\nRègles chargées:")
+        logger.info("\nRègles chargées:")
         for r in adapted_rules:
             logger.info(f"  [{r.get('rule_type', 'UNKNOWN')}] {r.get('name')}")
             logger.info(f"    tache={r.get('tache_id')}, centre={r.get('centre_de_charge_id')}, article={r.get('article_id')}")

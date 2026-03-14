@@ -66,7 +66,7 @@ export default function ProjectedStock() {
       </div>
 
       {/* Résumé */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4" data-testid="summary-total">
           <div className="flex items-center gap-3">
             <div className="bg-slate-100 p-2 rounded-lg">
@@ -99,6 +99,20 @@ export default function ProjectedStock() {
             <div>
               <p className="text-sm text-green-600">Stock OK</p>
               <p className="text-2xl font-bold text-green-700">{summary?.articles_ok || 0}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-sm border border-blue-200 p-4" data-testid="summary-scheduled">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-100 p-2 rounded-lg">
+              <Calendar className="text-blue-600" size={20} />
+            </div>
+            <div>
+              <p className="text-sm text-blue-600">Ordonnancées</p>
+              <p className="text-lg font-bold text-blue-700">
+                {summary?.scheduled_consumptions || 0} / {(summary?.scheduled_consumptions || 0) + (summary?.unscheduled_consumptions || 0)}
+              </p>
             </div>
           </div>
         </div>
@@ -167,10 +181,15 @@ export default function ProjectedStock() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {item.has_shortage && item.availability_date ? (
+                    {item.has_shortage && item.first_shortage_datetime ? (
+                      <span className="flex items-center gap-1 text-red-700 text-xs font-medium">
+                        <AlertTriangle size={12} />
+                        Rupture: {item.first_shortage_datetime?.substring(0, 16).replace('T', ' ')}
+                      </span>
+                    ) : item.has_shortage && item.availability_date ? (
                       <span className="flex items-center gap-1 text-amber-700 text-xs">
                         <Calendar size={12} />
-                        {item.availability_date?.substring(0, 16).replace('T', ' ')}
+                        Dispo: {item.availability_date?.substring(0, 16).replace('T', ' ')}
                       </span>
                     ) : item.has_shortage ? (
                       <span className="text-red-600 text-xs font-medium">Pas de réception prévue</span>
@@ -207,7 +226,8 @@ export default function ProjectedStock() {
                   <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Quantité</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Opération</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Ordre</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date Besoin</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date Consommation</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-slate-500 uppercase">Statut</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-slate-200">
@@ -217,8 +237,19 @@ export default function ProjectedStock() {
                     <td className="px-4 py-2 text-right font-mono text-red-600">-{item.quantity}</td>
                     <td className="px-4 py-2 font-mono text-sm text-slate-600">{item.operation_id}</td>
                     <td className="px-4 py-2 font-mono text-sm text-slate-600">{item.order_id}</td>
-                    <td className="px-4 py-2 text-xs text-slate-500">
-                      {item.due_date?.substring(0, 16).replace('T', ' ') || '-'}
+                    <td className="px-4 py-2 text-xs text-slate-700">
+                      {item.consumption_datetime?.substring(0, 16).replace('T', ' ') || item.due_date?.substring(0, 16).replace('T', ' ') || '-'}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {item.is_scheduled ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                          Ordonnancée
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-600">
+                          Date besoin
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

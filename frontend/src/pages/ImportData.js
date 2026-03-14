@@ -292,8 +292,11 @@ export default function ImportData() {
           <div>
             <p className="font-medium text-slate-900">Articles:</p>
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
-              id, description
+              id, description, type_matiere, epaisseur, couleur, largeur, longueur
             </code>
+            <p className="text-xs text-slate-500 mt-1">
+              ℹ️ Les attributs permettent de créer des règles métier avancées (ex: interdire largeur &gt; 5000mm sur une machine)
+            </p>
           </div>
           <div>
             <p className="font-medium text-slate-900">Stocks:</p>
