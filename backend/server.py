@@ -31,7 +31,7 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Pydantic Models
+# Pydantic Models - Structure révisée
 class WorkCenter(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -49,7 +49,7 @@ class Calendar(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    working_days: List[int] = Field(default=[1, 2, 3, 4, 5])  # 1=Monday, 7=Sunday
+    working_days: List[int] = Field(default=[1, 2, 3, 4, 5])
     start_hour: int = Field(default=8)
     end_hour: int = Field(default=17)
 
@@ -62,36 +62,63 @@ class MachineUnavailability(BaseModel):
     reason: str
 
 class BusinessRule(BaseModel):
+    """
+    Règles métier basées sur task_id et work_center_id.
+    """
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    rule_type: str  # "machine_operation", "article_machine", "preference"
-    is_hard: bool = Field(default=True)  # Hard constraint or soft (penalty)
+    rule_type: str  # "task_workcenter", "task_machine", "workcenter_machine", "article_machine"
+    is_hard: bool = Field(default=True)
+    
+    # Critères de règle
+    task_id: Optional[str] = None
+    work_center_id: Optional[str] = None
     machine_id: Optional[str] = None
-    operation_code: Optional[str] = None
     article_id: Optional[str] = None
+    
+    # Résultat
     allowed: bool = Field(default=True)
     penalty: int = Field(default=0)
     setup_time_minutes: Optional[int] = None
+    description: Optional[str] = None
 
 class ManufacturingOrder(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
-    article: str
+    article_id: str  # Renommé de 'article' vers 'article_id'
     quantity: float
     due_date: str
     status: str
 
 class Operation(BaseModel):
+    """
+    Structure complète des opérations avec task_id et work_center_id.
+    """
     model_config = ConfigDict(extra="ignore")
     id: str
     order_id: str
-    operation_number: int
-    sequence: int
+    article_id: str
+    operation_id: int  # Numéro d'opération dans la gamme
+    task_id: str  # Type de tâche (ex: USINAGE, ASSEMBLAGE)
+    work_center_id: str  # Centre de charge requis
+    status: Optional[str] = "pending"
     production_time_minutes: int
     setup_time_minutes: int
+    
+    # Assignation machine (optionnelle, déterminée par le moteur)
     machine_id: Optional[str] = None
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
+
+class Article(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str  # article_id
+    description: str
+
+class Stock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    article_id: str  # Cohérent avec ManufacturingOrder et Operation
+    quantity: float
 
 class Scenario(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -99,13 +126,14 @@ class Scenario(BaseModel):
     name: str
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     schedule_data: Optional[Dict[str, Any]] = None
-    status: str = "draft"  # draft, calculating, completed, error
+    status: str = "draft"
 
 class ScheduleRequestWithOptions(BaseModel):
     scenario_id: Optional[str] = None
     ignore_rules: bool = False
     ignore_material: bool = False
     debug_mode: bool = True
+    auto_assign_machines: bool = True
 
 class ImportResult(BaseModel):
     success: bool
@@ -251,21 +279,16 @@ async def get_scenario(scenario_id: str):
         raise HTTPException(status_code=404, detail="Scenario not found")
     return scenario
 
-# DATA MANAGEMENT - Reset and Stats
+# DATA MANAGEMENT
 @api_router.post("/data/reset")
 async def reset_operational_data():
-    """
-    Supprime toutes les données opérationnelles (ERP) mais conserve la configuration.
-    """
     try:
-        # Count before deletion
         orders_count = await db.manufacturing_orders.count_documents({})
         operations_count = await db.operations.count_documents({})
         articles_count = await db.articles.count_documents({})
         stocks_count = await db.stocks.count_documents({})
         scenarios_count = await db.scenarios.count_documents({})
         
-        # Delete operational data
         await db.manufacturing_orders.delete_many({})
         await db.operations.delete_many({})
         await db.articles.delete_many({})
@@ -298,9 +321,6 @@ async def reset_operational_data():
 
 @api_router.get("/data/stats", response_model=DataStats)
 async def get_data_stats():
-    """
-    Retourne les statistiques des données chargées.
-    """
     stats = DataStats(
         manufacturing_orders=await db.manufacturing_orders.count_documents({}),
         operations=await db.operations.count_documents({}),
@@ -313,25 +333,21 @@ async def get_data_stats():
         scenarios=await db.scenarios.count_documents({})
     )
     
-    # Get last import timestamp (if available)
     last_order = await db.manufacturing_orders.find_one({}, {"_id": 0}, sort=[("id", -1)])
     if last_order:
         stats.last_import = datetime.now(timezone.utc).isoformat()
     
     return stats
 
-# Import CSV endpoints with full replacement mode
+# Import CSV with new structure
 @api_router.post("/import/manufacturing-orders", response_model=ImportResult)
 async def import_manufacturing_orders(file: UploadFile = File(...)):
     try:
-        # Count existing records
         previous_count = await db.manufacturing_orders.count_documents({})
-        
-        # Read CSV
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
-        # Check for duplicate IDs in file
+        # Check for duplicate IDs
         if 'id' in df.columns:
             duplicate_ids = df['id'].duplicated().sum()
             if duplicate_ids > 0:
@@ -341,17 +357,18 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
                     duplicates_found=duplicate_ids
                 )
         
-        # DELETE old data (full replacement mode)
         await db.manufacturing_orders.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens ordres supprimés")
         
-        # Insert new data
         records = df.to_dict('records')
         for record in records:
             if 'id' not in record or pd.isna(record['id']):
                 record['id'] = str(uuid.uuid4())
             else:
                 record['id'] = str(record['id'])
+            # Ensure article_id field
+            if 'article' in record and 'article_id' not in record:
+                record['article_id'] = record['article']
             await db.manufacturing_orders.insert_one(record)
         
         logger.info(f"✅ {len(records)} nouveaux ordres importés")
@@ -370,7 +387,6 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
 async def import_operations(file: UploadFile = File(...)):
     try:
         previous_count = await db.operations.count_documents({})
-        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
@@ -384,11 +400,9 @@ async def import_operations(file: UploadFile = File(...)):
                     duplicates_found=duplicate_ids
                 )
         
-        # DELETE old data
         await db.operations.delete_many({})
         logger.info(f"🗑️  {previous_count} anciennes opérations supprimées")
         
-        # Insert new data
         records = df.to_dict('records')
         for record in records:
             if 'id' not in record or pd.isna(record['id']):
@@ -413,25 +427,21 @@ async def import_operations(file: UploadFile = File(...)):
 async def import_articles(file: UploadFile = File(...)):
     try:
         previous_count = await db.articles.count_documents({})
-        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
-        # Check for duplicate IDs
         if 'id' in df.columns:
             duplicate_ids = df['id'].duplicated().sum()
             if duplicate_ids > 0:
                 return ImportResult(
                     success=False,
-                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
+                    message=f"Erreur: {duplicate_ids} ID(s) en double",
                     duplicates_found=duplicate_ids
                 )
         
-        # DELETE old data
         await db.articles.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens articles supprimés")
         
-        # Insert new data
         records = df.to_dict('records')
         for record in records:
             if 'id' not in record or pd.isna(record['id']):
@@ -456,19 +466,19 @@ async def import_articles(file: UploadFile = File(...)):
 async def import_stocks(file: UploadFile = File(...)):
     try:
         previous_count = await db.stocks.count_documents({})
-        
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
-        # DELETE old data
         await db.stocks.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens stocks supprimés")
         
-        # Insert new data
         records = df.to_dict('records')
         for record in records:
             if 'id' not in record or pd.isna(record.get('id')):
                 record['id'] = str(uuid.uuid4())
+            # Ensure article_id field
+            if 'article' in record and 'article_id' not in record:
+                record['article_id'] = record['article']
             await db.stocks.insert_one(record)
         
         logger.info(f"✅ {len(records)} nouveaux stocks importés")
@@ -483,27 +493,24 @@ async def import_stocks(file: UploadFile = File(...)):
         logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
-# Scheduling endpoint with options
+# Scheduling with new model
 @api_router.post("/scheduling/calculate")
 async def calculate_schedule(request: ScheduleRequestWithOptions):
     try:
         scenario_id = request.scenario_id or str(uuid.uuid4())
         
-        # Update scenario status
         await db.scenarios.update_one(
             {"id": scenario_id},
             {"$set": {"status": "calculating"}},
             upsert=True
         )
         
-        # Get data
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
         operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
         machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         
-        # Run scheduler with options
         engine = SchedulerEngine(db)
         material_checker = MaterialChecker(stocks)
         rules_engine = RulesEngine(rules)
@@ -511,14 +518,14 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
         options = {
             'ignore_rules': request.ignore_rules,
             'ignore_material': request.ignore_material,
-            'debug_mode': request.debug_mode
+            'debug_mode': request.debug_mode,
+            'auto_assign_machines': request.auto_assign_machines
         }
         
         schedule_result = await engine.schedule(
             orders, operations, machines, rules_engine, material_checker, options
         )
         
-        # Save result
         await db.scenarios.update_one(
             {"id": scenario_id},
             {
@@ -550,13 +557,11 @@ async def export_schedule(scenario_id: str):
     schedule_data = scenario['schedule_data']
     operations = schedule_data.get('operations', [])
     
-    # Create CSV
     df = pd.DataFrame(operations)
     csv_buffer = io.StringIO()
     df.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)
     
-    # Save to temp file
     temp_file = f"/tmp/schedule_export_{scenario_id}.csv"
     with open(temp_file, 'w') as f:
         f.write(csv_buffer.getvalue())
@@ -567,7 +572,7 @@ async def export_schedule(scenario_id: str):
         filename=f'schedule_{scenario_id}.csv'
     )
 
-# Demo data endpoint
+# Demo data
 @api_router.post("/demo/load")
 async def load_demo():
     try:
@@ -583,7 +588,6 @@ async def get_dashboard_stats():
     total_orders = await db.manufacturing_orders.count_documents({})
     pending_orders = await db.manufacturing_orders.count_documents({"status": "pending"})
     
-    # Count late orders (simplified - compare due_date with today)
     late_orders = 0
     orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
     today = datetime.now(timezone.utc)

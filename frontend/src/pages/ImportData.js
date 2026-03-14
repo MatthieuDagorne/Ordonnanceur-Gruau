@@ -272,16 +272,19 @@ export default function ImportData() {
           <div>
             <p className="font-medium text-slate-900">Ordres de Fabrication:</p>
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
-              id, article, quantity, due_date, status
+              id, article_id, quantity, due_date, status
             </code>
           </div>
           <div>
             <p className="font-medium text-slate-900">Opérations:</p>
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
-              id, order_id, operation_number, sequence, production_time_minutes, setup_time_minutes
+              id, order_id, article_id, operation_id, task_id, work_center_id, status, production_time_minutes, setup_time_minutes
             </code>
             <p className="text-xs text-blue-600 mt-1">
-              ℹ️ Le champ <strong>machine_id</strong> est optionnel. Si absent, le moteur d'ordonnancement assignera automatiquement une machine selon les règles de compatibilité.
+              ℹ️ <strong>task_id</strong> = type de tâche (ex: USINAGE, ASSEMBLAGE), <strong>work_center_id</strong> = centre de charge requis
+            </p>
+            <p className="text-xs text-green-600 mt-1">
+              ✓ Le champ <strong>machine_id</strong> est automatiquement assigné par le moteur selon les règles métier
             </p>
           </div>
           <div>
@@ -293,7 +296,7 @@ export default function ImportData() {
           <div>
             <p className="font-medium text-slate-900">Stocks:</p>
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
-              article, quantity
+              article_id, quantity
             </code>
           </div>
         </div>

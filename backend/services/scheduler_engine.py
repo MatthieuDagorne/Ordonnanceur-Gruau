@@ -96,10 +96,10 @@ class SchedulerEngine:
                 
                 # Vérification matière (si non ignorée)
                 if is_valid and not ignore_material and order:
-                    article = order.get('article')
-                    if not material_checker.check_availability(article, order.get('quantity', 0)):
+                    article_id = order.get('article_id') or order.get('article')
+                    if not material_checker.check_availability(article_id, order.get('quantity', 0)):
                         is_valid = False
-                        blocking_reason = f'Matière insuffisante pour {article}'
+                        blocking_reason = f'Matière insuffisante pour {article_id}'
                 
                 # Vérification règles métier (si non ignorées)
                 if is_valid and not ignore_rules and machine_id:
