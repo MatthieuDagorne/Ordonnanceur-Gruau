@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Filter, Ruler, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Pencil, X, PlusCircle, MinusCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -31,24 +31,31 @@ const OPERATORS = [
   { value: 'NOT_IN', label: 'Pas dans la liste' }
 ];
 
+const EMPTY_CONDITION = { attribute_name: '', operator: 'GT', value: '' };
+const EMPTY_GROUP = { conditions: [{ ...EMPTY_CONDITION }], logic: 'AND' };
+
 export default function BusinessRules() {
   const [rules, setRules] = useState([]);
   const [machines, setMachines] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [editingRule, setEditingRule] = useState(null); // Règle en cours d'édition
+  const [editingRule, setEditingRule] = useState(null);
   const [ruleMode, setRuleMode] = useState('simple');
+  
+  // Formulaire de base
   const [formData, setFormData] = useState({
     name: '',
     tache_id: '',
     centre_de_charge_id: '',
     article_id: '',
-    attribute_name: '',
-    attribute_operator: '',
-    attribute_value: '',
     rule_type: 'FORBID',
     machine_id: '',
     active: true
   });
+  
+  // Conditions multiples sur attributs
+  const [conditionGroups, setConditionGroups] = useState([{ ...EMPTY_GROUP }]);
+  const [conditionsLogic, setConditionsLogic] = useState('AND'); // Entre les groupes
+  
   const [formError, setFormError] = useState('');
 
   useEffect(() => {
@@ -69,6 +76,43 @@ export default function BusinessRules() {
     }
   };
 
+  // === Gestion des conditions ===
+  const addConditionGroup = () => {
+    setConditionGroups([...conditionGroups, { conditions: [{ ...EMPTY_CONDITION }], logic: 'AND' }]);
+  };
+
+  const removeConditionGroup = (groupIndex) => {
+    if (conditionGroups.length > 1) {
+      setConditionGroups(conditionGroups.filter((_, i) => i !== groupIndex));
+    }
+  };
+
+  const addConditionToGroup = (groupIndex) => {
+    const newGroups = [...conditionGroups];
+    newGroups[groupIndex].conditions.push({ ...EMPTY_CONDITION });
+    setConditionGroups(newGroups);
+  };
+
+  const removeConditionFromGroup = (groupIndex, conditionIndex) => {
+    const newGroups = [...conditionGroups];
+    if (newGroups[groupIndex].conditions.length > 1) {
+      newGroups[groupIndex].conditions = newGroups[groupIndex].conditions.filter((_, i) => i !== conditionIndex);
+      setConditionGroups(newGroups);
+    }
+  };
+
+  const updateCondition = (groupIndex, conditionIndex, field, value) => {
+    const newGroups = [...conditionGroups];
+    newGroups[groupIndex].conditions[conditionIndex][field] = value;
+    setConditionGroups(newGroups);
+  };
+
+  const updateGroupLogic = (groupIndex, logic) => {
+    const newGroups = [...conditionGroups];
+    newGroups[groupIndex].logic = logic;
+    setConditionGroups(newGroups);
+  };
+
   const validateForm = () => {
     if (!formData.machine_id) {
       setFormError('La machine cible est obligatoire');
@@ -85,8 +129,20 @@ export default function BusinessRules() {
         return false;
       }
     } else {
-      if (!formData.attribute_name || !formData.attribute_operator || !formData.attribute_value) {
-        setFormError('Tous les champs attribut (nom, opérateur, valeur) sont obligatoires');
+      // Vérifier qu'au moins une condition est complète
+      let hasValidCondition = false;
+      for (const group of conditionGroups) {
+        for (const cond of group.conditions) {
+          if (cond.attribute_name && cond.operator && cond.value) {
+            hasValidCondition = true;
+            break;
+          }
+        }
+        if (hasValidCondition) break;
+      }
+      
+      if (!hasValidCondition) {
+        setFormError('Au moins une condition complète (attribut + opérateur + valeur) est requise');
         return false;
       }
     }
@@ -112,20 +168,27 @@ export default function BusinessRules() {
       if (formData.centre_de_charge_id.trim()) cleanData.centre_de_charge_id = formData.centre_de_charge_id.trim();
       if (formData.article_id.trim()) cleanData.article_id = formData.article_id.trim();
       
-      // Critères sur attributs
-      if (ruleMode === 'attribute' && formData.attribute_name) {
-        cleanData.attribute_name = formData.attribute_name;
-        cleanData.attribute_operator = formData.attribute_operator;
-        cleanData.attribute_value = formData.attribute_value;
+      // Conditions sur attributs
+      if (ruleMode === 'attribute') {
+        // Filtrer les conditions vides et formater
+        const validGroups = conditionGroups
+          .map(group => ({
+            conditions: group.conditions.filter(c => c.attribute_name && c.operator && c.value),
+            logic: group.logic
+          }))
+          .filter(group => group.conditions.length > 0);
+        
+        if (validGroups.length > 0) {
+          cleanData.attribute_conditions = validGroups;
+          cleanData.conditions_logic = conditionsLogic;
+        }
       }
 
       if (editingRule) {
-        // Mode édition - PUT
         const response = await axios.put(`${API}/rules/${editingRule.id}`, cleanData);
         setRules(rules.map(r => r.id === editingRule.id ? response.data : r));
         toast.success(`Règle "${response.data.name}" mise à jour`);
       } else {
-        // Mode création - POST
         const response = await axios.post(`${API}/rules`, cleanData);
         setRules([...rules, response.data]);
         toast.success(`Règle "${response.data.name}" créée`);
@@ -138,19 +201,39 @@ export default function BusinessRules() {
   };
 
   const handleEdit = (rule) => {
-    // Déterminer le mode (simple ou attribut)
-    const hasAttribute = rule.attribute_name && rule.attribute_operator;
-    setRuleMode(hasAttribute ? 'attribute' : 'simple');
+    // Déterminer le mode
+    const hasMultipleConditions = rule.attribute_conditions && rule.attribute_conditions.length > 0;
+    const hasSingleAttribute = rule.attribute_name && rule.attribute_operator;
     
-    // Pré-remplir le formulaire
+    if (hasMultipleConditions) {
+      setRuleMode('attribute');
+      setConditionGroups(rule.attribute_conditions.map(g => ({
+        conditions: g.conditions || [],
+        logic: g.logic || 'AND'
+      })));
+      setConditionsLogic(rule.conditions_logic || 'AND');
+    } else if (hasSingleAttribute) {
+      setRuleMode('attribute');
+      setConditionGroups([{
+        conditions: [{
+          attribute_name: rule.attribute_name,
+          operator: rule.attribute_operator,
+          value: rule.attribute_value
+        }],
+        logic: 'AND'
+      }]);
+      setConditionsLogic('AND');
+    } else {
+      setRuleMode('simple');
+      setConditionGroups([{ ...EMPTY_GROUP }]);
+      setConditionsLogic('AND');
+    }
+    
     setFormData({
       name: rule.name || '',
       tache_id: rule.tache_id || '',
       centre_de_charge_id: rule.centre_de_charge_id || '',
       article_id: rule.article_id || '',
-      attribute_name: rule.attribute_name || '',
-      attribute_operator: rule.attribute_operator || '',
-      attribute_value: rule.attribute_value || '',
       rule_type: rule.rule_type || 'FORBID',
       machine_id: rule.machine_id || '',
       active: rule.active !== false
@@ -167,40 +250,69 @@ export default function BusinessRules() {
       tache_id: '',
       centre_de_charge_id: '',
       article_id: '',
-      attribute_name: '',
-      attribute_operator: '',
-      attribute_value: '',
       rule_type: 'FORBID',
       machine_id: '',
       active: true
     });
+    setConditionGroups([{ conditions: [{ ...EMPTY_CONDITION }], logic: 'AND' }]);
+    setConditionsLogic('AND');
     setShowForm(false);
     setEditingRule(null);
     setFormError('');
     setRuleMode('simple');
   };
 
-  const handleDelete = async (id, name) => {
-    if (!window.confirm(`Supprimer la règle "${name}" ?`)) return;
+  const handleDelete = async (ruleId, ruleName) => {
+    if (!window.confirm(`Supprimer la règle "${ruleName}" ?`)) return;
+    
     try {
-      await axios.delete(`${API}/rules/${id}`);
-      setRules(rules.filter(r => r.id !== id));
-      toast.success(`Règle "${name}" supprimée`);
+      await axios.delete(`${API}/rules/${ruleId}`);
+      setRules(rules.filter(r => r.id !== ruleId));
+      toast.success(`Règle "${ruleName}" supprimée`);
     } catch (error) {
       toast.error('Erreur lors de la suppression');
     }
   };
 
-  const getRuleTypeInfo = (type) => {
-    return RULE_TYPES.find(t => t.value === type?.toUpperCase()) || RULE_TYPES[0];
+  const getRuleTypeDisplay = (ruleType) => {
+    const type = RULE_TYPES.find(t => t.value === ruleType);
+    if (!type) return { icon: AlertCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
+    return type;
   };
 
-  const getOperatorLabel = (op) => {
-    return OPERATORS.find(o => o.value === op)?.label || op;
-  };
-
-  const getAttributeLabel = (attr) => {
-    return ATTRIBUTE_NAMES.find(a => a.value === attr)?.label || attr;
+  // Fonction pour afficher les conditions d'une règle
+  const renderRuleConditions = (rule) => {
+    const parts = [];
+    
+    if (rule.tache_id) parts.push(`tâche=${rule.tache_id}`);
+    if (rule.centre_de_charge_id) parts.push(`centre=${rule.centre_de_charge_id}`);
+    if (rule.article_id) parts.push(`article=${rule.article_id}`);
+    
+    // Conditions multiples
+    if (rule.attribute_conditions && rule.attribute_conditions.length > 0) {
+      const groupsDisplay = rule.attribute_conditions.map((group, gi) => {
+        const conditions = group.conditions || [];
+        const logic = group.logic || 'AND';
+        
+        const condParts = conditions.map(cond => {
+          const opDisplay = { GT: '>', GE: '>=', LT: '<', LE: '<=', EQ: '=', NE: '!=', IN: 'dans', NOT_IN: '∉' }[cond.operator] || cond.operator;
+          return `${cond.attribute_name} ${opDisplay} ${cond.value}`;
+        });
+        
+        const joiner = logic === 'AND' ? ' ET ' : ' OU ';
+        return condParts.length > 1 ? `(${condParts.join(joiner)})` : condParts[0];
+      });
+      
+      const mainJoiner = rule.conditions_logic === 'OR' ? ' OU ' : ' ET ';
+      parts.push(groupsDisplay.join(mainJoiner));
+    }
+    // Attribut unique (rétro-compatibilité)
+    else if (rule.attribute_name && rule.attribute_operator) {
+      const opDisplay = { GT: '>', GE: '>=', LT: '<', LE: '<=', EQ: '=', NE: '!=', IN: 'dans', NOT_IN: '∉' }[rule.attribute_operator] || rule.attribute_operator;
+      parts.push(`${rule.attribute_name} ${opDisplay} ${rule.attribute_value}`);
+    }
+    
+    return parts.join(' + ') || 'Aucun critère';
   };
 
   return (
@@ -209,7 +321,7 @@ export default function BusinessRules() {
         <div>
           <h3 className="text-2xl font-semibold text-slate-800">Règles Métier</h3>
           <p className="text-sm text-slate-500 mt-1">
-            Règles d'affectation machine basées sur article, tâche, centre ou caractéristiques
+            Règles d'affectation machine avec conditions ET/OU sur attributs
           </p>
         </div>
         <button
@@ -228,11 +340,7 @@ export default function BusinessRules() {
             <h4 className="text-lg font-semibold text-slate-800">
               {editingRule ? `Modifier la règle "${editingRule.name}"` : 'Nouvelle Règle d\'Affectation'}
             </h4>
-            <button 
-              onClick={resetForm}
-              className="text-slate-400 hover:text-slate-600"
-              data-testid="close-form-btn"
-            >
+            <button onClick={resetForm} className="text-slate-400 hover:text-slate-600" data-testid="close-form-btn">
               <X size={20} />
             </button>
           </div>
@@ -244,206 +352,260 @@ export default function BusinessRules() {
             </div>
           )}
           
-          {/* Sélection du mode de règle */}
-          <div className="mb-4 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setRuleMode('simple')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-sm font-medium ${
-                ruleMode === 'simple' 
-                  ? 'bg-blue-600 text-white' 
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-              data-testid="mode-simple-btn"
-            >
-              <Filter size={14} />
-              Règle Simple (article, tâche, centre)
-            </button>
-            <button
-              type="button"
-              onClick={() => setRuleMode('attribute')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-sm text-sm font-medium ${
-                ruleMode === 'attribute' 
-                  ? 'bg-purple-600 text-white' 
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-              data-testid="mode-attribute-btn"
-            >
-              <Ruler size={14} />
-              Règle sur Attribut (largeur, épaisseur...)
-            </button>
-          </div>
-          
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Nom et Machine */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-                  Nom de la règle *
-                </label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Nom *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Ex: Largeur max 5000mm sur TP5000_1"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  required
+                  className="mt-1 w-full h-10 rounded-sm border border-slate-300 bg-transparent px-3 text-sm"
+                  placeholder="Ex: Interdiction largeur > 5000mm"
                   data-testid="rule-name-input"
                 />
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-                  Type de règle *
-                </label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Machine Cible *</label>
                 <select
-                  value={formData.rule_type}
-                  onChange={(e) => setFormData({ ...formData, rule_type: e.target.value })}
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  data-testid="rule-type-select"
+                  value={formData.machine_id}
+                  onChange={(e) => setFormData({ ...formData, machine_id: e.target.value })}
+                  className="mt-1 w-full h-10 rounded-sm border border-slate-300 bg-white px-3 text-sm"
+                  data-testid="rule-machine-select"
                 >
-                  {RULE_TYPES.map(type => (
-                    <option key={type.value} value={type.value}>{type.label}</option>
+                  <option value="">-- Sélectionner --</option>
+                  {machines.map(m => (
+                    <option key={m.id} value={m.id}>{m.id} - {m.nom || m.name}</option>
                   ))}
                 </select>
               </div>
             </div>
 
+            {/* Type de règle */}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Type de Règle</label>
+              <div className="mt-2 flex gap-3">
+                {RULE_TYPES.map(type => {
+                  const Icon = type.icon;
+                  return (
+                    <button
+                      key={type.value}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, rule_type: type.value })}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-sm border-2 transition-all ${
+                        formData.rule_type === type.value
+                          ? `border-slate-900 ${type.bg}`
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                      data-testid={`rule-type-${type.value}`}
+                    >
+                      <Icon size={16} className={type.color} />
+                      <span className="text-sm font-medium">{type.value}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Mode de règle */}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Mode de Conditions</label>
+              <div className="mt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRuleMode('simple')}
+                  className={`px-4 py-2 rounded-sm border-2 text-sm font-medium transition-all ${
+                    ruleMode === 'simple' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                  data-testid="mode-simple"
+                >
+                  Simple (ID)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRuleMode('attribute')}
+                  className={`px-4 py-2 rounded-sm border-2 text-sm font-medium transition-all ${
+                    ruleMode === 'attribute' ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                  data-testid="mode-attribute"
+                >
+                  Attributs (ET/OU)
+                </button>
+              </div>
+            </div>
+
             {/* Critères simples */}
             {ruleMode === 'simple' && (
-              <div className="bg-blue-50 border border-blue-200 rounded-sm p-4">
-                <p className="text-sm font-semibold text-blue-900 mb-3">Critères de Ciblage (codes métier)</p>
+              <div className="p-4 bg-slate-50 rounded-sm border border-slate-200">
+                <h5 className="text-sm font-semibold text-slate-700 mb-3">Critères Simples</h5>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-xs font-semibold text-blue-700 block mb-1">Tâche ID</label>
+                    <label className="text-xs text-slate-500">Tâche</label>
                     <input
                       type="text"
                       value={formData.tache_id}
-                      onChange={(e) => setFormData({ ...formData, tache_id: e.target.value.toUpperCase() })}
-                      placeholder="Ex: PLIAGE, LVT001"
-                      className="w-full h-9 rounded-sm border border-blue-300 bg-white px-3 py-1 text-sm"
-                      data-testid="tache-id-input"
+                      onChange={(e) => setFormData({ ...formData, tache_id: e.target.value })}
+                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      placeholder="LVT001"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-blue-700 block mb-1">Centre de Charge ID</label>
+                    <label className="text-xs text-slate-500">Centre de Charge</label>
                     <input
                       type="text"
                       value={formData.centre_de_charge_id}
-                      onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value.toUpperCase() })}
-                      placeholder="Ex: PLI01, LVC001"
-                      className="w-full h-9 rounded-sm border border-blue-300 bg-white px-3 py-1 text-sm"
-                      data-testid="centre-id-input"
+                      onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value })}
+                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      placeholder="LVC001"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-blue-700 block mb-1">Article ID</label>
+                    <label className="text-xs text-slate-500">Article</label>
                     <input
                       type="text"
                       value={formData.article_id}
                       onChange={(e) => setFormData({ ...formData, article_id: e.target.value })}
-                      placeholder="Ex: 100235570"
-                      className="w-full h-9 rounded-sm border border-blue-300 bg-white px-3 py-1 text-sm"
-                      data-testid="article-id-input"
+                      className="mt-1 w-full h-9 rounded-sm border border-slate-300 px-3 text-sm"
+                      placeholder="100235570"
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Critères sur attributs */}
+            {/* Conditions sur attributs avec ET/OU */}
             {ruleMode === 'attribute' && (
-              <div className="bg-purple-50 border border-purple-200 rounded-sm p-4">
-                <p className="text-sm font-semibold text-purple-900 mb-3">Critères sur Caractéristiques Article</p>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-xs font-semibold text-purple-700 block mb-1">Attribut</label>
-                    <select
-                      value={formData.attribute_name}
-                      onChange={(e) => setFormData({ ...formData, attribute_name: e.target.value })}
-                      className="w-full h-9 rounded-sm border border-purple-300 bg-white px-3 py-1 text-sm"
-                      data-testid="attribute-name-select"
-                    >
-                      <option value="">-- Sélectionner --</option>
-                      {ATTRIBUTE_NAMES.map(attr => (
-                        <option key={attr.value} value={attr.value}>{attr.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-purple-700 block mb-1">Opérateur</label>
-                    <select
-                      value={formData.attribute_operator}
-                      onChange={(e) => setFormData({ ...formData, attribute_operator: e.target.value })}
-                      className="w-full h-9 rounded-sm border border-purple-300 bg-white px-3 py-1 text-sm"
-                      data-testid="attribute-operator-select"
-                    >
-                      <option value="">-- Sélectionner --</option>
-                      {OPERATORS.map(op => (
-                        <option key={op.value} value={op.value}>{op.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-purple-700 block mb-1">Valeur</label>
-                    <input
-                      type="text"
-                      value={formData.attribute_value}
-                      onChange={(e) => setFormData({ ...formData, attribute_value: e.target.value })}
-                      placeholder="Ex: 5000, ACIER"
-                      className="w-full h-9 rounded-sm border border-purple-300 bg-white px-3 py-1 text-sm"
-                      data-testid="attribute-value-input"
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-purple-600 mt-2">
-                  Exemple: largeur &gt; 5000mm, épaisseur &gt; 5mm, matière = ACIER
-                </p>
-                
-                {/* Optionnel: ajouter aussi des critères simples */}
-                <div className="mt-4 pt-4 border-t border-purple-200">
-                  <p className="text-xs text-purple-700 mb-2">Optionnel: Restreindre à une tâche/centre spécifique</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <input
-                        type="text"
-                        value={formData.tache_id}
-                        onChange={(e) => setFormData({ ...formData, tache_id: e.target.value.toUpperCase() })}
-                        placeholder="Tâche ID (optionnel)"
-                        className="w-full h-8 rounded-sm border border-purple-300 bg-white px-3 py-1 text-sm"
-                      />
+              <div className="p-4 bg-blue-50 rounded-sm border border-blue-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h5 className="text-sm font-semibold text-blue-800">Conditions sur Attributs</h5>
+                  
+                  {/* Logique entre groupes */}
+                  {conditionGroups.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-blue-600">Entre groupes:</span>
+                      <select
+                        value={conditionsLogic}
+                        onChange={(e) => setConditionsLogic(e.target.value)}
+                        className="h-8 rounded-sm border border-blue-300 bg-white px-2 text-xs font-medium"
+                        data-testid="conditions-logic"
+                      >
+                        <option value="AND">ET (toutes)</option>
+                        <option value="OR">OU (au moins une)</option>
+                      </select>
                     </div>
-                    <div>
-                      <input
-                        type="text"
-                        value={formData.centre_de_charge_id}
-                        onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value.toUpperCase() })}
-                        placeholder="Centre ID (optionnel)"
-                        className="w-full h-8 rounded-sm border border-purple-300 bg-white px-3 py-1 text-sm"
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
+
+                {/* Groupes de conditions */}
+                <div className="space-y-4">
+                  {conditionGroups.map((group, gi) => (
+                    <div key={gi} className="p-3 bg-white rounded-sm border border-blue-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-blue-700">Groupe {gi + 1}</span>
+                          {group.conditions.length > 1 && (
+                            <select
+                              value={group.logic}
+                              onChange={(e) => updateGroupLogic(gi, e.target.value)}
+                              className="h-6 rounded border border-blue-200 bg-blue-50 px-2 text-xs font-medium text-blue-700"
+                              data-testid={`group-logic-${gi}`}
+                            >
+                              <option value="AND">ET</option>
+                              <option value="OR">OU</option>
+                            </select>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => addConditionToGroup(gi)}
+                            className="p-1 text-blue-600 hover:text-blue-800"
+                            title="Ajouter une condition"
+                          >
+                            <PlusCircle size={18} />
+                          </button>
+                          {conditionGroups.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeConditionGroup(gi)}
+                              className="p-1 text-red-500 hover:text-red-700"
+                              title="Supprimer le groupe"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Conditions du groupe */}
+                      <div className="space-y-2">
+                        {group.conditions.map((cond, ci) => (
+                          <div key={ci} className="flex items-center gap-2">
+                            {ci > 0 && (
+                              <span className="text-xs font-medium text-blue-500 w-8">
+                                {group.logic}
+                              </span>
+                            )}
+                            <select
+                              value={cond.attribute_name}
+                              onChange={(e) => updateCondition(gi, ci, 'attribute_name', e.target.value)}
+                              className="flex-1 h-9 rounded-sm border border-slate-300 bg-white px-2 text-sm"
+                              data-testid={`attr-name-${gi}-${ci}`}
+                            >
+                              <option value="">Attribut...</option>
+                              {ATTRIBUTE_NAMES.map(a => (
+                                <option key={a.value} value={a.value}>{a.label}</option>
+                              ))}
+                            </select>
+                            <select
+                              value={cond.operator}
+                              onChange={(e) => updateCondition(gi, ci, 'operator', e.target.value)}
+                              className="w-40 h-9 rounded-sm border border-slate-300 bg-white px-2 text-sm"
+                              data-testid={`attr-op-${gi}-${ci}`}
+                            >
+                              {OPERATORS.map(o => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={cond.value}
+                              onChange={(e) => updateCondition(gi, ci, 'value', e.target.value)}
+                              className="w-32 h-9 rounded-sm border border-slate-300 px-2 text-sm"
+                              placeholder="Valeur"
+                              data-testid={`attr-val-${gi}-${ci}`}
+                            />
+                            {group.conditions.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeConditionFromGroup(gi, ci)}
+                                className="p-1 text-red-500 hover:text-red-700"
+                              >
+                                <MinusCircle size={16} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Ajouter un groupe */}
+                <button
+                  type="button"
+                  onClick={addConditionGroup}
+                  className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"
+                  data-testid="add-group-btn"
+                >
+                  <PlusCircle size={16} />
+                  Ajouter un groupe de conditions ({conditionsLogic === 'AND' ? 'ET' : 'OU'})
+                </button>
               </div>
             )}
 
-            {/* Machine cible */}
-            <div className="bg-amber-50 border border-amber-200 rounded-sm p-4">
-              <label className="text-xs font-semibold text-amber-700 block mb-2">Machine Cible *</label>
-              <select
-                value={formData.machine_id}
-                onChange={(e) => setFormData({ ...formData, machine_id: e.target.value })}
-                className="w-full h-9 rounded-sm border border-amber-300 bg-white px-3 py-1 text-sm"
-                required
-                data-testid="machine-select"
-              >
-                <option value="">-- Sélectionner une machine --</option>
-                {machines.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.id} - {m.nom || m.name} ({m.centre_de_charge_id || m.work_center_id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
+            {/* Boutons */}
             <div className="flex gap-2">
               <button 
                 type="submit" 
@@ -465,90 +627,81 @@ export default function BusinessRules() {
       )}
 
       {/* Liste des règles */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden" data-testid="rules-table">
-        <table className="w-full">
-          <thead className="bg-slate-50 border-b border-slate-200">
+      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Type</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Nom</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Critères</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Type</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Conditions</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Machine</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">État</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            {rules.map((rule) => {
-              const typeInfo = getRuleTypeInfo(rule.rule_type);
-              const TypeIcon = typeInfo.icon;
-              const hasAttribute = rule.attribute_name && rule.attribute_operator;
-              
-              return (
-                <tr key={rule.id || rule.name} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`rule-row-${rule.id}`}>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
-                      <TypeIcon size={12} />
-                      {rule.rule_type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-900 font-medium">{rule.name}</td>
-                  <td className="px-4 py-3">
-                    <div className="space-y-1 text-xs">
-                      {rule.tache_id && (
-                        <span className="inline-block bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded mr-1">
-                          tâche: {rule.tache_id}
-                        </span>
-                      )}
-                      {rule.centre_de_charge_id && (
-                        <span className="inline-block bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded mr-1">
-                          centre: {rule.centre_de_charge_id}
-                        </span>
-                      )}
-                      {rule.article_id && (
-                        <span className="inline-block bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded mr-1">
-                          article: {rule.article_id}
-                        </span>
-                      )}
-                      {hasAttribute && (
-                        <span className="inline-block bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
-                          {getAttributeLabel(rule.attribute_name)} {getOperatorLabel(rule.attribute_operator).split(' ')[0]} {rule.attribute_value}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded text-xs font-mono font-semibold">
-                      {rule.machine_id}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => handleEdit(rule)}
-                        className="text-slate-600 hover:text-slate-800 p-1"
-                        title="Modifier"
-                        data-testid={`edit-rule-${rule.id}`}
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(rule.id, rule.name)}
-                        className="text-red-600 hover:text-red-800 p-1"
-                        title="Supprimer"
-                        data-testid={`delete-rule-${rule.id}`}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {rules.length === 0 && (
+          <tbody className="bg-white divide-y divide-slate-200">
+            {rules.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
-                  Aucune règle définie. Créez des règles pour contrôler l'affectation des machines.
+                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                  Aucune règle métier. Cliquez sur "Nouvelle Règle" pour en créer une.
                 </td>
               </tr>
+            ) : (
+              rules.map((rule) => {
+                const typeInfo = getRuleTypeDisplay(rule.rule_type);
+                const Icon = typeInfo.icon;
+                
+                return (
+                  <tr key={rule.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-slate-900">{rule.name}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
+                        <Icon size={12} />
+                        {rule.rule_type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-slate-600 font-mono">
+                        {renderRuleConditions(rule)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-sm text-slate-700">{rule.machine_id}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {rule.active ? (
+                        <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
+                          <CheckCircle size={12} /> Actif
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-xs">Inactif</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleEdit(rule)}
+                          className="text-slate-600 hover:text-slate-800 p-1"
+                          title="Modifier"
+                          data-testid={`edit-rule-${rule.id}`}
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(rule.id, rule.name)}
+                          className="text-red-600 hover:text-red-800 p-1"
+                          title="Supprimer"
+                          data-testid={`delete-rule-${rule.id}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

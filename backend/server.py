@@ -376,18 +376,31 @@ async def delete_unavailability(unavailability_id: str):
 
 # Business Rules endpoints
 @api_router.post("/rules")
-async def create_rule(rule: BusinessRule):
-    """Créer une règle métier."""
-    doc = rule.model_dump()
+async def create_rule(rule: Dict[str, Any]):
+    """Créer une règle métier avec support des conditions multiples ET/OU."""
+    import uuid
+    
+    doc = dict(rule)
+    if not doc.get('id'):
+        doc['id'] = str(uuid.uuid4())
+    
     if 'rule_type' in doc and doc['rule_type']:
         doc['rule_type'] = doc['rule_type'].upper()
+    
     await db.business_rules.insert_one(doc)
+    
+    # Retourner tous les champs
     return {
         'id': doc.get('id'),
         'name': doc.get('name'),
         'tache_id': doc.get('tache_id'),
         'centre_de_charge_id': doc.get('centre_de_charge_id'),
         'article_id': doc.get('article_id'),
+        'attribute_name': doc.get('attribute_name'),
+        'attribute_operator': doc.get('attribute_operator'),
+        'attribute_value': doc.get('attribute_value'),
+        'attribute_conditions': doc.get('attribute_conditions'),
+        'conditions_logic': doc.get('conditions_logic', 'AND'),
         'rule_type': doc.get('rule_type', 'ALLOW').upper(),
         'machine_id': doc.get('machine_id'),
         'active': doc.get('active', True)
@@ -410,10 +423,13 @@ async def get_rules():
                 'tache_id': rule.get('tache_id') or rule.get('task_id'),
                 'centre_de_charge_id': rule.get('centre_de_charge_id') or rule.get('work_center_id'),
                 'article_id': rule.get('article_id'),
-                # Attributs pour règles avancées
+                # Attribut unique (rétro-compatibilité)
                 'attribute_name': rule.get('attribute_name'),
                 'attribute_operator': rule.get('attribute_operator'),
                 'attribute_value': rule.get('attribute_value'),
+                # Attributs multiples avec ET/OU
+                'attribute_conditions': rule.get('attribute_conditions'),
+                'conditions_logic': rule.get('conditions_logic', 'AND'),
                 'rule_type': rule_type,
                 'machine_id': rule.get('machine_id'),
                 'active': rule.get('active', True)
@@ -435,12 +451,14 @@ async def update_rule(rule_id: str, updates: Dict[str, Any]):
     
     Champs modifiables:
     - name, tache_id, centre_de_charge_id, article_id
-    - attribute_name, attribute_operator, attribute_value
+    - attribute_name, attribute_operator, attribute_value (rétro-compatibilité)
+    - attribute_conditions, conditions_logic (nouveau: ET/OU)
     - rule_type, machine_id, active
     """
     allowed_fields = {
         'name', 'tache_id', 'centre_de_charge_id', 'article_id',
         'attribute_name', 'attribute_operator', 'attribute_value',
+        'attribute_conditions', 'conditions_logic',
         'rule_type', 'machine_id', 'active'
     }
     update_data = {k: v for k, v in updates.items() if k in allowed_fields}
