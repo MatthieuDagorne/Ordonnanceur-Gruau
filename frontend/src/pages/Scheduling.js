@@ -132,32 +132,49 @@ export default function Scheduling() {
   const selectedMode = PRIORITY_MODES.find(m => m.value === priorityMode);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in-up">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold text-slate-800">Ordonnancement APS</h3>
-          <p className="text-sm text-slate-500 mt-1">
+          <h3 
+            className="text-2xl font-semibold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'Chivo, sans-serif' }}
+          >
+            Ordonnancement APS
+          </h3>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
             Advanced Planning & Scheduling - Capacité finie
           </p>
         </div>
         {stats && (
           <div className="flex gap-4 text-sm">
-            <div className="bg-slate-100 px-3 py-1.5 rounded-sm">
-              <span className="text-slate-500">Ordres:</span>{' '}
-              <span className="font-semibold text-slate-900">{stats.manufacturing_orders}</span>
+            <div 
+              className="px-3 py-1.5 rounded-sm"
+              style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
+            >
+              <span style={{ color: 'var(--text-muted)' }}>Ordres:</span>{' '}
+              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.manufacturing_orders}</span>
             </div>
-            <div className="bg-slate-100 px-3 py-1.5 rounded-sm">
-              <span className="text-slate-500">Opérations:</span>{' '}
-              <span className="font-semibold text-slate-900">{stats.operations}</span>
+            <div 
+              className="px-3 py-1.5 rounded-sm"
+              style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}
+            >
+              <span style={{ color: 'var(--text-muted)' }}>Opérations:</span>{' '}
+              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.operations}</span>
             </div>
           </div>
         )}
       </div>
 
       {/* Scénario Name */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
-        <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+      <div 
+        className="card p-5 animate-fade-in-up stagger-1"
+        style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }}
+      >
+        <label 
+          className="text-xs font-semibold uppercase tracking-wider block mb-2"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Nom du Scénario *
         </label>
         <input
@@ -166,16 +183,29 @@ export default function Scheduling() {
           value={scenarioName}
           onChange={(e) => setScenarioName(e.target.value)}
           placeholder="Ex: Planning Semaine 12 - Priorité dates"
-          className="w-full h-10 rounded-sm border border-slate-300 bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-slate-900"
+          className="input w-full h-10 rounded-sm px-3 py-1 text-sm transition-colors"
+          style={{ 
+            backgroundColor: 'var(--surface)', 
+            borderColor: 'var(--border)',
+            color: 'var(--text-primary)'
+          }}
           disabled={calculating}
         />
       </div>
 
       {/* Priority Mode Selection */}
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
+      <div 
+        className="card p-5 animate-fade-in-up stagger-2"
+        style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }}
+      >
         <div className="flex items-center gap-2 mb-4">
-          <Target size={18} className="text-slate-700" />
-          <h4 className="text-lg font-semibold text-slate-800">Mode de Priorité</h4>
+          <Target size={18} style={{ color: 'var(--text-secondary)' }} />
+          <h4 
+            className="text-lg font-semibold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'Chivo, sans-serif' }}
+          >
+            Mode de Priorité
+          </h4>
         </div>
         
         <div className="grid grid-cols-3 gap-4">
@@ -187,15 +217,18 @@ export default function Scheduling() {
                 key={mode.value}
                 onClick={() => setPriorityMode(mode.value)}
                 data-testid={`priority-mode-${mode.value}`}
-                className={`p-4 rounded-sm border-2 text-left transition-all ${
-                  isSelected 
-                    ? 'border-slate-900 bg-slate-50' 
-                    : 'border-slate-200 hover:border-slate-300'
-                }`}
+                className="p-4 rounded-sm border-2 text-left transition-all hover-lift"
+                style={{ 
+                  backgroundColor: isSelected ? 'var(--bg-secondary)' : 'var(--surface)',
+                  borderColor: isSelected ? 'var(--accent-blue)' : 'var(--border)'
+                }}
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <Icon size={18} className={isSelected ? 'text-slate-900' : 'text-slate-500'} />
-                  <span className={`font-medium ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                  <Icon size={18} style={{ color: isSelected ? 'var(--accent-blue)' : 'var(--text-muted)' }} />
+                  <span 
+                    className="font-medium"
+                    style={{ color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                  >
                     {mode.label}
                   </span>
                 </div>
