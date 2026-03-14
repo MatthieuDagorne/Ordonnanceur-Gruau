@@ -34,80 +34,71 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Stock Projeté Avancé avec dates ordonnancées
 
 ### Phase 5 - Améliorations Ergonomiques (14 mars 2026) ✅
+- Calendriers en quarts d'heure (HH:MM)
+- État des données complet (ERP, Supply Chain, Configuration)
+- Filtres intelligents sur 4 pages
 
-#### 1. Calendriers en Quarts d'Heure
-- **Inputs** : `type="time"` avec `step="900"` (15 min)
-- **Format** : HH:MM (ex: 07:45, 16:45)
-- **Exemples** : Affichés sous les inputs
-- **Calcul** : Durée/jour automatique
+### Phase 6 - UI Uniformisation + CRUD Edit (14 mars 2026) ✅
 
-#### 2. État des Données Complet
-- **Section ERP** : Ordres Fab., Opérations, Articles, Stocks
-- **Section Supply Chain** : Matières/Op., Réceptions Prévues, Nomenclatures (BOM), Indisponibilités
-- **Section Configuration** : Machines, Centres Charge, Calendriers, Règles Métier, Scénarios
+#### P0 - Uniformisation UI (3 pages)
+| Page | Avant | Après |
+|------|-------|-------|
+| Machines | Boutons noirs, coins carrés, classes Tailwind directes | Variables CSS, coins arrondis (rounded-lg), thème cohérent |
+| Centres de Charge | Boutons noirs, coins carrés | Variables CSS, coins arrondis, intégration calendrier |
+| Indisponibilités | Boutons noirs, coins carrés | Variables CSS, coins arrondis, icône AlertTriangle |
 
-#### 3. Filtres Intelligents par Page
-| Page | Filtres |
-|------|---------|
-| Règles Métier | Recherche, Machine, Type (ALLOW/FORBID/PREFER), Centre, État actif |
-| Ordres Fab. | Recherche, Article, Statut (retard/urgent/ok), Date début/fin |
-| Diagnostic | Recherche, Statut (assignées/non assignées), Centre, Article |
-| Stock Projeté | Recherche, Statut stock (rupture/ok/faible) |
+#### P1 - Fonctionnalité d'Édition (CRUD Complet)
+| Page | Endpoints | Fonctionnalités |
+|------|-----------|-----------------|
+| Machines | PUT /api/machines/{id} | Bouton crayon, formulaire pré-rempli, ID désactivé en édition |
+| Centres de Charge | PUT /api/centres-de-charge/{id} | Bouton crayon, formulaire pré-rempli, sélection calendrier |
+| Indisponibilités | PUT /api/unavailability/{id} | Bouton crayon, formulaire pré-rempli, dates datetime-local |
 
-**Caractéristiques** :
-- Recherche textuelle instantanée
-- Compteur de résultats (X / Y)
-- Bouton "Réinitialiser"
-- Performance avec `useMemo`
+**Tests passés**: Backend 17/17 (100%), Frontend 10/10 (100%)
 
 ## APIs Principales
 
-### Data Stats (mis à jour)
-```json
-GET /api/data/stats
-{
-  "manufacturing_orders": 10,
-  "operations": 24,
-  "articles": 10,
-  "stocks": 10,
-  "machines": 8,
-  "work_centers": 4,
-  "calendars": 2,
-  "rules": 5,
-  "scenarios": 2,
-  "operation_materials": 10,
-  "planned_receipts": 9,
-  "bom_lines": 0,
-  "unavailabilities": 0
-}
+### CRUD Machines
+```
+GET    /api/machines                    # Liste toutes les machines
+POST   /api/machines                    # Créer une machine
+PUT    /api/machines/{machine_id}       # Modifier (nom, centre, description)
+DELETE /api/machines/{machine_id}       # Supprimer
 ```
 
-### Calendars (mis à jour)
-```json
-POST /api/calendars
-{
-  "name": "Équipe Matin",
-  "working_days": [1, 2, 3, 4, 5],
-  "start_time": "07:45",
-  "end_time": "16:45",
-  "start_hour": 7,
-  "end_hour": 16
-}
+### CRUD Centres de Charge
+```
+GET    /api/centres-de-charge           # Liste tous les centres
+POST   /api/centres-de-charge           # Créer un centre
+PUT    /api/centres-de-charge/{id}      # Modifier (nom, description, calendar_id)
+DELETE /api/centres-de-charge/{id}      # Supprimer
 ```
 
-## Validation Tests (14 mars 2026)
+### CRUD Indisponibilités
+```
+GET    /api/unavailability              # Liste toutes les indisponibilités
+POST   /api/unavailability              # Créer une indisponibilité
+PUT    /api/unavailability/{id}         # Modifier (machine, dates, raison)
+DELETE /api/unavailability/{id}         # Supprimer
+```
 
-### Backend : 100% (9/9 tests)
-- DataStats API ✅
-- Calendars HH:MM ✅
-- Rules, Operations, Diagnostic, Stock APIs ✅
-
-### Frontend : 100% (6/6 tests)
-- Calendars time inputs ✅
-- Import stats sections ✅
-- Filtres sur 4 pages ✅
+### CRUD Calendriers (déjà complet)
+```
+GET    /api/calendars
+POST   /api/calendars
+PUT    /api/calendars/{id}
+DELETE /api/calendars/{id}
+```
 
 ## Backlog
+
+### P2 - Améliorations Gantt (En cours)
+- [ ] Infobulles enrichies (disponibilité matières premières)
+- [ ] Axe temporel avec dates/heures réelles + périodes fermeture
+- [ ] Filtre par centre de charge
+
+### P2 - Documentation
+- [ ] Réponse sur concept "Horizon Ferme" (bonnes pratiques industrielles)
 
 ### P3 - À Faire
 - [ ] Export CSV du planning
@@ -117,16 +108,17 @@ POST /api/calendars
 - [ ] IA prédictive
 - [ ] Intégration ERP
 
-## Fichiers Modifiés (Phase 5)
+## Fichiers Modifiés (Phase 6)
 
 ```
 backend/
-├── server.py              # DataStats model, Calendar model
+├── server.py                     # +PUT /api/machines, +PUT /api/unavailability
+
 frontend/src/pages/
-├── Calendars.js           # Time inputs HH:MM
-├── ImportData.js          # 3 sections de stats
-├── BusinessRules.js       # Filtres avec useMemo
-├── ManufacturingOrders.js # Filtres avec useMemo
-├── DiagnosticAssignment.js# Filtres avec useMemo
-├── ProjectedStock.js      # Filtres avec useMemo
+├── Machines.js                   # Refonte UI + CRUD Edit complet
+├── CentresDeCharge.js            # Refonte UI + CRUD Edit complet
+├── Unavailability.js             # Refonte UI + CRUD Edit complet
 ```
+
+## Tests Reports
+- `/app/test_reports/iteration_11.json` - Validation P0/P1 (100% pass)
