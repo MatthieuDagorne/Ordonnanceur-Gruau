@@ -11,6 +11,8 @@ const importTypes = [
   { key: 'operations', label: 'Opérations', testId: 'import-operations' },
   { key: 'articles', label: 'Articles', testId: 'import-articles' },
   { key: 'stocks', label: 'Stocks', testId: 'import-stocks' },
+  { key: 'operation-materials', label: 'Matières par Opération', testId: 'import-operation-materials' },
+  { key: 'planned-supplier-receipts', label: 'Réceptions Fournisseurs', testId: 'import-planned-receipts' },
 ];
 
 export default function ImportData() {
@@ -298,6 +300,24 @@ export default function ImportData() {
             <code className="text-xs font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200">
               article_id, quantity
             </code>
+          </div>
+          <div className="border-t border-slate-200 pt-3 mt-3">
+            <p className="font-medium text-slate-900 text-blue-700">Matières par Opération (Nouveau):</p>
+            <code className="text-xs font-mono bg-blue-50 px-2 py-1 rounded border border-blue-200">
+              id, order_id, operation_id, article_composant_id, quantity
+            </code>
+            <p className="text-xs text-slate-500 mt-1">
+              ℹ️ Une opération peut avoir plusieurs lignes (plusieurs composants nécessaires)
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-slate-900 text-blue-700">Réceptions Fournisseurs (Nouveau):</p>
+            <code className="text-xs font-mono bg-blue-50 px-2 py-1 rounded border border-blue-200">
+              article_id, quantity, planned_date
+            </code>
+            <p className="text-xs text-slate-500 mt-1">
+              ℹ️ Format date: <span className="font-mono">YYYY-MM-DDTHH:MM:SS</span> (ex: 2026-03-16T10:00:00)
+            </p>
           </div>
         </div>
       </div>
