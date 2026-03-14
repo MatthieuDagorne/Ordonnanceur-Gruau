@@ -17,6 +17,7 @@ from services.scheduler_engine import SchedulerEngine
 from services.material_checker import MaterialChecker
 from services.rules_engine import RulesEngine
 from services.demo_data import load_demo_data
+from models.business_rule import BusinessRule as BusinessRuleModel
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -67,19 +68,26 @@ class BusinessRule(BaseModel):
     """
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    rule_type: str  # "task_workcenter", "task_machine", "workcenter_machine", "article_machine"
+    name: str
+    rule_type: str
     is_hard: bool = Field(default=True)
     
-    # Critères de règle
+    # Critères de ciblage
     task_id: Optional[str] = None
     work_center_id: Optional[str] = None
     machine_id: Optional[str] = None
     article_id: Optional[str] = None
     
-    # Résultat
-    allowed: bool = Field(default=True)
-    penalty: int = Field(default=0)
-    setup_time_minutes: Optional[int] = None
+    # Condition
+    condition_operator: str = Field(default="equals")
+    condition_value: Optional[str] = None
+    
+    # Action
+    action_type: str
+    action_value: Optional[str] = None
+    
+    # État
+    active: bool = Field(default=True)
     description: Optional[str] = None
 
 class ManufacturingOrder(BaseModel):

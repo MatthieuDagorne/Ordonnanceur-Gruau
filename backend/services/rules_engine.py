@@ -1,4 +1,6 @@
 import logging
+from typing import List, Dict, Any, Tuple
+from models.business_rule import BusinessRule
 
 logger = logging.getLogger(__name__)
 
@@ -6,150 +8,123 @@ class RulesEngine:
     """
     Moteur de règles métier basé sur task_id et work_center_id.
     """
-    def __init__(self, rules):
-        self.rules = rules
+    def __init__(self, rules_data: List[Dict]):
+        # Convertir les dicts en objets BusinessRule
+        self.rules = []
+        for rule_data in rules_data:
+            try:
+                rule = BusinessRule(**rule_data)
+                self.rules.append(rule)
+            except Exception as e:
+                logger.warning(f"⚠️  Règle invalide ignorée: {e}")
     
-    def is_task_allowed_on_workcenter(self, task_id, work_center_id):
+    def get_applicable_rules(self, operation: Dict) -> List[BusinessRule]:
         """
-        Vérifie si une tâche peut être exécutée sur un centre de charge.
-        Returns: (allowed: bool, reason: str, penalty: int)
+        Retourne toutes les règles applicables à une opération.
         """
+        applicable = []
         for rule in self.rules:
-            if rule.get('rule_type') == 'task_workcenter':
-                if (rule.get('task_id') == task_id and 
-                    rule.get('work_center_id') == work_center_id):
-                    
-                    if rule.get('is_hard'):
-                        allowed = rule.get('allowed', True)
-                        reason = f"Règle dure: tâche {task_id} {'autorisée' if allowed else 'interdite'} sur centre {work_center_id}"
-                        return allowed, reason, 0
-                    else:
-                        penalty = rule.get('penalty', 0)
-                        reason = f"Règle souple: tâche {task_id} sur centre {work_center_id} (pénalité: {penalty})"
-                        return True, reason, penalty
-        
-        return True, "Pas de règle spécifique", 0
+            if rule.matches_operation(operation):
+                applicable.append(rule)
+        return applicable
     
-    def is_task_allowed_on_machine(self, task_id, machine_id):
+    def evaluate_machine_for_operation(self, operation: Dict, machine_id: str) -> Tuple[bool, str, int]:
         """
-        Vérifie si une tâche peut être exécutée sur une machine spécifique.
-        Returns: (allowed: bool, reason: str, penalty: int)
-        """
-        for rule in self.rules:
-            if rule.get('rule_type') == 'task_machine':
-                if (rule.get('task_id') == task_id and 
-                    rule.get('machine_id') == machine_id):
-                    
-                    if rule.get('is_hard'):
-                        allowed = rule.get('allowed', True)
-                        reason = f"Règle dure: tâche {task_id} {'autorisée' if allowed else 'interdite'} sur machine {machine_id}"
-                        return allowed, reason, 0
-                    else:
-                        penalty = rule.get('penalty', 0)
-                        reason = f"Règle souple: tâche {task_id} sur machine {machine_id} (pénalité: {penalty})"
-                        return True, reason, penalty
+        Évalue si une machine peut exécuter une opération selon les règles.
         
-        return True, "Pas de règle spécifique", 0
-    
-    def is_workcenter_allowed_on_machine(self, work_center_id, machine_id):
-        """
-        Vérifie si un centre de charge est compatible avec une machine.
-        Returns: (allowed: bool, reason: str, penalty: int)
-        """
-        for rule in self.rules:
-            if rule.get('rule_type') == 'workcenter_machine':
-                if (rule.get('work_center_id') == work_center_id and 
-                    rule.get('machine_id') == machine_id):
-                    
-                    if rule.get('is_hard'):
-                        allowed = rule.get('allowed', True)
-                        reason = f"Règle dure: centre {work_center_id} {'autorisé' if allowed else 'interdit'} sur machine {machine_id}"
-                        return allowed, reason, 0
-                    else:
-                        penalty = rule.get('penalty', 0)
-                        reason = f"Règle souple: centre {work_center_id} sur machine {machine_id} (pénalité: {penalty})"
-                        return True, reason, penalty
-        
-        return True, "Pas de règle spécifique", 0
-    
-    def is_article_allowed_on_machine(self, article_id, machine_id):
-        """
-        Vérifie si un article peut être traité sur une machine.
-        Returns: (allowed: bool, reason: str)
-        """
-        for rule in self.rules:
-            if rule.get('rule_type') == 'article_machine':
-                if (rule.get('article_id') == article_id and 
-                    rule.get('machine_id') == machine_id):
-                    
-                    if rule.get('is_hard'):
-                        allowed = rule.get('allowed', True)
-                        reason = f"Article {article_id} {'autorisé' if allowed else 'interdit'} sur machine {machine_id}"
-                        return allowed, reason
-        
-        return True, "Pas de règle spécifique"
-    
-    def get_operation_rules(self, operation):
-        """
-        Récupère toutes les règles applicables à une opération.
-        Returns: dict avec toutes les règles trouvées
+        Returns:
+            (allowed: bool, reason: str, penalty: int)
         """
         task_id = operation.get('task_id')
         work_center_id = operation.get('work_center_id')
-        article_id = operation.get('article_id')
         
-        applicable_rules = {
-            'task_workcenter': [],
-            'task_machine': [],
-            'workcenter_machine': [],
-            'article_machine': []
-        }
+        # Récupérer les règles applicables
+        applicable_rules = self.get_applicable_rules(operation)
         
-        for rule in self.rules:
-            rule_type = rule.get('rule_type')
-            
-            if rule_type == 'task_workcenter':
-                if (rule.get('task_id') == task_id and 
-                    rule.get('work_center_id') == work_center_id):
-                    applicable_rules['task_workcenter'].append(rule)
-            
-            elif rule_type == 'task_machine':
-                if rule.get('task_id') == task_id:
-                    applicable_rules['task_machine'].append(rule)
-            
-            elif rule_type == 'workcenter_machine':
-                if rule.get('work_center_id') == work_center_id:
-                    applicable_rules['workcenter_machine'].append(rule)
-            
-            elif rule_type == 'article_machine':
-                if rule.get('article_id') == article_id:
-                    applicable_rules['article_machine'].append(rule)
+        if not applicable_rules:
+            return True, "Aucune règle spécifique", 0
         
-        return applicable_rules
+        total_penalty = 0
+        reasons = []
+        
+        for rule in applicable_rules:
+            allowed, reason, penalty = rule.evaluate_for_machine(machine_id)
+            
+            if not allowed:
+                # Règle dure bloquante
+                logger.info(f"  ✗ {reason}")
+                return False, reason, 0
+            
+            if penalty != 0:
+                total_penalty += penalty
+                reasons.append(reason)
+        
+        if reasons:
+            combined_reason = " | ".join(reasons)
+            return True, combined_reason, total_penalty
+        
+        return True, "Autorisé par défaut", 0
     
-    def get_setup_time_addition(self, task_id, machine_id):
+    def get_setup_time_for_operation(self, operation: Dict, machine_id: str) -> int:
         """
-        Obtient un temps de réglage additionnel pour une combinaison tâche/machine.
+        Calcule le temps de réglage additionnel pour une opération sur une machine.
         """
-        for rule in self.rules:
-            if ((rule.get('task_id') == task_id or rule.get('work_center_id')) and
-                rule.get('machine_id') == machine_id and
-                rule.get('setup_time_minutes') is not None):
-                return rule.get('setup_time_minutes')
-        return 0
-
-    # Legacy methods for backwards compatibility (deprecated)
-    def is_operation_allowed_on_machine(self, operation_code, machine_id):
-        """
-        DEPRECATED: Use task-based methods instead.
-        Kept for backwards compatibility.
-        """
-        logger.warning("⚠️ is_operation_allowed_on_machine is deprecated. Use task-based methods.")
-        return True, "Legacy method - no restriction", 0
+        applicable_rules = self.get_applicable_rules(operation)
+        total_setup = 0
+        
+        for rule in applicable_rules:
+            if rule.machine_id and rule.machine_id != machine_id:
+                continue
+            setup = rule.get_setup_time()
+            if setup > 0:
+                total_setup += setup
+                logger.info(f"  ⏱  Règle {rule.name}: +{setup} min de réglage")
+        
+        return total_setup
     
-    def get_preferred_machines(self, operation_code):
+    def get_preferred_machine(self, operation: Dict) -> str:
         """
-        DEPRECATED: Use task-based methods instead.
+        Retourne l'ID de la machine préférée selon les règles, si applicable.
         """
-        logger.warning("⚠️ get_preferred_machines is deprecated. Use task-based methods.")
-        return []
+        applicable_rules = self.get_applicable_rules(operation)
+        
+        for rule in applicable_rules:
+            if rule.action_type == "preferred_machine" and rule.action_value:
+                logger.info(f"  ⭐ Machine préférée: {rule.action_value}")
+                return rule.action_value
+        
+        return None
+    
+    def log_rules_summary(self):
+        """
+        Affiche un résumé des règles chargées.
+        """
+        logger.info(f"\n📋 {len(self.rules)} règle(s) métier chargée(s):")
+        for rule in self.rules:
+            criteria = []
+            if rule.task_id:
+                criteria.append(f"task={rule.task_id}")
+            if rule.work_center_id:
+                criteria.append(f"wc={rule.work_center_id}")
+            if rule.machine_id:
+                criteria.append(f"machine={rule.machine_id}")
+            
+            criteria_str = " + ".join(criteria) if criteria else "Générale"
+            logger.info(f"   • {rule.name}: {criteria_str} → {rule.action_type}")
+    
+    # Méthodes de compatibilité pour l'ancien code
+    def is_task_allowed_on_machine(self, task_id: str, machine_id: str) -> Tuple[bool, str, int]:
+        """Compatibilité: évalue règles basées sur task_id."""
+        operation = {'task_id': task_id}
+        return self.evaluate_machine_for_operation(operation, machine_id)
+    
+    def is_workcenter_allowed_on_machine(self, work_center_id: str, machine_id: str) -> Tuple[bool, str, int]:
+        """Compatibilité: évalue règles basées sur work_center_id."""
+        operation = {'work_center_id': work_center_id}
+        return self.evaluate_machine_for_operation(operation, machine_id)
+    
+    def is_article_allowed_on_machine(self, article_id: str, machine_id: str) -> Tuple[bool, str]:
+        """Compatibilité: évalue règles basées sur article_id."""
+        operation = {'article_id': article_id}
+        allowed, reason, _ = self.evaluate_machine_for_operation(operation, machine_id)
+        return allowed, reason
