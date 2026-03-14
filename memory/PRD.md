@@ -15,33 +15,34 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - **Toggle** dans la sidebar avec icônes Sun/Moon
 - **Persistence** dans localStorage (clé: `aps-theme`)
 - **Transition** fluide avec 200ms ease
+- **Classes CSS personnalisées** pour éléments spécifiques au thème
 
-### Couleurs
+### Couleurs (Variables CSS)
 | Variable | Sombre | Clair |
 |----------|--------|-------|
-| --bg-primary | #0F172A | #F8FAFC |
-| --surface | #1E293B | #FFFFFF |
-| --text-primary | #F8FAFC | #0F172A |
-| --accent-blue | #0284C7 | #0284C7 |
-| --accent-orange | #F97316 | #F97316 |
+| --bg-base | #0F172A | #F8FAFC |
+| --bg-elevated | #1E293B | #FFFFFF |
+| --text-primary | #F1F5F9 | #1E293B |
+| --status-info | #60A5FA | #2563EB |
+| --status-info-bg | #1E3A5F | #EFF6FF |
 
 ### Typographie
-- **Titres**: Chivo (Bold 700-900)
-- **Corps**: IBM Plex Sans
+- **Titres**: Inter Bold 600-700
+- **Corps**: Inter Regular 400
 - **Données**: JetBrains Mono
 
-### Animations
-- `animate-fade-in-up` - Entrée des pages
-- `animate-slide-in-left` - Sidebar
-- `hover-lift` - Cards avec translateY(-2px)
-- `animate-pulse-slow` - Indicateur de statut
+### Composants UI
+- Coins arrondis: `rounded-lg` (12px)
+- Classes conditions: `.conditions-box`, `.conditions-group`, `.conditions-box-title`
+- Animations: `animate-fade-in-up`, `animate-slide-in-left`, `hover-lift`
 
 ## Fonctionnalités APS
 
 ### 1. Règles Métier avec ET/OU ✅
-- Conditions multiples combinées
+- Conditions multiples combinées avec logique ET/OU
 - Opérateurs: GT, GE, LT, LE, EQ, NE, IN, NOT_IN
 - Attributs: largeur, épaisseur, type_matière, couleur, longueur
+- Interface lisible dans les deux thèmes
 
 ### 2. Page Ordonnancement ✅
 - 3 modes de priorité (Date, Matière, Équilibré)
@@ -64,28 +65,42 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Calcul des besoins nets
 - Dates de consommation ordonnancées
 
-## Validation (14 mars 2026)
+### 6. Stock Projeté ✅
+- Projection temporelle du stock par article
+- Détection des ruptures
+- Affichage des consommations par opération
 
-### Tests Système de Thème: 100% PASSED
-- Toggle dans sidebar
-- Persistence localStorage
-- 21 éléments avec animations
-- Hover effects sur cards
-- KPI cards avec gradients
+## Validation UI/UX (14 mars 2026)
+
+### Tests Frontend: 100% PASSED
+- Toggle thème dans sidebar ✅
+- Persistence localStorage ✅
+- Section "Conditions sur Attributs" lisible ✅
+- Page Ordres Fab. badges lisibles ✅
+- Page Stock Projeté fonctionnelle ✅
+- Navigation sidebar complète ✅
+- Thème sombre lisible ✅
+- Thème clair lisible ✅
+
+### Bug Fix
+- Corrigé: Erreur `'<' not supported between instances of 'NoneType' and 'int'` sur /api/projected-stock
 
 ## Backlog
 
 ### P1 - Prioritaires
-- [ ] Simulation What-if
-- [ ] Alertes temps réel
-- [ ] Persister assignations
+- [ ] Finaliser la transformation APS (logique MRP dans aps_engine.py)
+- [ ] Date de consommation matière avec dates ordonnancées
+- [ ] Logique solveur avancée (priority_mode, priority_weights)
 
 ### P2 - Secondaires
-- [ ] Gantt interactif
-- [ ] Replanification dynamique
-- [ ] Intégration ERP
+- [ ] Vue matricielle compatibilités machine/tâche
+- [ ] Simulation What-if / Comparaison scénarios
+- [ ] Gantt interactif (remplacer le placeholder)
+- [ ] Export CSV du planning
 
 ### P3 - Futurs
 - [ ] Dashboard temps réel WebSockets
+- [ ] Replanification dynamique
 - [ ] Multi-sites
 - [ ] IA prédictive
+- [ ] Intégration ERP
