@@ -13,6 +13,7 @@ const importTypes = [
   { key: 'stocks', label: 'Stocks', testId: 'import-stocks' },
   { key: 'operation-materials', label: 'Matières par Opération', testId: 'import-operation-materials' },
   { key: 'planned-supplier-receipts', label: 'Réceptions Fournisseurs', testId: 'import-planned-receipts' },
+  { key: 'bom', label: 'Nomenclatures (BOM)', testId: 'import-bom' },
 ];
 
 export default function ImportData() {
@@ -320,6 +321,15 @@ export default function ImportData() {
             </code>
             <p className="text-xs text-slate-500 mt-1">
               ℹ️ Format date: <span className="font-mono">YYYY-MM-DDTHH:MM:SS</span> (ex: 2026-03-16T10:00:00)
+            </p>
+          </div>
+          <div className="border-t border-slate-200 pt-3 mt-3">
+            <p className="font-medium text-slate-900 text-purple-700">Nomenclatures BOM (APS):</p>
+            <code className="text-xs font-mono bg-purple-50 px-2 py-1 rounded border border-purple-200">
+              parent_article_id, child_article_id, quantity, level, unit, scrap_rate
+            </code>
+            <p className="text-xs text-slate-500 mt-1">
+              ℹ️ Multi-niveaux: un composant peut lui-même avoir des composants (level=2, 3...)
             </p>
           </div>
         </div>

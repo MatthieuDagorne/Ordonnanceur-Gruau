@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Filter, Ruler } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Ban, Star, AlertCircle, Filter, Ruler, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -35,7 +35,8 @@ export default function BusinessRules() {
   const [rules, setRules] = useState([]);
   const [machines, setMachines] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [ruleMode, setRuleMode] = useState('simple'); // 'simple' ou 'attribute'
+  const [editingRule, setEditingRule] = useState(null); // Règle en cours d'édition
+  const [ruleMode, setRuleMode] = useState('simple');
   const [formData, setFormData] = useState({
     name: '',
     tache_id: '',
@@ -118,14 +119,46 @@ export default function BusinessRules() {
         cleanData.attribute_value = formData.attribute_value;
       }
 
-      const response = await axios.post(`${API}/rules`, cleanData);
-      setRules([...rules, response.data]);
-      toast.success(`Règle "${response.data.name}" créée`);
+      if (editingRule) {
+        // Mode édition - PUT
+        const response = await axios.put(`${API}/rules/${editingRule.id}`, cleanData);
+        setRules(rules.map(r => r.id === editingRule.id ? response.data : r));
+        toast.success(`Règle "${response.data.name}" mise à jour`);
+      } else {
+        // Mode création - POST
+        const response = await axios.post(`${API}/rules`, cleanData);
+        setRules([...rules, response.data]);
+        toast.success(`Règle "${response.data.name}" créée`);
+      }
       
       resetForm();
     } catch (error) {
       toast.error(`Erreur: ${error.response?.data?.detail || error.message}`);
     }
+  };
+
+  const handleEdit = (rule) => {
+    // Déterminer le mode (simple ou attribut)
+    const hasAttribute = rule.attribute_name && rule.attribute_operator;
+    setRuleMode(hasAttribute ? 'attribute' : 'simple');
+    
+    // Pré-remplir le formulaire
+    setFormData({
+      name: rule.name || '',
+      tache_id: rule.tache_id || '',
+      centre_de_charge_id: rule.centre_de_charge_id || '',
+      article_id: rule.article_id || '',
+      attribute_name: rule.attribute_name || '',
+      attribute_operator: rule.attribute_operator || '',
+      attribute_value: rule.attribute_value || '',
+      rule_type: rule.rule_type || 'FORBID',
+      machine_id: rule.machine_id || '',
+      active: rule.active !== false
+    });
+    
+    setEditingRule(rule);
+    setShowForm(true);
+    setFormError('');
   };
 
   const resetForm = () => {
@@ -142,6 +175,7 @@ export default function BusinessRules() {
       active: true
     });
     setShowForm(false);
+    setEditingRule(null);
     setFormError('');
     setRuleMode('simple');
   };
@@ -179,7 +213,7 @@ export default function BusinessRules() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => { resetForm(); setShowForm(true); }}
           className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
           data-testid="new-rule-btn"
         >
@@ -190,7 +224,18 @@ export default function BusinessRules() {
 
       {showForm && (
         <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5" data-testid="rule-form">
-          <h4 className="text-lg font-semibold text-slate-800 mb-4">Nouvelle Règle d'Affectation</h4>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-lg font-semibold text-slate-800">
+              {editingRule ? `Modifier la règle "${editingRule.name}"` : 'Nouvelle Règle d\'Affectation'}
+            </h4>
+            <button 
+              onClick={resetForm}
+              className="text-slate-400 hover:text-slate-600"
+              data-testid="close-form-btn"
+            >
+              <X size={20} />
+            </button>
+          </div>
           
           {formError && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-sm flex items-center gap-2 text-red-700 text-sm">
@@ -405,7 +450,7 @@ export default function BusinessRules() {
                 className="bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
                 data-testid="submit-rule-btn"
               >
-                Créer la règle
+                {editingRule ? 'Mettre à jour' : 'Créer la règle'}
               </button>
               <button 
                 type="button" 
@@ -476,14 +521,24 @@ export default function BusinessRules() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleDelete(rule.id, rule.name)}
-                      className="text-red-600 hover:text-red-800 p-1"
-                      title="Supprimer"
-                      data-testid={`delete-rule-${rule.id}`}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleEdit(rule)}
+                        className="text-slate-600 hover:text-slate-800 p-1"
+                        title="Modifier"
+                        data-testid={`edit-rule-${rule.id}`}
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(rule.id, rule.name)}
+                        className="text-red-600 hover:text-red-800 p-1"
+                        title="Supprimer"
+                        data-testid={`delete-rule-${rule.id}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

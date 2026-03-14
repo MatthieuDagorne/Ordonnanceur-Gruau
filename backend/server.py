@@ -19,6 +19,7 @@ from services.material_manager import MaterialManager, MaterialChecker as NewMat
 from services.rules_engine import RulesEngine
 from services.machine_assigner import MachineAssigner
 from services.demo_data import load_demo_data
+from services.aps_engine import APSEngine, BOMExploder, CapacityPlanner
 from models.business_rule import BusinessRule as BusinessRuleModel
 
 ROOT_DIR = Path(__file__).parent
@@ -198,6 +199,41 @@ class DataStats(BaseModel):
     operations: int
     articles: int
     stocks: int
+
+# ==================================================
+# MODÈLES APS - Advanced Planning & Scheduling
+# ==================================================
+
+class BOMLine(BaseModel):
+    """Ligne de nomenclature (Bill of Materials)."""
+    model_config = ConfigDict(extra="ignore")
+    parent_article_id: str      # Article parent (produit fini ou semi-fini)
+    child_article_id: str       # Article composant
+    quantity: float             # Quantité nécessaire par unité du parent
+    level: int = 1              # Niveau de nomenclature (1=composant direct)
+    unit: str = "pièce"         # Unité de mesure
+    scrap_rate: float = 0.0     # Taux de rebut (ex: 0.02 = 2%)
+
+class MRPResult(BaseModel):
+    """Résultat du calcul MRP."""
+    article_id: str
+    gross_requirement: float     # Besoin brut
+    on_hand: float               # Stock disponible
+    scheduled_receipts: float    # Réceptions planifiées
+    net_requirement: float       # Besoin net
+    planned_orders: List[Dict]   # Ordres planifiés
+    shortage_date: Optional[str] # Date de première rupture
+    level: int                   # Niveau BOM
+
+class CapacitySlot(BaseModel):
+    """Créneau de capacité machine."""
+    machine_id: str
+    date: str
+    start_time: str
+    end_time: str
+    capacity_minutes: int        # Capacité disponible
+    loaded_minutes: int          # Charge planifiée
+    utilization_rate: float      # Taux d'utilisation
     machines: int
     work_centers: int
     calendars: int
@@ -333,7 +369,7 @@ async def create_rule(rule: BusinessRule):
 
 @api_router.get("/rules")
 async def get_rules():
-    """Liste toutes les règles métier."""
+    """Liste toutes les règles métier avec tous les attributs."""
     rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
     valid_rules = []
     for rule in rules:
@@ -345,14 +381,62 @@ async def get_rules():
             valid_rules.append({
                 'id': rule.get('id'),
                 'name': rule.get('name'),
-                'tache_id': rule.get('tache_id') or rule.get('task_id'),  # Compatibilité
+                'tache_id': rule.get('tache_id') or rule.get('task_id'),
                 'centre_de_charge_id': rule.get('centre_de_charge_id') or rule.get('work_center_id'),
                 'article_id': rule.get('article_id'),
+                # Attributs pour règles avancées
+                'attribute_name': rule.get('attribute_name'),
+                'attribute_operator': rule.get('attribute_operator'),
+                'attribute_value': rule.get('attribute_value'),
                 'rule_type': rule_type,
                 'machine_id': rule.get('machine_id'),
                 'active': rule.get('active', True)
             })
     return valid_rules
+
+@api_router.get("/rules/{rule_id}")
+async def get_rule(rule_id: str):
+    """Récupère une règle métier par son ID."""
+    rule = await db.business_rules.find_one({"id": rule_id}, {"_id": 0})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Règle non trouvée")
+    return rule
+
+@api_router.put("/rules/{rule_id}")
+async def update_rule(rule_id: str, updates: Dict[str, Any]):
+    """
+    Met à jour une règle métier existante.
+    
+    Champs modifiables:
+    - name, tache_id, centre_de_charge_id, article_id
+    - attribute_name, attribute_operator, attribute_value
+    - rule_type, machine_id, active
+    """
+    allowed_fields = {
+        'name', 'tache_id', 'centre_de_charge_id', 'article_id',
+        'attribute_name', 'attribute_operator', 'attribute_value',
+        'rule_type', 'machine_id', 'active'
+    }
+    update_data = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    
+    # Normaliser rule_type en majuscules
+    if 'rule_type' in update_data and update_data['rule_type']:
+        update_data['rule_type'] = update_data['rule_type'].upper()
+    
+    result = await db.business_rules.update_one(
+        {"id": rule_id},
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Règle non trouvée")
+    
+    # Retourner la règle mise à jour
+    updated_rule = await db.business_rules.find_one({"id": rule_id}, {"_id": 0})
+    return updated_rule
 
 @api_router.delete("/rules/{rule_id}")
 async def delete_rule(rule_id: str):
@@ -654,6 +738,184 @@ async def get_projected_stock():
         
     except Exception as e:
         logger.error(f"Projected stock error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==========================================
+# APS - Advanced Planning & Scheduling
+# ==========================================
+
+@api_router.get("/aps/mrp")
+async def get_mrp():
+    """
+    Calcul MRP (Material Requirements Planning).
+    
+    Explose les nomenclatures et calcule les besoins nets en composants
+    en tenant compte du stock et des réceptions planifiées.
+    """
+    try:
+        aps_engine = APSEngine(db)
+        
+        # Récupérer les opérations ordonnancées pour les dates de consommation
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        scheduled_ops = [op for op in operations if op.get('scheduled_start')]
+        
+        result = await aps_engine.run_mrp(scheduled_operations=scheduled_ops)
+        return result
+    except Exception as e:
+        logger.error(f"MRP calculation error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/aps/capacity")
+async def get_capacity(horizon_days: int = 7):
+    """
+    Calcul de capacité finie.
+    
+    Retourne la charge vs capacité par machine en tenant compte:
+    - Calendriers des centres de charge
+    - production_time_minutes et setup_time_minutes des opérations
+    """
+    try:
+        aps_engine = APSEngine(db)
+        
+        # Récupérer les opérations avec temps
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        
+        result = await aps_engine.calculate_capacity(
+            operations=operations,
+            horizon_days=horizon_days
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Capacity calculation error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/aps/kpis")
+async def get_aps_kpis():
+    """
+    KPIs APS - Indicateurs de performance.
+    
+    Retourne:
+    - OTD (On-Time Delivery): % des ordres livrés à temps
+    - Utilisation machines: % de capacité utilisée
+    - WIP (Work In Progress): ordres en cours
+    - Retards: ordres en retard avec détail
+    """
+    try:
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        machines = await db.machines.find({}, {"_id": 0}).to_list(100)
+        
+        now = datetime.now()
+        now_iso = now.isoformat()
+        
+        # Calcul OTD
+        total_orders = len(orders)
+        on_time_orders = 0
+        late_orders = []
+        
+        for order in orders:
+            due_date = order.get('due_date')
+            status = order.get('status', 'pending')
+            
+            if status == 'completed':
+                on_time_orders += 1
+            elif due_date:
+                try:
+                    due_dt = datetime.fromisoformat(due_date.replace('Z', '+00:00').replace('+00:00', ''))
+                    if due_dt < now:
+                        late_orders.append({
+                            'order_id': order.get('id'),
+                            'article_id': order.get('article_id'),
+                            'due_date': due_date,
+                            'delay_hours': round((now - due_dt).total_seconds() / 3600, 1)
+                        })
+                except (ValueError, AttributeError):
+                    pass
+        
+        otd_rate = (on_time_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        # Calcul utilisation machines (sur horizon 7 jours)
+        aps_engine = APSEngine(db)
+        capacity_result = await aps_engine.calculate_capacity(operations=operations, horizon_days=7)
+        
+        total_capacity = sum(s['capacity_minutes'] for s in capacity_result.get('capacity_slots', []))
+        total_loaded = sum(s['loaded_minutes'] for s in capacity_result.get('capacity_slots', []))
+        overall_utilization = (total_loaded / total_capacity * 100) if total_capacity > 0 else 0
+        
+        # WIP
+        wip_orders = [o for o in orders if o.get('status') in ['pending', 'in_progress']]
+        scheduled_ops = [op for op in operations if op.get('scheduled_start')]
+        
+        return {
+            'otd': {
+                'rate': round(otd_rate, 1),
+                'on_time': on_time_orders,
+                'total': total_orders
+            },
+            'late_orders': {
+                'count': len(late_orders),
+                'orders': sorted(late_orders, key=lambda x: x.get('delay_hours', 0), reverse=True)[:10]
+            },
+            'utilization': {
+                'overall_rate': round(overall_utilization, 1),
+                'capacity_hours': round(total_capacity / 60, 1),
+                'loaded_hours': round(total_loaded / 60, 1),
+                'by_machine': capacity_result.get('summary_by_machine', {})
+            },
+            'wip': {
+                'orders_count': len(wip_orders),
+                'operations_scheduled': len(scheduled_ops),
+                'operations_total': len(operations)
+            },
+            'timestamp': now_iso
+        }
+    except Exception as e:
+        logger.error(f"KPIs calculation error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/aps/bom")
+async def get_bom():
+    """Liste toutes les lignes de nomenclature."""
+    bom = await db.bom.find({}, {"_id": 0}).to_list(10000)
+    return bom
+
+@api_router.post("/aps/bom")
+async def create_bom_line(line: BOMLine):
+    """Crée une ligne de nomenclature."""
+    doc = line.model_dump()
+    await db.bom.insert_one(doc)
+    return doc
+
+@api_router.delete("/aps/bom")
+async def delete_all_bom():
+    """Supprime toutes les lignes de nomenclature."""
+    result = await db.bom.delete_many({})
+    return {"deleted": result.deleted_count}
+
+@api_router.post("/aps/bom/explode")
+async def explode_bom(article_id: str, quantity: float = 1.0):
+    """
+    Explose la nomenclature pour un article donné.
+    
+    Retourne la liste complète des composants nécessaires
+    à travers tous les niveaux de la nomenclature.
+    """
+    try:
+        bom_lines = await db.bom.find({}, {"_id": 0}).to_list(10000)
+        exploder = BOMExploder(bom_lines)
+        
+        explosion = exploder.explode(article_id, quantity)
+        totals = exploder.get_all_components(article_id, quantity)
+        
+        return {
+            'article_id': article_id,
+            'quantity': quantity,
+            'explosion_detail': explosion,
+            'components_total': totals,
+            'total_components': len(totals)
+        }
+    except Exception as e:
+        logger.error(f"BOM explosion error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
@@ -1090,6 +1352,53 @@ async def import_planned_supplier_receipts(file: UploadFile = File(...)):
         return ImportResult(
             success=True,
             message=f"Import réussi: {len(records)} réceptions planifiées (remplace {previous_count} anciennes)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
+    except Exception as e:
+        logger.error(f"Import error: {str(e)}", exc_info=True)
+        return ImportResult(success=False, message=str(e))
+
+# Import des nomenclatures (BOM)
+@api_router.post("/import/bom", response_model=ImportResult)
+async def import_bom(file: UploadFile = File(...)):
+    """
+    Import CSV des nomenclatures (Bill of Materials).
+    
+    Colonnes: parent_article_id, child_article_id, quantity, level, unit, scrap_rate
+    
+    Exemple:
+    parent_article_id,child_article_id,quantity,level,unit,scrap_rate
+    100235560,COMP_A,2,1,pièce,0.02
+    100235560,COMP_B,4,1,pièce,0
+    COMP_A,MATIERE_X,0.5,2,kg,0.05
+    """
+    try:
+        previous_count = await db.bom.count_documents({})
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+        
+        await db.bom.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciennes lignes BOM supprimées")
+        
+        records = df.to_dict('records')
+        for record in records:
+            # Convertir les types
+            if 'quantity' in record:
+                record['quantity'] = float(record['quantity'])
+            if 'level' in record:
+                record['level'] = int(record.get('level', 1))
+            if 'scrap_rate' in record:
+                record['scrap_rate'] = float(record.get('scrap_rate', 0))
+            if 'unit' not in record or pd.isna(record.get('unit')):
+                record['unit'] = 'pièce'
+            await db.bom.insert_one(record)
+        
+        logger.info(f"✅ {len(records)} lignes BOM importées")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} lignes BOM (remplace {previous_count} anciennes)",
             records_imported=len(records),
             previous_records=previous_count
         )

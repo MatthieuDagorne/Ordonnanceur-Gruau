@@ -11,11 +11,13 @@ import {
   BarChart3, 
   FolderKanban,
   Bug,
-  Package
+  Package,
+  TrendingUp
 } from 'lucide-react';
 
 const navigation = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+  { name: 'APS Dashboard', path: '/aps', icon: TrendingUp },
   { name: 'Import CSV', path: '/import', icon: Upload },
   { name: 'Centres de Charge', path: '/centres-de-charge', icon: Building2 },
   { name: 'Machines', path: '/machines', icon: Cpu },

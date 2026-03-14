@@ -1,0 +1,109 @@
+{
+  "summary": "Completed comprehensive testing of APS features. 22 backend tests PASSED. All frontend UI tests PASSED.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_aps_features.py",
+    "/app/test_reports/pytest/pytest_results_aps.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_aps_features.py"
+  ],
+  "success_rate": {
+    "backend": "100% (22/22 tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "seed_data_creation": "BOM data imported for testing: 2 lines (EXPLODE_TEST -> EXPLODE_COMP_A, EXPLODE_COMP_B)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All APS features tested and working: 1) PUT /api/rules/{id} - Updates name, rule_type, machine_id correctly, returns 404 for invalid ID, 400 for empty update, 2) BusinessRules edit - Opens pre-filled form, shows 'Mettre à jour' button, 3) GET /api/aps/kpis - Returns OTD (0%), late_orders (0), utilization (0%), WIP (2 orders), 4) GET /api/aps/capacity - Returns capacity_slots with 8 machines, summary_by_machine, 5) GET/POST /api/aps/bom - Import and list BOM lines working, 6) APS Dashboard shows 4 KPI cards and capacity bars",
+  "tests_executed": {
+    "backend_api": {
+      "TestBusinessRulesEdit": {
+        "test_put_rule_updates_name": "PASS - PUT /api/rules/{id} updates rule name",
+        "test_put_rule_updates_rule_type": "PASS - PUT updates rule_type (ALLOW/FORBID/PREFER)",
+        "test_put_rule_updates_machine_id": "PASS - PUT updates machine_id",
+        "test_put_rule_not_found": "PASS - Returns 404 for non-existent rule",
+        "test_put_rule_empty_update": "PASS - Returns 400 for empty update"
+      },
+      "TestAPSKPIs": {
+        "test_get_kpis_returns_otd": "PASS - Returns OTD rate, on_time, total",
+        "test_get_kpis_returns_late_orders": "PASS - Returns late_orders count and details",
+        "test_get_kpis_returns_utilization": "PASS - Returns overall_rate, capacity_hours, loaded_hours, by_machine",
+        "test_get_kpis_returns_wip": "PASS - Returns orders_count, operations_scheduled, operations_total",
+        "test_get_kpis_returns_timestamp": "PASS - Returns timestamp"
+      },
+      "TestAPSCapacity": {
+        "test_get_capacity_returns_slots": "PASS - Returns capacity_slots list",
+        "test_get_capacity_slot_structure": "PASS - Each slot has machine_id, date, capacity_minutes, loaded_minutes, etc.",
+        "test_get_capacity_summary_by_machine": "PASS - Returns summary with total_capacity_hours, average_utilization",
+        "test_get_capacity_horizon_parameter": "PASS - Respects horizon_days parameter"
+      },
+      "TestAPSBOM": {
+        "test_get_bom_returns_list": "PASS - GET /api/aps/bom returns list",
+        "test_bom_line_structure": "PASS - BOM lines have parent_article_id, child_article_id, quantity",
+        "test_import_bom_csv": "PASS - POST /api/import/bom imports CSV correctly",
+        "test_bom_explode": "PASS - POST /api/aps/bom/explode returns explosion_detail, components_total",
+        "test_delete_all_bom": "PASS - DELETE /api/aps/bom works"
+      },
+      "TestAPSMRP": {
+        "test_get_mrp_returns_results": "PASS - GET /api/aps/mrp returns mrp_results, summary",
+        "test_get_mrp_summary_structure": "PASS - Summary has total_articles, articles_with_shortage"
+      },
+      "TestIntegration": {
+        "test_full_aps_workflow": "PASS - BOM import -> Capacity -> KPIs workflow works"
+      }
+    },
+    "frontend_ui": {
+      "APSDashboard": {
+        "navigation": "PASS - 'APS Dashboard' link in sidebar navigates to /aps",
+        "kpi_otd_card": "PASS - OTD card shows 0% rate, 0/2 ordres",
+        "kpi_late_card": "PASS - Late orders card shows 0, Aucun retard",
+        "kpi_utilization_card": "PASS - Utilization card shows 0%, 0h/360h",
+        "kpi_wip_card": "PASS - WIP card shows 2 orders, 0/2 ops planifiées",
+        "capacity_table": "PASS - Shows 8 machines with utilization bars",
+        "refresh_button": "PASS - Actualiser button present"
+      },
+      "BusinessRules": {
+        "edit_button": "PASS - Pencil icon (edit) button present on each rule row",
+        "edit_form_opens": "PASS - Clicking edit opens form with pre-filled data",
+        "edit_form_title": "PASS - Form title shows 'Modifier la règle'",
+        "edit_button_text": "PASS - Submit button shows 'Mettre à jour' in edit mode",
+        "create_button_text": "PASS - Submit button shows 'Créer la règle' in create mode",
+        "simple_mode": "PASS - Simple mode shows tâche, centre, article inputs",
+        "attribute_mode": "PASS - Attribute mode shows attribute_name, operator, value selects",
+        "edit_saves": "PASS - Editing a rule updates it in the table"
+      },
+      "ImportCSV": {
+        "bom_import_option": "PASS - 'Nomenclatures (BOM)' import option available"
+      }
+    }
+  },
+  "features_verified": {
+    "1_PUT_rules_endpoint": "✓ PUT /api/rules/{id} updates rule fields (name, rule_type, machine_id, etc.)",
+    "2_BusinessRules_edit_button": "✓ Edit button opens form with pre-filled data",
+    "3_BusinessRules_update_button": "✓ Submit shows 'Mettre à jour' in edit mode, 'Créer la règle' in create mode",
+    "4_APS_KPIs_endpoint": "✓ GET /api/aps/kpis returns OTD, late_orders, utilization, WIP",
+    "5_APS_Capacity_endpoint": "✓ GET /api/aps/capacity returns capacity_slots and summary_by_machine",
+    "6_APS_BOM_list": "✓ GET /api/aps/bom returns BOM lines",
+    "7_APS_BOM_import": "✓ POST /api/import/bom imports CSV nomenclatures",
+    "8_APS_Dashboard_KPIs": "✓ Dashboard shows 4 KPI cards (OTD, Retards, Utilisation, WIP)",
+    "9_APS_Dashboard_capacity_bars": "✓ Dashboard shows capacity bars per machine",
+    "10_Navigation_APS_link": "✓ 'APS Dashboard' link in navigation menu"
+  },
+  "kpis_current_values": {
+    "OTD": "0% (0/2 ordres - no completed orders)",
+    "late_orders": "0 (no orders past due_date)",
+    "utilization": "0% (0h loaded / 360h capacity - operations not scheduled)",
+    "WIP": "2 orders in progress, 0/2 operations scheduled"
+  }
+}

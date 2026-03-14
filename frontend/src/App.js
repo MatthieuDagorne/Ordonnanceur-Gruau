@@ -14,6 +14,7 @@ import GanttView from '@/pages/GanttView';
 import Scenarios from '@/pages/Scenarios';
 import DiagnosticAssignment from '@/pages/DiagnosticAssignment';
 import ProjectedStock from '@/pages/ProjectedStock';
+import APSDashboard from '@/pages/APSDashboard';
 import '@/App.css';
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
             <Route path="scheduling" element={<Scheduling />} />
             <Route path="diagnostic" element={<DiagnosticAssignment />} />
             <Route path="projected-stock" element={<ProjectedStock />} />
+            <Route path="aps" element={<APSDashboard />} />
             <Route path="gantt/:scenarioId" element={<GanttView />} />
             <Route path="scenarios" element={<Scenarios />} />
           </Route>
