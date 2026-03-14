@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from services.diagnostics import SchedulingDiagnostics
 from services.machine_assigner import MachineAssigner
+from services.material_manager import MaterialManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,18 +69,21 @@ class SchedulerEngine:
         - Non-chevauchement sur chaque machine (contrainte NoOverlap)
         - Respect de l'ordre des opérations dans un OF
         - Priorité basée sur due_date avec heure
+        - Disponibilité matière avec projection du stock
         
         Options:
         - ignore_rules: bool
         - ignore_material: bool
         - debug_mode: bool
         - auto_assign_machines: bool (default True)
+        - max_solver_time_seconds: int (default 60)
         """
         options = options or {}
         debug_mode = options.get('debug_mode', True)
         ignore_rules = options.get('ignore_rules', False)
         ignore_material = options.get('ignore_material', False)
         auto_assign_machines = options.get('auto_assign_machines', True)
+        max_solver_time_seconds = options.get('max_solver_time_seconds', 60)
         
         # Point de départ pour l'horizon de planification
         self.scheduling_start = datetime.now()
@@ -88,9 +92,24 @@ class SchedulerEngine:
         self.diagnostics = SchedulingDiagnostics(self.db)
         
         try:
-            # PHASE 1: PRE-VALIDATION
+            # PHASE 1: PRE-VALIDATION - Charger toutes les données
             stocks = await self.db.stocks.find({}, {"_id": 0}).to_list(1000)
             rules = await self.db.business_rules.find({}, {"_id": 0}).to_list(1000)
+            operation_materials = await self.db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+            planned_receipts = await self.db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+            
+            logger.info(f"\n{'='*60}")
+            logger.info("DONNÉES CHARGÉES POUR L'ORDONNANCEMENT")
+            logger.info(f"{'='*60}")
+            logger.info(f"  Ordres: {len(orders)}")
+            logger.info(f"  Opérations: {len(operations)}")
+            logger.info(f"  Machines: {len(machines)}")
+            logger.info(f"  Règles: {len(rules)}")
+            logger.info(f"  Besoins matière: {len(operation_materials)}")
+            logger.info(f"  Stocks: {len(stocks)}")
+            logger.info(f"  Réceptions planifiées: {len(planned_receipts)}")
+            logger.info(f"  Temps max solveur: {max_solver_time_seconds}s")
+            logger.info(f"{'='*60}\n")
             
             await self.diagnostics.run_pre_validation(orders, operations, machines, rules, stocks)
             
@@ -98,6 +117,9 @@ class SchedulerEngine:
             if len(orders) == 0 or len(operations) == 0 or len(machines) == 0:
                 logger.error("❌ Données insuffisantes pour l'ordonnancement")
                 return self._error_result("Données insuffisantes")
+            
+            # Initialiser le gestionnaire de matières
+            material_manager = MaterialManager(stocks, operation_materials, planned_receipts)
             
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
             if auto_assign_machines and not ignore_rules:
@@ -117,13 +139,17 @@ class SchedulerEngine:
             
             valid_operations = []
             blocked_operations = []
+            material_delayed_operations = []  # Opérations reportées pour manque matière
             
             for op in operations:
                 order_id = op.get('order_id')
                 order = orders_by_id.get(order_id)
+                op_id = op.get('id')
                 
                 is_valid = True
                 blocking_reason = None
+                material_status = None
+                earliest_material_date = None
                 
                 # Vérification machine
                 machine_id = op.get('machine_id')
@@ -134,20 +160,38 @@ class SchedulerEngine:
                     is_valid = False
                     blocking_reason = f'Machine {machine_id} introuvable'
                 
-                # Vérification matière
-                if is_valid and not ignore_material and order:
-                    article_id = order.get('article_id') or order.get('article')
-                    if not material_checker.check_availability(article_id, order.get('quantity', 0)):
-                        is_valid = False
-                        blocking_reason = f'Matière insuffisante pour {article_id}'
+                # Vérification matière avec projection
+                if is_valid and not ignore_material:
+                    # Vérifier les besoins matière de l'opération
+                    material_status = material_manager.check_operation_materials(
+                        op_id,
+                        self.scheduling_start
+                    )
+                    
+                    if not material_status.all_available:
+                        # Reporter l'opération à la date de disponibilité
+                        earliest_material_date = material_status.earliest_start_date
+                        if earliest_material_date:
+                            logger.info(f"⏳ Opération {op_id} reportée pour matière: {material_status.blocking_components}")
+                            logger.info(f"   Disponible à partir de: {earliest_material_date}")
+                            material_delayed_operations.append({
+                                'operation_id': op_id,
+                                'blocking_components': material_status.blocking_components,
+                                'earliest_date': earliest_material_date.isoformat()
+                            })
+                        else:
+                            is_valid = False
+                            blocking_reason = f'Matière insuffisante: {material_status.blocking_components}'
                 
                 if is_valid:
-                    # Enrichir avec due_date pour le tri
+                    # Enrichir avec date_besoin pour le tri
                     op_enriched = {
                         **op,
-                        '_due_date': order.get('due_date') if order else None,
+                        '_date_besoin': order.get('due_date') if order else None,
                         '_priority': order.get('priority', 0) if order else 0,
-                        '_article_id': (order.get('article_id') or order.get('article')) if order else None
+                        '_article_id': (order.get('article_id') or order.get('article')) if order else None,
+                        '_material_earliest_date': earliest_material_date,
+                        '_material_status': material_status
                     }
                     valid_operations.append(op_enriched)
                 else:
@@ -158,6 +202,7 @@ class SchedulerEngine:
             
             logger.info(f"📊 Opérations valides pour le solveur: {len(valid_operations)}")
             logger.info(f"📊 Opérations bloquées: {len(blocked_operations)}")
+            logger.info(f"📊 Opérations reportées matière: {len(material_delayed_operations)}")
             
             if len(valid_operations) == 0:
                 logger.error("❌ Aucune opération valide pour l'ordonnancement")
@@ -165,16 +210,17 @@ class SchedulerEngine:
                     'status': 'NO_VALID_OPERATIONS',
                     'operations': [],
                     'conflicts': blocked_operations,
+                    'material_delayed': material_delayed_operations,
                     'solver_time': 0,
                     'diagnostics': self.diagnostics.get_report()
                 }
             
-            # Trier les opérations par urgence (due_date)
+            # Trier les opérations par urgence (date_besoin)
             def get_sort_key(op):
-                due_date = op.get('_due_date')
+                date_besoin = op.get('_date_besoin')
                 priority = op.get('_priority', 0)
-                if due_date:
-                    dt = self._parse_datetime(due_date)
+                if date_besoin:
+                    dt = self._parse_datetime(date_besoin)
                     return (dt or datetime.max, -priority)
                 return (datetime.max, -priority)
             
@@ -276,10 +322,10 @@ class SchedulerEngine:
             
             # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = 60
+            solver.parameters.max_time_in_seconds = max_solver_time_seconds
             solver.parameters.num_search_workers = 4
             
-            logger.info("\n🔄 Lancement du solveur OR-Tools CP-SAT...")
+            logger.info(f"\n🔄 Lancement du solveur OR-Tools CP-SAT (max {max_solver_time_seconds}s)...")
             status = solver.solve(model)
             status_str = self._get_status_string(status)
             logger.info(f"✓ Solveur terminé - Status: {status_str}")
@@ -288,7 +334,9 @@ class SchedulerEngine:
                 'status': status_str,
                 'operations': [],
                 'conflicts': blocked_operations,
+                'material_delayed': material_delayed_operations,
                 'solver_time': solver.wall_time,
+                'max_solver_time': max_solver_time_seconds,
                 'objective_value': solver.objective_value if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
                 'scheduling_start': self.scheduling_start.isoformat()
             }
@@ -314,7 +362,7 @@ class SchedulerEngine:
                             'duration_minutes': end_time - start_time,
                             'start_datetime': self._minutes_to_datetime(start_time).isoformat(),
                             'end_datetime': self._minutes_to_datetime(end_time).isoformat(),
-                            'due_date': op.get('_due_date')
+                            'date_besoin': op.get('_date_besoin')
                         }
                         scheduled_ops.append(scheduled_op)
                 

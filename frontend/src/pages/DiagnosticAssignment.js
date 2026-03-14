@@ -206,7 +206,7 @@ export default function DiagnosticAssignment() {
                             isLate ? 'text-purple-700 font-bold' :
                             isUrgent ? 'text-amber-700 font-bold' : 'text-slate-600'
                           }`}>
-                            {row.date_besoin?.substring(0, 10)}
+                            {row.date_besoin?.substring(0, 16).replace('T', ' ')}
                             {isLate && <Clock size={12} className="text-purple-600" />}
                           </span>
                         ) : (
@@ -255,7 +255,7 @@ export default function DiagnosticAssignment() {
                     {expandedOps[row.operation_id] && (
                       <tr className="bg-slate-50">
                         <td colSpan={10} className="px-6 py-3">
-                          <div className="grid grid-cols-3 gap-4 text-xs">
+                          <div className="grid grid-cols-4 gap-4 text-xs">
                             <div>
                               <div className="font-semibold text-slate-700 mb-1">Jointure order_id:</div>
                               <div className="text-slate-600">
@@ -306,6 +306,27 @@ export default function DiagnosticAssignment() {
                                   <span className="bg-red-100 text-red-800 px-2 py-1 rounded font-mono">{row.cause_echec}</span>
                                 </div>
                               )}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-slate-700 mb-1">Diagnostic Matière:</div>
+                              {row.material_status?.components?.length > 0 ? (
+                                <div className="space-y-1">
+                                  {row.material_status.components.map((comp, i) => (
+                                    <div key={i} className={`flex items-center gap-1 ${
+                                      comp.is_available ? 'text-green-600' : 'text-red-600'
+                                    }`}>
+                                      <span>{comp.is_available ? '✓' : '✗'}</span>
+                                      <span className="font-mono">{comp.article_id}</span>
+                                      <span>({comp.available}/{comp.required})</span>
+                                    </div>
+                                  ))}
+                                  {!row.material_status.all_available && (
+                                    <div className="mt-1 text-red-600 font-semibold">
+                                      Bloqué: {row.material_status.blocking_components?.join(', ')}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : <span className="text-slate-400">Pas de besoins définis</span>}
                             </div>
                           </div>
                         </td>

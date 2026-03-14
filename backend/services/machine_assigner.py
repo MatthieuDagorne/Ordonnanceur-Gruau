@@ -66,14 +66,14 @@ class MachineAssigner:
         if order:
             # article_id DEPUIS L'ORDRE (pas l'opération!)
             enriched['article_id'] = order.get('article_id') or order.get('article')
-            # due_date avec support datetime complet
-            enriched['due_date'] = order.get('due_date') or order.get('date_besoin')
+            # date_besoin = due_date de l'ordre (format datetime complet)
+            enriched['date_besoin'] = order.get('due_date') or order.get('date_besoin')
             enriched['priority'] = order.get('priority', 0)
             enriched['quantity'] = order.get('quantity')
             enriched['ordre_trouve'] = True
         else:
             enriched['article_id'] = None
-            enriched['due_date'] = None
+            enriched['date_besoin'] = None
             enriched['priority'] = 0
             enriched['quantity'] = None
             enriched['ordre_trouve'] = False
@@ -106,17 +106,17 @@ class MachineAssigner:
             logger.warning(f"Impossible de parser la date '{date_str}': {e}")
             return None
     
-    def _calculate_urgency(self, due_date_str: str) -> tuple:
+    def _calculate_urgency(self, date_besoin_str: str) -> tuple:
         """
         Calcule l'urgence basée sur la date/heure de besoin.
         
         Returns:
             (urgency_score, is_late, minutes_until_due)
         """
-        if not due_date_str:
+        if not date_besoin_str:
             return (0, False, float('inf'))
         
-        due_dt = self._parse_datetime(due_date_str)
+        due_dt = self._parse_datetime(date_besoin_str)
         if not due_dt:
             return (0, False, float('inf'))
         
@@ -169,17 +169,17 @@ class MachineAssigner:
         
         # IMPORTANT: article_id vient de L'ORDRE, pas de l'opération!
         article_id = enriched['article_id']
-        due_date = enriched['due_date']
+        date_besoin = enriched['date_besoin']
         
         # Calculer l'urgence
-        urgency, is_late, minutes_until_due = self._calculate_urgency(due_date)
+        urgency, is_late, minutes_until_due = self._calculate_urgency(date_besoin)
         
         # Diagnostic détaillé
         diagnostic = {
             'operation_id': op_id,
             'order_id': order_id,
             'article_id': article_id,
-            'due_date': due_date,
+            'date_besoin': date_besoin,  # Renommé de due_date
             'tache_id': tache_id,
             'centre_de_charge_id': centre_de_charge_id,
             'urgency': urgency,
@@ -205,7 +205,7 @@ class MachineAssigner:
         logger.info(f"  operation_id:        {op_id}")
         logger.info(f"  order_id:            {order_id}")
         logger.info(f"  article_id:          {article_id or 'NON TROUVE'} (depuis l'ordre)")
-        logger.info(f"  due_date:            {due_date or 'NON TROUVE'}")
+        logger.info(f"  date_besoin:         {date_besoin or 'NON TROUVE'}")
         logger.info(f"  tache_id:            {tache_id or 'NON DEFINI'}")
         logger.info(f"  centre_de_charge_id: {centre_de_charge_id or 'NON DEFINI'}")
         
@@ -317,7 +317,7 @@ class MachineAssigner:
         # Résumé
         logger.info(f"\n[RESUME]")
         logger.info(f"  Opération: {op_id} (OF: {order_id})")
-        logger.info(f"  Article: {article_id} | Due: {due_date}")
+        logger.info(f"  Article: {article_id} | Date besoin: {date_besoin}")
         logger.info(f"  Tâche: {tache_id} | Centre: {centre_de_charge_id}")
         logger.info(f"  Machines centre: {diagnostic['machines_du_centre']}")
         logger.info(f"  Règles: {diagnostic['regles_applicables'] or 'Aucune'}")
@@ -381,7 +381,7 @@ class MachineAssigner:
             enriched = self._enrich_operation(operation, order)
             
             # Calculer urgence pour le tri
-            urgency, is_late, minutes_until_due = self._calculate_urgency(enriched.get('due_date'))
+            urgency, is_late, minutes_until_due = self._calculate_urgency(enriched.get('date_besoin'))
             enriched['_urgency'] = urgency
             enriched['_is_late'] = is_late
             enriched['_minutes_until_due'] = minutes_until_due
@@ -395,15 +395,15 @@ class MachineAssigner:
             key=lambda x: (
                 -x['_urgency'],  # Plus urgent en premier
                 -x['_priority'],  # Plus prioritaire en premier
-                x.get('due_date') or '9999-99-99',  # Date de besoin
+                x.get('date_besoin') or '9999-99-99',  # Date de besoin
                 x.get('order_id') or ''
             )
         )
         
-        logger.info(f"\nOpérations triées par urgence (due_date avec heure):")
+        logger.info(f"\nOpérations triées par urgence (date_besoin avec heure):")
         for i, op in enumerate(enriched_operations[:5]):
             urgency_label = "EN RETARD" if op['_is_late'] else f"urgence={op['_urgency']}"
-            logger.info(f"  {i+1}. {op['id']} - due={op.get('due_date')} - article={op.get('article_id')} ({urgency_label})")
+            logger.info(f"  {i+1}. {op['id']} - date_besoin={op.get('date_besoin')} - article={op.get('article_id')} ({urgency_label})")
         
         for enriched in enriched_operations:
             operation = enriched['_original']
@@ -431,7 +431,7 @@ class MachineAssigner:
                 'operation_id': operation.get('id'),
                 'order_id': diag.get('order_id'),
                 'article_id': diag.get('article_id'),
-                'due_date': diag.get('due_date'),
+                'date_besoin': diag.get('date_besoin'),  # Renommé de due_date
                 'tache_id': diag.get('tache_id'),
                 'centre_de_charge_id': diag.get('centre_de_charge_id'),
                 'urgency': diag.get('urgency', 0),

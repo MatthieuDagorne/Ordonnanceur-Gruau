@@ -15,6 +15,7 @@ import uuid
 
 from services.scheduler_engine import SchedulerEngine
 from services.material_checker import MaterialChecker
+from services.material_manager import MaterialManager, MaterialChecker as NewMaterialChecker
 from services.rules_engine import RulesEngine
 from services.machine_assigner import MachineAssigner
 from services.demo_data import load_demo_data
@@ -137,6 +138,23 @@ class Stock(BaseModel):
     article_id: str  # Cohérent avec ManufacturingOrder et Operation
     quantity: float
 
+# Nouveaux modèles pour la gestion des matières
+class OperationMaterial(BaseModel):
+    """Besoin matière pour une opération."""
+    model_config = ConfigDict(extra="ignore")
+    id: str  # operation_id (ex: LV1100001_10)
+    order_id: str
+    operation_id: int
+    article_composant_id: str
+    quantity: float
+
+class PlannedSupplierReceipt(BaseModel):
+    """Réception fournisseur planifiée."""
+    model_config = ConfigDict(extra="ignore")
+    article_id: str
+    quantity: float
+    planned_date: str  # Format: YYYY-MM-DDTHH:MM:SS
+
 class Scenario(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -151,6 +169,7 @@ class ScheduleRequestWithOptions(BaseModel):
     ignore_material: bool = False
     debug_mode: bool = True
     auto_assign_machines: bool = True
+    max_solver_time_seconds: int = 60  # Nouveau: temps maximum de calcul
 
 class ImportResult(BaseModel):
     success: bool
@@ -400,6 +419,50 @@ async def get_operations_enrichies():
     
     return result
 
+# ==========================================
+# OPERATION MATERIALS - Besoins matière par opération
+# ==========================================
+@api_router.get("/operation-materials")
+async def get_operation_materials():
+    """Récupère tous les besoins matière des opérations."""
+    materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+    return materials
+
+@api_router.post("/operation-materials")
+async def create_operation_material(material: OperationMaterial):
+    """Crée un besoin matière pour une opération."""
+    doc = material.model_dump()
+    await db.operation_materials.insert_one(doc)
+    return doc
+
+@api_router.delete("/operation-materials")
+async def delete_all_operation_materials():
+    """Supprime tous les besoins matière."""
+    result = await db.operation_materials.delete_many({})
+    return {"deleted": result.deleted_count}
+
+# ==========================================
+# PLANNED SUPPLIER RECEIPTS - Réceptions fournisseurs planifiées
+# ==========================================
+@api_router.get("/planned-supplier-receipts")
+async def get_planned_supplier_receipts():
+    """Récupère toutes les réceptions fournisseurs planifiées."""
+    receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(10000)
+    return receipts
+
+@api_router.post("/planned-supplier-receipts")
+async def create_planned_supplier_receipt(receipt: PlannedSupplierReceipt):
+    """Crée une réception fournisseur planifiée."""
+    doc = receipt.model_dump()
+    await db.planned_supplier_receipts.insert_one(doc)
+    return doc
+
+@api_router.delete("/planned-supplier-receipts")
+async def delete_all_planned_supplier_receipts():
+    """Supprime toutes les réceptions planifiées."""
+    result = await db.planned_supplier_receipts.delete_many({})
+    return {"deleted": result.deleted_count}
+
 # Scenarios endpoints
 @api_router.post("/scenarios", response_model=Scenario)
 async def create_scenario(scenario: Scenario):
@@ -477,7 +540,9 @@ async def reset_all_data():
             "stocks": await db.stocks.count_documents({}),
             "calendars": await db.calendars.count_documents({}),
             "scenarios": await db.scenarios.count_documents({}),
-            "unavailability": await db.unavailability.count_documents({})
+            "unavailability": await db.unavailability.count_documents({}),
+            "operation_materials": await db.operation_materials.count_documents({}),
+            "planned_supplier_receipts": await db.planned_supplier_receipts.count_documents({})
         }
         
         # Supprimer TOUTES les collections
@@ -494,6 +559,8 @@ async def reset_all_data():
         await db.unavailability.delete_many({})
         await db.components.delete_many({})
         await db.transactions.delete_many({})
+        await db.operation_materials.delete_many({})
+        await db.planned_supplier_receipts.delete_many({})
         
         total_deleted = sum(counts.values())
         
@@ -685,6 +752,76 @@ async def import_stocks(file: UploadFile = File(...)):
         logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
+# Import des besoins matière par opération
+@api_router.post("/import/operation-materials", response_model=ImportResult)
+async def import_operation_materials(file: UploadFile = File(...)):
+    """
+    Import CSV des besoins matière par opération.
+    Colonnes: id, order_id, operation_id, article_composant_id, quantity
+    """
+    try:
+        previous_count = await db.operation_materials.count_documents({})
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+        
+        await db.operation_materials.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciens besoins matière supprimés")
+        
+        records = df.to_dict('records')
+        for record in records:
+            # Assurer le format des champs
+            if 'quantity' in record:
+                record['quantity'] = float(record['quantity'])
+            if 'operation_id' in record:
+                record['operation_id'] = int(record['operation_id'])
+            await db.operation_materials.insert_one(record)
+        
+        logger.info(f"✅ {len(records)} besoins matière importés")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} besoins matière (remplace {previous_count} anciens)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
+    except Exception as e:
+        logger.error(f"Import error: {str(e)}", exc_info=True)
+        return ImportResult(success=False, message=str(e))
+
+# Import des réceptions fournisseurs planifiées
+@api_router.post("/import/planned-supplier-receipts", response_model=ImportResult)
+async def import_planned_supplier_receipts(file: UploadFile = File(...)):
+    """
+    Import CSV des réceptions fournisseurs planifiées.
+    Colonnes: article_id, quantity, planned_date
+    """
+    try:
+        previous_count = await db.planned_supplier_receipts.count_documents({})
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+        
+        await db.planned_supplier_receipts.delete_many({})
+        logger.info(f"🗑️  {previous_count} anciennes réceptions planifiées supprimées")
+        
+        records = df.to_dict('records')
+        for record in records:
+            # Assurer le format des champs
+            if 'quantity' in record:
+                record['quantity'] = float(record['quantity'])
+            await db.planned_supplier_receipts.insert_one(record)
+        
+        logger.info(f"✅ {len(records)} réceptions planifiées importées")
+        
+        return ImportResult(
+            success=True,
+            message=f"Import réussi: {len(records)} réceptions planifiées (remplace {previous_count} anciennes)",
+            records_imported=len(records),
+            previous_records=previous_count
+        )
+    except Exception as e:
+        logger.error(f"Import error: {str(e)}", exc_info=True)
+        return ImportResult(success=False, message=str(e))
+
 # Scheduling with new model
 @api_router.post("/scheduling/calculate")
 async def calculate_schedule(request: ScheduleRequestWithOptions):
@@ -711,7 +848,8 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             'ignore_rules': request.ignore_rules,
             'ignore_material': request.ignore_material,
             'debug_mode': request.debug_mode,
-            'auto_assign_machines': request.auto_assign_machines
+            'auto_assign_machines': request.auto_assign_machines,
+            'max_solver_time_seconds': request.max_solver_time_seconds
         }
         
         schedule_result = await engine.schedule(
@@ -781,6 +919,11 @@ async def get_assignment_diagnostic():
         machines_raw = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         
+        # Charger les données matière pour le diagnostic
+        operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        
         logger.info(f"\n{'='*80}")
         logger.info(f"DIAGNOSTIC D'ASSIGNATION")
         logger.info(f"{'='*80}")
@@ -788,6 +931,9 @@ async def get_assignment_diagnostic():
         logger.info(f"Opérations: {len(operations_raw)}")
         logger.info(f"Machines: {len(machines_raw)}")
         logger.info(f"Règles: {len(rules)}")
+        logger.info(f"Besoins matière: {len(operation_materials)}")
+        logger.info(f"Stocks: {len(stocks)}")
+        logger.info(f"Réceptions planifiées: {len(planned_receipts)}")
         
         # Adapter la terminologie des opérations
         operations = []
@@ -827,6 +973,39 @@ async def get_assignment_diagnostic():
         
         result = assigner.assign_machines_to_operations(operations, orders)
         
+        # Enrichir le diagnostic avec les informations matière
+        material_manager = MaterialManager(stocks, operation_materials, planned_receipts)
+        
+        # Index des ordres pour enrichissement
+        orders_by_id = {o.get('id'): o for o in orders}
+        
+        # Ajouter le diagnostic matière à chaque opération
+        for diag in result['diagnostics_table']:
+            op_id = diag['operation_id']
+            op_materials = material_manager.get_operation_materials(op_id)
+            
+            diag['material_status'] = {
+                'components': [],
+                'all_available': True,
+                'blocking_components': []
+            }
+            
+            if op_materials:
+                for mat in op_materials:
+                    stock_qty = material_manager.initial_stocks.get(mat.article_composant_id, 0)
+                    is_available = stock_qty >= mat.quantity
+                    
+                    diag['material_status']['components'].append({
+                        'article_id': mat.article_composant_id,
+                        'required': mat.quantity,
+                        'available': stock_qty,
+                        'is_available': is_available
+                    })
+                    
+                    if not is_available:
+                        diag['material_status']['all_available'] = False
+                        diag['material_status']['blocking_components'].append(mat.article_composant_id)
+        
         return {
             'summary': {
                 'total_operations': result['total_operations'],
@@ -852,7 +1031,12 @@ async def get_assignment_diagnostic():
                 }
                 for r in result['rules_diagnostics']['rules_detail']
             ],
-            'diagnostics_table': result['diagnostics_table']
+            'diagnostics_table': result['diagnostics_table'],
+            'material_info': {
+                'stocks_count': len(stocks),
+                'operation_materials_count': len(operation_materials),
+                'planned_receipts_count': len(planned_receipts)
+            }
         }
     except Exception as e:
         logger.error(f"Diagnostic error: {str(e)}", exc_info=True)
