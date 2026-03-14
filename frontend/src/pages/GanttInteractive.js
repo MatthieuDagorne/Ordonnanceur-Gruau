@@ -112,7 +112,7 @@ export default function GanttInteractive() {
     return ganttData.machines.filter(m => selectedCentres.includes(m.centre_de_charge_id));
   }, [ganttData?.machines, selectedCentres]);
 
-  // Calculer les zones de fermeture (simplifié: nuits)
+  // Calculer les zones de fermeture basées sur le calendrier et l'heure de scheduling
   const closurePeriods = useMemo(() => {
     if (!ganttData) return [];
     const { scheduling_start, calendars, time_range } = ganttData;
@@ -122,38 +122,61 @@ export default function GanttInteractive() {
     const cal = calendars[0];
     if (!cal) return [];
     
-    const startTime = cal.start_time || '08:00';
-    const endTime = cal.end_time || '17:00';
-    const [startH, startM] = startTime.split(':').map(Number);
-    const [endH, endM] = endTime.split(':').map(Number);
-    const workStartMinutes = startH * 60 + startM;
-    const workEndMinutes = endH * 60 + endM;
+    // Récupérer les heures de travail du calendrier
+    const workStartHour = cal.start_hour ?? 8;
+    const workEndHour = cal.end_hour ?? 17;
     
-    const totalDays = Math.ceil((time_range?.total_minutes || 480) / (24 * 60)) + 1;
+    // Parser la date de début du scheduling
+    const schedStart = new Date(scheduling_start);
     
-    for (let d = 0; d < totalDays; d++) {
-      const dayStart = d * 24 * 60;
+    // Calculer combien de jours sont couverts par le Gantt
+    const totalMinutes = time_range?.total_minutes || 480;
+    const totalDays = Math.ceil(totalMinutes / (24 * 60)) + 2;
+    
+    // Pour chaque jour, calculer les zones de fermeture
+    for (let d = -1; d < totalDays; d++) {
+      const dayDate = new Date(schedStart);
+      dayDate.setHours(0, 0, 0, 0);
+      dayDate.setDate(dayDate.getDate() + d);
       
-      if (workStartMinutes > 0) {
-        const closureStart = dayStart;
-        const closureEnd = dayStart + workStartMinutes;
-        if (closureEnd > (time_range?.min_minutes || 0) && closureStart < (time_range?.max_minutes || 0)) {
+      // Zone de fermeture du matin (00:00 -> workStartHour)
+      if (workStartHour > 0) {
+        const closureStartDate = new Date(dayDate);
+        closureStartDate.setHours(0, 0, 0, 0);
+        
+        const closureEndDate = new Date(dayDate);
+        closureEndDate.setHours(workStartHour, 0, 0, 0);
+        
+        // Convertir en minutes relatives au scheduling_start
+        const closureStartMin = Math.floor((closureStartDate - schedStart) / 60000);
+        const closureEndMin = Math.floor((closureEndDate - schedStart) / 60000);
+        
+        if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
-            start: Math.max(closureStart - (time_range?.min_minutes || 0), 0),
-            end: Math.max(closureEnd - (time_range?.min_minutes || 0), 0),
-            reason: 'Hors horaires'
+            start: Math.max(0, closureStartMin),
+            end: Math.min(totalMinutes, closureEndMin),
+            reason: `Avant ${workStartHour}h`
           });
         }
       }
       
-      if (workEndMinutes < 24 * 60) {
-        const closureStart = dayStart + workEndMinutes;
-        const closureEnd = dayStart + 24 * 60;
-        if (closureEnd > (time_range?.min_minutes || 0) && closureStart < (time_range?.max_minutes || 0)) {
+      // Zone de fermeture du soir (workEndHour -> 24:00)
+      if (workEndHour < 24) {
+        const closureStartDate = new Date(dayDate);
+        closureStartDate.setHours(workEndHour, 0, 0, 0);
+        
+        const closureEndDate = new Date(dayDate);
+        closureEndDate.setHours(24, 0, 0, 0);
+        
+        // Convertir en minutes relatives au scheduling_start
+        const closureStartMin = Math.floor((closureStartDate - schedStart) / 60000);
+        const closureEndMin = Math.floor((closureEndDate - schedStart) / 60000);
+        
+        if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
-            start: Math.max(closureStart - (time_range?.min_minutes || 0), 0),
-            end: Math.min(closureEnd - (time_range?.min_minutes || 0), time_range?.total_minutes || 0),
-            reason: 'Hors horaires'
+            start: Math.max(0, closureStartMin),
+            end: Math.min(totalMinutes, closureEndMin),
+            reason: `Après ${workEndHour}h`
           });
         }
       }

@@ -459,25 +459,26 @@ class SchedulerEngine:
                     logger.info(f"   ✓ Machine {machine_id}: {len(forbidden_slots)} plages interdites")
                     logger.info(f"      Calendrier: jours={list(working_days)}, heures={start_hour}-{end_hour}")
                     
-                    # Pour chaque opération sur cette machine, contraindre le début
-                    # à éviter les plages interdites
+                    # Pour chaque opération sur cette machine, contraindre le début et la fin
+                    # pour éviter les plages interdites
                     for interval_data in intervals_data:
                         op_id = interval_data['op_id']
-                        if op_id not in start_vars:
+                        if op_id not in start_vars or op_id not in end_vars:
                             continue
                         
                         start_var = start_vars[op_id]
+                        end_var = end_vars[op_id]
                         
                         # Créer les contraintes pour éviter chaque plage interdite
-                        # Une opération ne doit PAS commencer dans une plage interdite
+                        # L'opération entière doit être SOIT avant SOIT après la plage
+                        # Soit end <= slot_start (termine avant la fermeture)
+                        # Soit start >= slot_end (commence après la fermeture)
                         for slot_start, slot_end in forbidden_slots[:50]:  # Limiter pour performance
-                            # L'opération ne doit pas commencer dans [slot_start, slot_end)
-                            # Soit start < slot_start, soit start >= slot_end
                             b = model.new_bool_var(f'calendar_{op_id}_{slot_start}')
                             
-                            # Si b=True: start < slot_start
-                            # Si b=False: start >= slot_end
-                            model.add(start_var < slot_start).only_enforce_if(b)
+                            # Si b=True: L'opération se termine AVANT la plage interdite
+                            model.add(end_var <= slot_start).only_enforce_if(b)
+                            # Si b=False: L'opération commence APRÈS la plage interdite
                             model.add(start_var >= slot_end).only_enforce_if(b.Not())
                             
                             calendar_constraints_count += 1
