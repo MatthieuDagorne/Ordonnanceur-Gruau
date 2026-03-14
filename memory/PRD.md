@@ -1,133 +1,114 @@
 # APS Scheduler Pro - PRD
 
 ## Énoncé du Problème
-Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement industriel d'un site de production.
+Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement industriel.
 
 ## Architecture Technique
 - **Backend**: Python FastAPI
 - **Frontend**: React
 - **Base de données**: MongoDB
 - **Moteur d'ordonnancement**: Google OR-Tools (CP-SAT)
-- **Module APS**: BOM, MRP, Capacité finie
 
 ## Fonctionnalités APS Implémentées
 
-### 1. Page Ordonnancement APS Complète ✅ (14 mars 2026)
+### 1. Règles Métier avec Conditions Multiples ET/OU ✅ (14 mars 2026)
+
+#### Structure des Conditions
+```json
+{
+  "name": "Règle complexe",
+  "rule_type": "FORBID",
+  "machine_id": "TP5000_1",
+  "attribute_conditions": [
+    {
+      "conditions": [
+        {"attribute_name": "width", "operator": "GT", "value": "500"},
+        {"attribute_name": "thickness", "operator": "LT", "value": "10"}
+      ],
+      "logic": "AND"
+    },
+    {
+      "conditions": [
+        {"attribute_name": "material_type", "operator": "EQ", "value": "Acier"}
+      ],
+      "logic": "AND"
+    }
+  ],
+  "conditions_logic": "OR"
+}
+```
+
+#### Exemple Logique
+`(largeur > 500 ET épaisseur < 10) OU (type_matière = Acier)`
+
+#### Interface UI
+- Mode **"Simple (ID)"** : article_id, tache_id, centre_de_charge_id
+- Mode **"Attributs (ET/OU)"** : Groupes de conditions avec opérateurs
+- **Dropdown "Entre groupes"** : ET / OU
+- **Dropdown dans groupe** : ET / OU
+- **Boutons +/-** : Ajouter/supprimer des conditions
+- **Bouton "Ajouter un groupe"** : Créer un nouveau groupe
+
+#### Opérateurs Supportés
+- `GT` (>), `GE` (>=), `LT` (<), `LE` (<=)
+- `EQ` (=), `NE` (!=)
+- `IN` (dans la liste), `NOT_IN` (pas dans la liste)
+
+#### Attributs Disponibles
+- `width` (Largeur mm)
+- `length` (Longueur mm)
+- `thickness` (Épaisseur mm)
+- `material_type` (Type de matière)
+- `color` (Couleur)
+
+### 2. Page Ordonnancement APS Complète ✅
 
 #### Modes de Priorité
-- **Priorité Date de Besoin** : Minimise les retards en priorisant les dates dues
-- **Priorité Disponibilité Matière** : Planifie dès que les composants sont disponibles
-- **Mode Équilibré** : Optimise selon les poids définis (sliders)
-
-#### Poids de Priorité (Mode Équilibré)
-- Date de besoin (0-100)
-- Disponibilité matière (0-100)
-- Minimiser temps de setup (0-100)
+- **Priorité Date de Besoin**
+- **Priorité Disponibilité Matière**
+- **Mode Équilibré** (avec sliders de poids)
 
 #### Paramètres du Solveur
-- **Durée Maximum d'Optimisation** : 30s, 1min, 2min, 5min, 10min
-- **Gap d'Optimalité** : 1-20% (arrête si solution à moins de X% de l'optimum)
+- Durée Maximum : 30s à 10min
+- Gap d'Optimalité : 1-20%
 
-#### Options Avancées (collapsibles)
-- Ignorer les règles métier
-- Ignorer la disponibilité matière
-- Ignorer les calendriers machines
-- Respecter l'ordre des opérations dans l'OF
+#### Options Avancées
+- Ignorer règles/matière/calendriers
+- Respecter séquence des gammes
 
-#### Contraintes Appliquées (indicateurs visuels)
-- Règles métier d'affectation
-- Disponibilité matière
-- Calendriers machines
-- Capacité finie (non-chevauchement)
-- Séquence des gammes
+### 3. Dashboard APS avec KPIs ✅
+- OTD, Ordres en retard, Utilisation machines, WIP
+
+### 4. Capacité Finie avec Calendriers ✅
 - production_time + setup_time
+- Calendriers par centre de charge
 
-### 2. Dashboard APS avec KPIs ✅
-- **OTD (On-Time Delivery)** : % des ordres livrés à temps
-- **Ordres en Retard** : Liste avec délai en heures
-- **Utilisation Machines** : Capacité vs Charge (7 jours)
-- **WIP** : Ordres en cours et opérations planifiées
-
-### 3. Capacité Finie avec Calendriers ✅
-- **production_time_minutes + setup_time_minutes** : Pris en compte pour la charge
-- **Calendriers par centre de charge** : Heures de travail par jour
-- **Barres de capacité** : Visualisation charge/capacité par machine
-
-### 4. Planification Multi-Niveaux (BOM/MRP) ✅
-- **Import BOM** : `parent_article_id, child_article_id, quantity, level, scrap_rate`
-- **Explosion de nomenclature** : Multi-niveaux avec taux de rebut
-- **Calcul MRP** : Besoins bruts, stock disponible, besoins nets
-- **Dates de consommation** : Basées sur `scheduled_start` de l'ordonnanceur
-
-### 5. Édition des Règles Métier ✅
-- **PUT /api/rules/{id}** : Modifier une règle existante
-- **Interface UI** : Bouton éditer avec formulaire pré-rempli
-
-### 6. Règles Métier sur Attributs ✅
-- **Attributs articles** : `largeur`, `epaisseur`, `couleur`, `type_matiere`, `longueur`
-- **Opérateurs** : GT, GE, LT, LE, EQ, NE, IN, NOT_IN
-
-## API Ordonnancement
-
-### POST /api/scheduling/calculate
-```json
-{
-  "scenario_name": "Planning Semaine 12",
-  "priority_mode": "balanced",
-  "due_date_weight": 100,
-  "material_weight": 50,
-  "setup_time_weight": 20,
-  "max_solver_time_seconds": 60,
-  "optimization_gap": 0.05,
-  "ignore_rules": false,
-  "ignore_material": false,
-  "ignore_calendars": false,
-  "respect_sequence": true
-}
-```
-
-### Réponse
-```json
-{
-  "status": "completed",
-  "scenario_id": "uuid",
-  "result": {
-    "status": "OPTIMAL",
-    "operations": [...],
-    "solver_time": 0.08
-  }
-}
-```
+### 5. Planification Multi-Niveaux (BOM/MRP) ✅
+- Import BOM
+- Explosion de nomenclature
+- Calcul MRP
 
 ## Validation (14 mars 2026)
 
-### Tests Backend: 22/22 PASSED
-- Tous les modes de priorité acceptés
-- Tous les paramètres de poids acceptés
-- Durées max 30s à 600s acceptées
-- Gap d'optimalité 1-20% accepté
-- Options avancées fonctionnelles
-
-### Tests Frontend: 100% PASSED
-- 3 modes de priorité sélectionnables
-- Sliders de poids visibles en mode équilibré
-- Dropdown durée avec 5 options
-- Section Options Avancées collapsible
-- Indicateurs visuels des contraintes
+### Tests Conditions Multiples: 13/13 PASSED
+- POST /api/rules avec attribute_conditions
+- GET /api/rules retourne attribute_conditions
+- PUT /api/rules accepte attribute_conditions
+- Frontend groupes et dropdowns ET/OU
+- Évaluation correcte des conditions
 
 ## Backlog
 
 ### P1 - Prioritaires
-- [ ] Simulation "What-if" - Dupliquer et comparer des scénarios
-- [ ] Alertes en temps réel sur retards et ruptures
-- [ ] Persister les assignations en BDD après ordonnancement
+- [ ] Simulation What-if
+- [ ] Alertes temps réel
+- [ ] Persister assignations
 
 ### P2 - Secondaires
-- [ ] Replanification dynamique (réaction aux aléas)
-- [ ] Intégration ERP bidirectionnelle
-- [ ] Export planning CSV enrichi
+- [ ] Replanification dynamique
+- [ ] Intégration ERP
+- [ ] Export CSV
 
 ### P3 - Futurs
-- [ ] Gantt interactif avec drag-and-drop
-- [ ] Optimisation multi-objectifs avancée
-- [ ] Dashboard temps réel avec WebSockets
+- [ ] Gantt interactif
+- [ ] Dashboard temps réel
