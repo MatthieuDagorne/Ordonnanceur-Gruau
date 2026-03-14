@@ -316,7 +316,6 @@ async def get_manufacturing_orders():
 async def get_operations():
     """Retourne toutes les opérations avec terminologie française."""
     operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
-    # Adapter la terminologie si nécessaire
     result = []
     for op in operations:
         result.append({
@@ -324,13 +323,72 @@ async def get_operations():
             'order_id': op.get('order_id'),
             'article_id': op.get('article_id'),
             'operation_id': op.get('operation_id'),
-            'tache_id': op.get('tache_id') or op.get('task_id'),  # Compatibilité
+            'tache_id': op.get('tache_id') or op.get('task_id'),
             'centre_de_charge_id': op.get('centre_de_charge_id') or op.get('work_center_id'),
             'status': op.get('status'),
             'production_time_minutes': op.get('production_time_minutes'),
             'setup_time_minutes': op.get('setup_time_minutes'),
             'machine_id': op.get('machine_id')
         })
+    return result
+
+@api_router.get("/operations-enrichies")
+async def get_operations_enrichies():
+    """
+    Retourne les opérations enrichies avec jointure sur les ordres de fabrication.
+    Clé de jointure: order_id
+    
+    Chaque opération contient:
+    - Données de l'opération (tache_id, centre_de_charge_id, etc.)
+    - Données de l'ordre (article_id, date_besoin, priority)
+    """
+    orders_raw = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+    operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
+    
+    # Index des ordres par order_id pour jointure rapide
+    orders_by_id = {}
+    for order in orders_raw:
+        order_id = order.get('id')
+        orders_by_id[order_id] = {
+            'article_id': order.get('article_id') or order.get('article'),
+            'quantity': order.get('quantity'),
+            'date_besoin': order.get('due_date') or order.get('date_besoin'),
+            'priority': order.get('priority', 0),
+            'status': order.get('status')
+        }
+    
+    # Enrichir chaque opération avec les données de l'ordre
+    result = []
+    for op in operations_raw:
+        order_id = op.get('order_id')
+        order_data = orders_by_id.get(order_id, {})
+        
+        enriched_op = {
+            # Données de l'opération
+            'id': op.get('id'),
+            'order_id': order_id,
+            'operation_id': op.get('operation_id'),
+            'tache_id': op.get('tache_id') or op.get('task_id'),
+            'centre_de_charge_id': op.get('centre_de_charge_id') or op.get('work_center_id'),
+            'production_time_minutes': op.get('production_time_minutes', 0),
+            'setup_time_minutes': op.get('setup_time_minutes', 0),
+            'status': op.get('status'),
+            'machine_id': op.get('machine_id'),
+            
+            # Données de l'ordre (jointure sur order_id)
+            'article_id': order_data.get('article_id'),
+            'date_besoin': order_data.get('date_besoin'),
+            'priority': order_data.get('priority', 0),
+            'quantity': order_data.get('quantity'),
+            
+            # Indicateur de jointure réussie
+            'ordre_trouve': order_id in orders_by_id
+        }
+        result.append(enriched_op)
+    
+    # Trier par date_besoin puis par order_id
+    result.sort(key=lambda x: (x.get('date_besoin') or '9999-99-99', x.get('order_id') or '', x.get('operation_id') or 0))
+    
     return result
 
 # Scenarios endpoints
@@ -650,7 +708,8 @@ async def export_schedule(scenario_id: str):
 async def get_assignment_diagnostic():
     """
     Diagnostic complet de l'assignation des machines.
-    Utilise la terminologie française et les codes métier.
+    Jointure opérations + ordres via order_id.
+    Utilise article_id et date_besoin pour le tri et les règles.
     """
     try:
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
@@ -695,6 +754,7 @@ async def get_assignment_diagnostic():
                 'assigned': result['assigned_count'],
                 'unassigned': result['unassigned_count'],
                 'preferred': result['preferred_count'],
+                'en_retard': result.get('en_retard_count', 0),
                 'failure_causes': result['failure_causes']
             },
             'machines_par_centre': {
@@ -707,6 +767,7 @@ async def get_assignment_diagnostic():
                     'type': r['type'],
                     'tache_id': r.get('tache_id'),
                     'centre_de_charge_id': r.get('centre_de_charge_id'),
+                    'article_id': r.get('article_id'),
                     'machine_id': r['machine_id']
                 }
                 for r in result['rules_diagnostics']['rules_detail']
