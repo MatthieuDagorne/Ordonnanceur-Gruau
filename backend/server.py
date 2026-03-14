@@ -237,8 +237,21 @@ async def delete_unavailability(unavailability_id: str):
 @api_router.post("/rules", response_model=BusinessRule)
 async def create_rule(rule: BusinessRule):
     doc = rule.model_dump()
+    # Normaliser rule_type en majuscules
+    if 'rule_type' in doc and doc['rule_type']:
+        doc['rule_type'] = doc['rule_type'].upper()
     await db.business_rules.insert_one(doc)
-    return rule
+    # Retourner la règle normalisée
+    return {
+        'id': doc.get('id'),
+        'name': doc.get('name'),
+        'task_id': doc.get('task_id'),
+        'work_center_id': doc.get('work_center_id'),
+        'article_id': doc.get('article_id'),
+        'rule_type': doc.get('rule_type', 'ALLOW').upper(),
+        'machine_id': doc.get('machine_id'),
+        'active': doc.get('active', True)
+    }
 
 @api_router.get("/rules")
 async def get_rules():
