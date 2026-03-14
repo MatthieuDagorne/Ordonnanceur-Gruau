@@ -450,6 +450,58 @@ async def reset_operational_data():
         logger.error(f"Reset error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.post("/reset-all")
+async def reset_all_data():
+    """
+    Réinitialise TOUTES les collections de la base de données.
+    Utile pour nettoyer les données incohérentes et repartir sur une base propre.
+    """
+    try:
+        counts = {
+            "manufacturing_orders": await db.manufacturing_orders.count_documents({}),
+            "operations": await db.operations.count_documents({}),
+            "machines": await db.machines.count_documents({}),
+            "centres_de_charge": await db.centres_de_charge.count_documents({}),
+            "work_centers": await db.work_centers.count_documents({}),
+            "business_rules": await db.business_rules.count_documents({}),
+            "articles": await db.articles.count_documents({}),
+            "stocks": await db.stocks.count_documents({}),
+            "calendars": await db.calendars.count_documents({}),
+            "scenarios": await db.scenarios.count_documents({}),
+            "unavailability": await db.unavailability.count_documents({})
+        }
+        
+        # Supprimer TOUTES les collections
+        await db.manufacturing_orders.delete_many({})
+        await db.operations.delete_many({})
+        await db.machines.delete_many({})
+        await db.centres_de_charge.delete_many({})
+        await db.work_centers.delete_many({})
+        await db.business_rules.delete_many({})
+        await db.articles.delete_many({})
+        await db.stocks.delete_many({})
+        await db.calendars.delete_many({})
+        await db.scenarios.delete_many({})
+        await db.unavailability.delete_many({})
+        await db.components.delete_many({})
+        await db.transactions.delete_many({})
+        
+        total_deleted = sum(counts.values())
+        
+        logger.info("🗑️  RESET COMPLET - Toutes les collections vidées")
+        for collection, count in counts.items():
+            if count > 0:
+                logger.info(f"   - {collection}: {count}")
+        
+        return {
+            "success": True,
+            "message": f"Reset complet: {total_deleted} documents supprimés",
+            "deleted": counts
+        }
+    except Exception as e:
+        logger.error(f"Reset all error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.get("/data/stats", response_model=DataStats)
 async def get_data_stats():
     stats = DataStats(

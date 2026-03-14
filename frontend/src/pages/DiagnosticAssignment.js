@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { RefreshCw, CheckCircle, XCircle, AlertTriangle, ChevronDown, ChevronRight, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -178,9 +178,8 @@ export default function DiagnosticAssignment() {
                 const isLate = row.urgency >= 1000;
                 const isUrgent = row.urgency >= 500 && row.urgency < 1000;
                 return (
-                  <>
+                  <React.Fragment key={row.operation_id}>
                     <tr 
-                      key={row.operation_id} 
                       className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${
                         !row.is_assigned ? 'bg-red-50' : 
                         isLate ? 'bg-purple-50' :
@@ -312,7 +311,7 @@ export default function DiagnosticAssignment() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </React.Fragment>
                 );
               })}
               {(!diagnostics_table || diagnostics_table.length === 0) && (

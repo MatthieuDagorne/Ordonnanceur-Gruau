@@ -1,0 +1,79 @@
+{
+  "summary": "Backend testing completed for Machine Assignment Engine with French terminology. All 25 tests PASSED. Verified: reset-all, demo-load, operations-enrichies (jointure order_id), diagnostic/assignment, FORBID rule (ART003/PLIEUSE_01), PREFER rule (USINAGE/TOUR_CNC_01), date_besoin sorting.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_assignment_engine.py",
+    "/app/test_reports/pytest/pytest_results_assignment.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_assignment_engine.py"
+  ],
+  "success_rate": {
+    "backend": "100% (25/25 tests passed)",
+    "frontend": "Not tested (backend only request)"
+  },
+  "seed_data_creation": "Demo data loaded via /api/demo/load for testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Machine assignment engine with French terminology fully tested. Key endpoints: POST /api/reset-all, POST /api/demo/load, GET /api/operations-enrichies, GET /api/diagnostic/assignment. Demo data: 3 centres de charge (PLI01, USI01, ASS01), 7 machines, 3 ordres (OF001, OF002, OF003), 7 operations, 3 business rules. FORBID rule correctly prevents OF003_10 (ART003/PLIAGE) from PLIEUSE_01 -> assigned to PLIEUSE_02. PREFER rule correctly assigns all USINAGE ops to TOUR_CNC_01. Date_besoin sorting works: OF003 (2026-03-10) processed first as most urgent.",
+  "tests_executed": {
+    "TestResetAll": {
+      "test_reset_all_endpoint_available": "PASS - Resets all collections"
+    },
+    "TestDemoLoad": {
+      "test_demo_load_endpoint_available": "PASS",
+      "test_demo_data_counts": "PASS - 3 centres, 7 machines, 3 orders, 7 ops, 3 rules",
+      "test_demo_data_french_terminology": "PASS - PLI01, USI01, ASS01",
+      "test_demo_machines_linked_to_centres": "PASS - PLIEUSE_01/02 -> PLI01"
+    },
+    "TestOperationsEnrichies": {
+      "test_operations_enrichies_endpoint_available": "PASS - Returns 7 operations",
+      "test_operations_enrichies_has_order_data": "PASS - article_id, date_besoin from order",
+      "test_operations_enrichies_of003_has_correct_data": "PASS - ART003, 2026-03-10, PLIAGE, PLI01",
+      "test_operations_enrichies_sorted_by_date_besoin": "PASS - OF003 first (most urgent)"
+    },
+    "TestDiagnosticAssignment": {
+      "test_diagnostic_endpoint_available": "PASS",
+      "test_diagnostic_summary_all_operations_assigned": "PASS - 7/7 assigned",
+      "test_diagnostic_has_enriched_fields": "PASS - article_id, date_besoin, urgency",
+      "test_diagnostic_rules_loaded": "PASS - 3 rules loaded",
+      "test_diagnostic_machines_by_centre": "PASS - Index correct"
+    },
+    "TestForbidRule": {
+      "test_forbid_rule_exists_in_demo_data": "PASS - FORBID ART003/PLIEUSE_01",
+      "test_of003_10_not_assigned_to_plieuse_01": "PASS - Assigned to PLIEUSE_02",
+      "test_of003_10_diagnostic_shows_forbid_rule_applied": "PASS - FORBID in regles_applicables"
+    },
+    "TestPreferRule": {
+      "test_prefer_rule_exists_for_usinage": "PASS - PREFER USINAGE/TOUR_CNC_01",
+      "test_usinage_operations_assigned_to_tour_cnc_01": "PASS - All USINAGE -> TOUR_CNC_01",
+      "test_diagnostic_shows_preferred_count": "PASS - preferred >= 2"
+    },
+    "TestDateBesoinSorting": {
+      "test_diagnostic_table_sorted_by_date_besoin": "PASS - OF003 first",
+      "test_of003_marked_as_late_with_high_urgency": "PASS - urgency >= 1000"
+    },
+    "TestOrderIdJointure": {
+      "test_all_operations_have_ordre_trouve": "PASS - All jointures successful",
+      "test_join_data_propagated_correctly": "PASS - article_id/date_besoin correct"
+    },
+    "TestEndToEndFlow": {
+      "test_complete_flow": "PASS - reset -> load -> assign -> verify"
+    }
+  },
+  "business_rules_verification": {
+    "FORBID_ART003_PLIEUSE_01": "✓ OF003_10 (ART003/PLIAGE) correctly assigned to PLIEUSE_02, NOT PLIEUSE_01",
+    "PREFER_USINAGE_TOUR_CNC_01": "✓ All USINAGE operations assigned to TOUR_CNC_01",
+    "DATE_BESOIN_SORTING": "✓ OF003 (2026-03-10) processed first as most urgent"
+  }
+}
