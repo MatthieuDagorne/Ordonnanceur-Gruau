@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package } from 'lucide-react';
+import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -13,8 +13,9 @@ export default function GanttInteractive() {
   const [ganttData, setGanttData] = useState(null);
   const [scenario, setScenario] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [zoom, setZoom] = useState(1); // 1 = 1 minute = 2px
+  const [zoom, setZoom] = useState(1);
   const [hoveredTask, setHoveredTask] = useState(null);
+  const [selectedCentres, setSelectedCentres] = useState([]);
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -56,10 +57,28 @@ export default function GanttInteractive() {
     }
   };
 
+  // Formater le temps relatif
   const formatTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours}h${mins.toString().padStart(2, '0')}`;
+  };
+
+  // Formater la date/heure absolue à partir du scheduling_start
+  const formatAbsoluteTime = (minutes, schedulingStart) => {
+    if (!schedulingStart) return formatTime(minutes);
+    try {
+      const start = new Date(schedulingStart);
+      const targetDate = new Date(start.getTime() + minutes * 60000);
+      return targetDate.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return formatTime(minutes);
+    }
   };
 
   const formatDateTime = (isoString) => {
@@ -77,11 +96,77 @@ export default function GanttInteractive() {
     }
   };
 
+  // Toggle centre de charge dans le filtre
+  const toggleCentre = (centreId) => {
+    if (selectedCentres.includes(centreId)) {
+      setSelectedCentres(selectedCentres.filter(c => c !== centreId));
+    } else {
+      setSelectedCentres([...selectedCentres, centreId]);
+    }
+  };
+
+  // Filtrer les machines par centres de charge sélectionnés
+  const filteredMachines = useMemo(() => {
+    if (!ganttData?.machines) return [];
+    if (selectedCentres.length === 0) return ganttData.machines;
+    return ganttData.machines.filter(m => selectedCentres.includes(m.centre_de_charge_id));
+  }, [ganttData?.machines, selectedCentres]);
+
+  // Calculer les zones de fermeture (simplifié: nuits)
+  const closurePeriods = useMemo(() => {
+    if (!ganttData) return [];
+    const { scheduling_start, calendars, time_range } = ganttData;
+    if (!scheduling_start || !calendars || calendars.length === 0) return [];
+    
+    const periods = [];
+    const cal = calendars[0];
+    if (!cal) return [];
+    
+    const startTime = cal.start_time || '08:00';
+    const endTime = cal.end_time || '17:00';
+    const [startH, startM] = startTime.split(':').map(Number);
+    const [endH, endM] = endTime.split(':').map(Number);
+    const workStartMinutes = startH * 60 + startM;
+    const workEndMinutes = endH * 60 + endM;
+    
+    const totalDays = Math.ceil((time_range?.total_minutes || 480) / (24 * 60)) + 1;
+    
+    for (let d = 0; d < totalDays; d++) {
+      const dayStart = d * 24 * 60;
+      
+      if (workStartMinutes > 0) {
+        const closureStart = dayStart;
+        const closureEnd = dayStart + workStartMinutes;
+        if (closureEnd > (time_range?.min_minutes || 0) && closureStart < (time_range?.max_minutes || 0)) {
+          periods.push({
+            start: Math.max(closureStart - (time_range?.min_minutes || 0), 0),
+            end: Math.max(closureEnd - (time_range?.min_minutes || 0), 0),
+            reason: 'Hors horaires'
+          });
+        }
+      }
+      
+      if (workEndMinutes < 24 * 60) {
+        const closureStart = dayStart + workEndMinutes;
+        const closureEnd = dayStart + 24 * 60;
+        if (closureEnd > (time_range?.min_minutes || 0) && closureStart < (time_range?.max_minutes || 0)) {
+          periods.push({
+            start: Math.max(closureStart - (time_range?.min_minutes || 0), 0),
+            end: Math.min(closureEnd - (time_range?.min_minutes || 0), time_range?.total_minutes || 0),
+            reason: 'Hors horaires'
+          });
+        }
+      }
+    }
+    
+    return periods;
+  }, [ganttData]);
+
   // Calcul des positions et dimensions
   const pixelsPerMinute = 2 * zoom;
   const rowHeight = 48;
   const headerHeight = 60;
-  const sidebarWidth = 160;
+  const sidebarWidth = 180;
 
   if (loading) {
     return (
@@ -99,14 +184,17 @@ export default function GanttInteractive() {
     );
   }
 
-  const { machines, time_range, total_tasks, scheduling_start } = ganttData;
+  const { time_range, total_tasks, scheduling_start, centres_de_charge, calendars } = ganttData;
   const totalWidth = (time_range?.total_minutes || 480) * pixelsPerMinute;
 
-  // Générer les marqueurs de temps
+  // Générer les marqueurs de temps avec dates réelles
   const timeMarkers = [];
-  const markerInterval = zoom >= 1 ? 60 : 120; // 1h ou 2h
+  const markerInterval = zoom >= 1 ? 60 : 120;
   for (let m = 0; m <= (time_range?.total_minutes || 480); m += markerInterval) {
-    timeMarkers.push(m);
+    timeMarkers.push({
+      minutes: m,
+      label: formatAbsoluteTime(m + (time_range?.min_minutes || 0), scheduling_start)
+    });
   }
 
   return (
@@ -159,6 +247,53 @@ export default function GanttInteractive() {
         </div>
       </div>
 
+      {/* Filtre par Centre de Charge */}
+      {centres_de_charge && centres_de_charge.length > 0 && (
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Filter size={16} style={{ color: 'var(--text-muted)' }} />
+              <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                Filtrer par Centre de Charge :
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {centres_de_charge.map(centre => (
+                <button
+                  key={centre.id}
+                  onClick={() => toggleCentre(centre.id)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
+                  style={{
+                    backgroundColor: selectedCentres.includes(centre.id) ? 'var(--brand-primary)' : 'var(--bg-sunken)',
+                    color: selectedCentres.includes(centre.id) ? 'white' : 'var(--text-secondary)',
+                    border: `1px solid ${selectedCentres.includes(centre.id) ? 'transparent' : 'var(--border-default)'}`
+                  }}
+                  data-testid={`filter-centre-${centre.id}`}
+                >
+                  {selectedCentres.includes(centre.id) && <Check size={14} />}
+                  {centre.nom || centre.id}
+                </button>
+              ))}
+              {selectedCentres.length > 0 && (
+                <button
+                  onClick={() => setSelectedCentres([])}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <X size={14} />
+                  Réinitialiser
+                </button>
+              )}
+            </div>
+            {selectedCentres.length > 0 && (
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                ({filteredMachines.length} / {ganttData.machines.length} machines)
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
@@ -179,9 +314,17 @@ export default function GanttInteractive() {
         </div>
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
+            <Layers size={16} style={{ color: 'var(--status-success)' }} />
             <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Machines</span>
           </div>
-          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>{machines.length}</p>
+          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+            {filteredMachines.length}
+            {selectedCentres.length > 0 && (
+              <span className="text-sm font-normal ml-1" style={{ color: 'var(--text-muted)' }}>
+                / {ganttData.machines.length}
+              </span>
+            )}
+          </p>
         </div>
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
@@ -210,17 +353,17 @@ export default function GanttInteractive() {
                 Machine
               </div>
               <div className="relative flex-1" style={{ backgroundColor: 'var(--bg-sunken)' }}>
-                {timeMarkers.map(minute => (
+                {timeMarkers.map((marker, idx) => (
                   <div
-                    key={minute}
-                    className="absolute top-0 bottom-0 flex items-center"
+                    key={idx}
+                    className="absolute top-0 bottom-0 flex flex-col justify-center"
                     style={{ 
-                      left: minute * pixelsPerMinute,
+                      left: marker.minutes * pixelsPerMinute,
                       borderLeft: '1px solid var(--border-default)'
                     }}
                   >
-                    <span className="ml-1 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-                      +{formatTime(minute)}
+                    <span className="ml-1 text-xs font-mono whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                      {marker.label}
                     </span>
                   </div>
                 ))}
@@ -228,7 +371,7 @@ export default function GanttInteractive() {
             </div>
 
             {/* Machine Rows */}
-            {machines.map((machine, idx) => (
+            {filteredMachines.map((machine, idx) => (
               <div 
                 key={machine.machine_id}
                 className="flex"
@@ -247,28 +390,42 @@ export default function GanttInteractive() {
                   }}
                 >
                   <div 
-                    className="w-3 h-3 rounded-full"
+                    className="w-3 h-3 rounded-full flex-shrink-0"
                     style={{ backgroundColor: machine.color }}
                   />
-                  <div className="overflow-hidden">
+                  <div className="overflow-hidden min-w-0">
                     <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                       {machine.machine_id}
                     </p>
                     <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                      {machine.tasks?.length || 0} ops
+                      {machine.centre_de_charge_nom || machine.centre_de_charge_id} • {machine.tasks?.length || 0} ops
                     </p>
                   </div>
                 </div>
 
                 {/* Tasks */}
                 <div className="relative flex-1">
-                  {/* Grid lines */}
-                  {timeMarkers.map(minute => (
+                  {/* Closure periods (gray zones) */}
+                  {closurePeriods.map((period, pIdx) => (
                     <div
-                      key={minute}
+                      key={pIdx}
+                      className="absolute top-0 bottom-0 opacity-30"
+                      style={{
+                        left: period.start * pixelsPerMinute,
+                        width: (period.end - period.start) * pixelsPerMinute,
+                        backgroundColor: 'var(--text-muted)'
+                      }}
+                      title={period.reason}
+                    />
+                  ))}
+                  
+                  {/* Grid lines */}
+                  {timeMarkers.map((marker, mIdx) => (
+                    <div
+                      key={mIdx}
                       className="absolute top-0 bottom-0"
                       style={{ 
-                        left: minute * pixelsPerMinute,
+                        left: marker.minutes * pixelsPerMinute,
                         borderLeft: '1px dashed var(--border-default)',
                         opacity: 0.5
                       }}
@@ -280,6 +437,9 @@ export default function GanttInteractive() {
                     const left = (task.start_minutes - (time_range?.min_minutes || 0)) * pixelsPerMinute;
                     const width = Math.max(task.duration_minutes * pixelsPerMinute, 20);
                     
+                    // Indicateur matières
+                    const hasMaterialIssue = task.materials_count > 0 && !task.materials_ok;
+                    
                     return (
                       <div
                         key={task.id}
@@ -287,8 +447,8 @@ export default function GanttInteractive() {
                         style={{
                           left: left,
                           width: width,
-                          backgroundColor: task.is_late ? '#EF4444' : task.color,
-                          border: task.is_late ? '2px solid #B91C1C' : 'none'
+                          backgroundColor: task.is_late ? '#EF4444' : hasMaterialIssue ? '#F59E0B' : task.color,
+                          border: task.is_late ? '2px solid #B91C1C' : hasMaterialIssue ? '2px solid #D97706' : 'none'
                         }}
                         onMouseEnter={() => setHoveredTask(task)}
                         onMouseLeave={() => setHoveredTask(null)}
@@ -300,6 +460,9 @@ export default function GanttInteractive() {
                         {task.is_late && (
                           <AlertCircle size={12} className="absolute top-0.5 right-0.5 text-white" />
                         )}
+                        {hasMaterialIssue && !task.is_late && (
+                          <Package size={12} className="absolute top-0.5 right-0.5 text-white" />
+                        )}
                       </div>
                     );
                   })}
@@ -310,36 +473,48 @@ export default function GanttInteractive() {
         </div>
       </div>
 
-      {/* Tooltip */}
+      {/* Tooltip enrichi */}
       {hoveredTask && (
         <div 
-          className="fixed z-50 p-3 rounded-lg shadow-lg max-w-xs"
+          className="fixed z-50 p-4 rounded-lg shadow-lg"
           style={{ 
             backgroundColor: 'var(--bg-elevated)', 
             border: '1px solid var(--border-default)',
             top: '50%',
             right: 20,
-            transform: 'translateY(-50%)'
+            transform: 'translateY(-50%)',
+            maxWidth: 360
           }}
         >
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
+          <div className="space-y-3 text-sm">
+            {/* Header */}
+            <div className="flex items-center gap-2 pb-2" style={{ borderBottom: '1px solid var(--border-default)' }}>
               <div className="w-3 h-3 rounded" style={{ backgroundColor: hoveredTask.color }} />
               <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
                 {hoveredTask.operation_id}
               </span>
               {hoveredTask.is_late && (
-                <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: 'var(--status-error-bg)', color: 'var(--status-error)' }}>
                   EN RETARD
                 </span>
               )}
+              {!hoveredTask.materials_ok && hoveredTask.materials_count > 0 && (
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: 'var(--status-warning-bg)', color: 'var(--status-warning)' }}>
+                  MATIÈRE
+                </span>
+              )}
             </div>
+            
+            {/* Infos générales */}
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
               <span style={{ color: 'var(--text-muted)' }}>Ordre:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.order_id}</span>
               
               <span style={{ color: 'var(--text-muted)' }}>Article:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.article_id || '-'}</span>
+              
+              <span style={{ color: 'var(--text-muted)' }}>Centre:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.centre_de_charge_nom || '-'}</span>
               
               <span style={{ color: 'var(--text-muted)' }}>Début:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{formatDateTime(hoveredTask.start)}</span>
@@ -359,23 +534,67 @@ export default function GanttInteractive() {
                 </>
               )}
             </div>
+            
+            {/* Section Matières premières */}
+            {hoveredTask.materials && hoveredTask.materials.length > 0 && (
+              <div className="pt-2" style={{ borderTop: '1px solid var(--border-default)' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Package size={14} style={{ color: 'var(--text-muted)' }} />
+                  <span className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>
+                    Matières premières
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {hoveredTask.materials.map((mat, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs">
+                      <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>
+                        {mat.article_id}
+                      </span>
+                      <span 
+                        className="font-mono px-1.5 py-0.5 rounded"
+                        style={{ 
+                          backgroundColor: mat.available ? 'var(--status-success-bg)' : 'var(--status-error-bg)',
+                          color: mat.available ? 'var(--status-success)' : 'var(--status-error)'
+                        }}
+                      >
+                        {mat.in_stock} / {mat.needed}
+                        {mat.available ? ' ✓' : ' ✗'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Légende */}
       <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
-        <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Légende des couleurs</h3>
+        <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Légende</h3>
         <div className="flex flex-wrap gap-4 text-sm">
-          {machines.map(m => (
+          {filteredMachines.slice(0, 8).map(m => (
             <div key={m.machine_id} className="flex items-center gap-2">
               <div className="w-4 h-4 rounded" style={{ backgroundColor: m.color }} />
               <span style={{ color: 'var(--text-secondary)' }}>{m.machine_id}</span>
             </div>
           ))}
-          <div className="flex items-center gap-2 ml-4 pl-4" style={{ borderLeft: '1px solid var(--border-default)' }}>
-            <div className="w-4 h-4 rounded bg-red-500 border-2 border-red-700" />
-            <span style={{ color: 'var(--text-secondary)' }}>En retard</span>
+          {filteredMachines.length > 8 && (
+            <span style={{ color: 'var(--text-muted)' }}>+{filteredMachines.length - 8} autres</span>
+          )}
+          <div className="flex items-center gap-4 ml-4 pl-4" style={{ borderLeft: '1px solid var(--border-default)' }}>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-red-500 border-2 border-red-700" />
+              <span style={{ color: 'var(--text-secondary)' }}>En retard</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-amber-500 border-2 border-amber-700" />
+              <span style={{ color: 'var(--text-secondary)' }}>Matière manquante</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded opacity-30" style={{ backgroundColor: 'var(--text-muted)' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>Hors horaires</span>
+            </div>
           </div>
         </div>
       </div>

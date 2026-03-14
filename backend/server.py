@@ -1997,7 +1997,7 @@ async def get_machine_task_matrix():
 async def get_gantt_data(scenario_id: str):
     """
     Retourne les données formatées pour l'affichage Gantt interactif.
-    Inclut les informations sur les machines, les plages horaires et les dépendances.
+    Inclut les informations sur les machines, les plages horaires, matières et calendriers.
     """
     try:
         scenario = await db.scenarios.find_one({"id": scenario_id}, {"_id": 0})
@@ -2011,9 +2011,30 @@ async def get_gantt_data(scenario_id: str):
         machines = await db.machines.find({}, {"_id": 0}).to_list(100)
         machines_dict = {m.get('id'): m for m in machines}
         
+        # Charger les centres de charge
+        centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(100)
+        centres_dict = {c.get('id'): c for c in centres}
+        
+        # Charger les calendriers
+        calendars = await db.calendars.find({}, {"_id": 0}).to_list(100)
+        calendars_dict = {c.get('id'): c for c in calendars}
+        
         # Charger les ordres pour les infos supplémentaires
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
         orders_dict = {o.get('id'): o for o in orders}
+        
+        # Charger les besoins en matières pour chaque opération
+        operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+        materials_by_op = {}
+        for mat in operation_materials:
+            op_id = mat.get('id', '').split('_')[0] if '_' in str(mat.get('id', '')) else mat.get('id')
+            if op_id not in materials_by_op:
+                materials_by_op[op_id] = []
+            materials_by_op[op_id].append(mat)
+        
+        # Charger les stocks pour calculer la disponibilité
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        stocks_dict = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
         
         # Couleurs par machine
         colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
@@ -2028,6 +2049,8 @@ async def get_gantt_data(scenario_id: str):
             order_id = op.get('order_id')
             order = orders_dict.get(order_id, {})
             machine = machines_dict.get(machine_id, {})
+            centre_id = machine.get('centre_de_charge_id') or machine.get('work_center_id')
+            centre = centres_dict.get(centre_id, {})
             
             # Calculer si en retard
             is_late = False
@@ -2041,6 +2064,25 @@ async def get_gantt_data(scenario_id: str):
                 except:
                     pass
             
+            # Calculer disponibilité matières
+            op_id = op.get('operation_id')
+            materials = materials_by_op.get(op_id, [])
+            materials_info = []
+            materials_ok = True
+            for mat in materials:
+                article_id = mat.get('article_id')
+                qty_needed = mat.get('quantity', 0)
+                qty_stock = stocks_dict.get(article_id, 0)
+                available = qty_stock >= qty_needed
+                if not available:
+                    materials_ok = False
+                materials_info.append({
+                    'article_id': article_id,
+                    'needed': qty_needed,
+                    'in_stock': qty_stock,
+                    'available': available
+                })
+            
             gantt_tasks.append({
                 'id': op.get('operation_id'),
                 'operation_id': op.get('operation_id'),
@@ -2048,6 +2090,8 @@ async def get_gantt_data(scenario_id: str):
                 'article_id': op.get('article_id') or order.get('article_id'),
                 'machine_id': machine_id,
                 'machine_name': machine.get('nom', machine_id),
+                'centre_de_charge_id': centre_id,
+                'centre_de_charge_nom': centre.get('nom', centre_id),
                 'start': op.get('start_datetime'),
                 'end': op.get('end_datetime'),
                 'start_minutes': op.get('start_minutes', 0),
@@ -2055,7 +2099,10 @@ async def get_gantt_data(scenario_id: str):
                 'duration_minutes': op.get('duration_minutes', 0),
                 'due_date': due_date,
                 'is_late': is_late,
-                'color': machine_colors.get(machine_id, '#6B7280')
+                'color': machine_colors.get(machine_id, '#6B7280'),
+                'materials': materials_info,
+                'materials_ok': materials_ok,
+                'materials_count': len(materials_info)
             })
         
         # Grouper par machine
@@ -2063,10 +2110,14 @@ async def get_gantt_data(scenario_id: str):
         for task in gantt_tasks:
             mid = task['machine_id']
             if mid not in by_machine:
+                machine = machines_dict.get(mid, {})
+                centre_id = machine.get('centre_de_charge_id') or machine.get('work_center_id')
                 by_machine[mid] = {
                     'machine_id': mid,
                     'machine_name': task['machine_name'],
                     'color': task['color'],
+                    'centre_de_charge_id': centre_id,
+                    'centre_de_charge_nom': task.get('centre_de_charge_nom', centre_id),
                     'tasks': []
                 }
             by_machine[mid]['tasks'].append(task)
@@ -2085,6 +2136,27 @@ async def get_gantt_data(scenario_id: str):
             max_end = 0
             scheduling_start = datetime.now().isoformat()
         
+        # Liste unique des centres de charge pour le filtre
+        unique_centres = list(set(
+            m.get('centre_de_charge_id') for m in by_machine.values() 
+            if m.get('centre_de_charge_id')
+        ))
+        centres_for_filter = [
+            {'id': cid, 'nom': centres_dict.get(cid, {}).get('nom', cid)} 
+            for cid in unique_centres
+        ]
+        
+        # Informations sur les calendriers pour les zones de fermeture
+        calendar_info = []
+        for cal in calendars:
+            calendar_info.append({
+                'id': cal.get('id'),
+                'name': cal.get('name'),
+                'working_days': cal.get('working_days', [1,2,3,4,5]),
+                'start_time': cal.get('start_time', '08:00'),
+                'end_time': cal.get('end_time', '17:00')
+            })
+        
         return {
             'scenario_id': scenario_id,
             'scenario_name': scenario.get('name'),
@@ -2097,7 +2169,9 @@ async def get_gantt_data(scenario_id: str):
             },
             'machines': list(by_machine.values()),
             'total_tasks': len(gantt_tasks),
-            'machine_colors': machine_colors
+            'machine_colors': machine_colors,
+            'centres_de_charge': centres_for_filter,
+            'calendars': calendar_info
         }
     except HTTPException:
         raise

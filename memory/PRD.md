@@ -11,27 +11,12 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 
 ## Fonctionnalités Implémentées
 
-### Phase 1 - Fondations ✅
+### Phase 1-4 - Fondations et APS ✅
 - Calendriers par centre de charge
-- Page stock projeté
-- Extension attributs articles (type_matière, épaisseur, largeur, etc.)
-- Règles métier sur attributs
-
-### Phase 2 - Règles Avancées ✅
-- Édition CRUD complète des règles
-- Logique ET/OU dans les conditions
-- Groupes de conditions multiples
-
-### Phase 3 - Transformation APS ✅
+- Règles métier avec logique ET/OU
 - Page Ordonnancement avec scénarios
-- Options de priorité (Date, Matière, Équilibré)
-- Dashboard APS avec KPIs
-
-### Phase 4 - P1/P2 Features ✅
-- Vue Matricielle Compatibilités (/matrix)
-- Comparaison de Scénarios (/scenarios)
-- Gantt Interactif (/gantt/:id)
-- Stock Projeté Avancé avec dates ordonnancées
+- Vue Matricielle, Comparaison de Scénarios
+- Gantt Interactif, Stock Projeté Avancé
 
 ### Phase 5 - Améliorations Ergonomiques (14 mars 2026) ✅
 - Calendriers en quarts d'heure (HH:MM)
@@ -39,85 +24,91 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Filtres intelligents sur 4 pages
 
 ### Phase 6 - UI Uniformisation + CRUD Edit (14 mars 2026) ✅
+- **Machines**: Variables CSS, rounded-lg, PUT /api/machines/{id}
+- **Centres de Charge**: Variables CSS, rounded-lg, PUT existant
+- **Indisponibilités**: Variables CSS, rounded-lg, PUT /api/unavailability/{id}
+- **Tests**: Backend 17/17 (100%), Frontend 10/10 (100%)
 
-#### P0 - Uniformisation UI (3 pages)
-| Page | Avant | Après |
-|------|-------|-------|
-| Machines | Boutons noirs, coins carrés, classes Tailwind directes | Variables CSS, coins arrondis (rounded-lg), thème cohérent |
-| Centres de Charge | Boutons noirs, coins carrés | Variables CSS, coins arrondis, intégration calendrier |
-| Indisponibilités | Boutons noirs, coins carrés | Variables CSS, coins arrondis, icône AlertTriangle |
+### Phase 7 - Améliorations Gantt (14 mars 2026) ✅
 
-#### P1 - Fonctionnalité d'Édition (CRUD Complet)
-| Page | Endpoints | Fonctionnalités |
-|------|-----------|-----------------|
-| Machines | PUT /api/machines/{id} | Bouton crayon, formulaire pré-rempli, ID désactivé en édition |
-| Centres de Charge | PUT /api/centres-de-charge/{id} | Bouton crayon, formulaire pré-rempli, sélection calendrier |
-| Indisponibilités | PUT /api/unavailability/{id} | Bouton crayon, formulaire pré-rempli, dates datetime-local |
+#### 1. Infobulles Enrichies
+- Affichage du centre de charge
+- Section "Matières premières" avec disponibilité en stock
+- Format: `{article_id}: {in_stock} / {needed} ✓/✗`
+- Indicateur visuel (badge orange) pour matière manquante
 
-**Tests passés**: Backend 17/17 (100%), Frontend 10/10 (100%)
+#### 2. Axe Temporel Absolu
+- Remplacement de "+1h, +2h" par dates réelles
+- Format: "14 mars, 14:55", "14 mars, 15:55"
+- Basé sur `scheduling_start` du scénario
+
+#### 3. Périodes de Fermeture
+- Zones grisées pour les horaires hors travail
+- Calculées à partir des calendriers (start_time/end_time)
+- Légende "Hors horaires" ajoutée
+
+#### 4. Filtre par Centre de Charge
+- Boutons de filtre pour chaque centre
+- Sélection multiple possible
+- Compteur de machines filtrées (X / Y)
+- Bouton "Réinitialiser" pour effacer les filtres
 
 ## APIs Principales
 
-### CRUD Machines
-```
-GET    /api/machines                    # Liste toutes les machines
-POST   /api/machines                    # Créer une machine
-PUT    /api/machines/{machine_id}       # Modifier (nom, centre, description)
-DELETE /api/machines/{machine_id}       # Supprimer
-```
-
-### CRUD Centres de Charge
-```
-GET    /api/centres-de-charge           # Liste tous les centres
-POST   /api/centres-de-charge           # Créer un centre
-PUT    /api/centres-de-charge/{id}      # Modifier (nom, description, calendar_id)
-DELETE /api/centres-de-charge/{id}      # Supprimer
-```
-
-### CRUD Indisponibilités
-```
-GET    /api/unavailability              # Liste toutes les indisponibilités
-POST   /api/unavailability              # Créer une indisponibilité
-PUT    /api/unavailability/{id}         # Modifier (machine, dates, raison)
-DELETE /api/unavailability/{id}         # Supprimer
-```
-
-### CRUD Calendriers (déjà complet)
-```
-GET    /api/calendars
-POST   /api/calendars
-PUT    /api/calendars/{id}
-DELETE /api/calendars/{id}
+### Gantt Data Enrichi (mis à jour)
+```json
+GET /api/gantt/data/{scenario_id}
+{
+  "scenario_id": "...",
+  "scenario_name": "...",
+  "scheduling_start": "2026-03-14T14:55:00",
+  "machines": [{
+    "machine_id": "...",
+    "centre_de_charge_id": "LVC002",
+    "centre_de_charge_nom": "PLIAGE",
+    "tasks": [{
+      "operation_id": "...",
+      "centre_de_charge_nom": "PLIAGE",
+      "materials": [{
+        "article_id": "...",
+        "needed": 5,
+        "in_stock": 10,
+        "available": true
+      }],
+      "materials_ok": true,
+      "materials_count": 1
+    }]
+  }],
+  "centres_de_charge": [
+    {"id": "LVC001", "nom": "POINCONNAGE"},
+    {"id": "LVC002", "nom": "PLIAGE"}
+  ],
+  "calendars": [{
+    "id": "...",
+    "name": "Horaires Usine",
+    "start_time": "08:00",
+    "end_time": "17:00"
+  }]
+}
 ```
 
 ## Backlog
-
-### P2 - Améliorations Gantt (En cours)
-- [ ] Infobulles enrichies (disponibilité matières premières)
-- [ ] Axe temporel avec dates/heures réelles + périodes fermeture
-- [ ] Filtre par centre de charge
-
-### P2 - Documentation
-- [ ] Réponse sur concept "Horizon Ferme" (bonnes pratiques industrielles)
 
 ### P3 - À Faire
 - [ ] Export CSV du planning
 - [ ] Dashboard temps réel WebSockets
 - [ ] Replanification dynamique
 - [ ] Multi-sites
-- [ ] IA prédictive
-- [ ] Intégration ERP
+- [ ] Horizon ferme (geler planning court terme)
 
-## Fichiers Modifiés (Phase 6)
+## Fichiers Modifiés (Phase 7)
 
 ```
 backend/
-├── server.py                     # +PUT /api/machines, +PUT /api/unavailability
+├── server.py                     # Endpoint /gantt/data enrichi avec matières, centres, calendriers
 
 frontend/src/pages/
-├── Machines.js                   # Refonte UI + CRUD Edit complet
-├── CentresDeCharge.js            # Refonte UI + CRUD Edit complet
-├── Unavailability.js             # Refonte UI + CRUD Edit complet
+├── GanttInteractive.js           # Filtres, axe temporel absolu, infobulles enrichies, zones fermeture
 ```
 
 ## Tests Reports
