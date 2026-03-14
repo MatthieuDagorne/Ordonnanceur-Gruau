@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -10,6 +10,7 @@ export default function Machines() {
   const [machines, setMachines] = useState([]);
   const [centres, setCentres] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingMachine, setEditingMachine] = useState(null);
   const [formData, setFormData] = useState({ id: '', nom: '', centre_de_charge_id: '', description: '' });
 
   useEffect(() => {
@@ -29,20 +30,52 @@ export default function Machines() {
     }
   };
 
+  const resetForm = () => {
+    setFormData({ id: '', nom: '', centre_de_charge_id: '', description: '' });
+    setEditingMachine(null);
+  };
+
+  const handleEdit = (machine) => {
+    setFormData({
+      id: machine.id,
+      nom: machine.nom || machine.name || '',
+      centre_de_charge_id: machine.centre_de_charge_id || machine.work_center_id || '',
+      description: machine.description || '',
+    });
+    setEditingMachine(machine);
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.id.trim() || !formData.nom.trim() || !formData.centre_de_charge_id) {
-      toast.error('Le code, le nom et le centre de charge sont obligatoires');
+    if (!formData.nom.trim() || !formData.centre_de_charge_id) {
+      toast.error('Le nom et le centre de charge sont obligatoires');
       return;
     }
+    
     try {
-      const response = await axios.post(`${API}/machines`, formData);
-      setMachines([...machines, response.data]);
-      setFormData({ id: '', nom: '', centre_de_charge_id: '', description: '' });
+      if (editingMachine) {
+        // Mode édition
+        await axios.put(`${API}/machines/${editingMachine.id}`, {
+          nom: formData.nom,
+          centre_de_charge_id: formData.centre_de_charge_id,
+          description: formData.description,
+        });
+        toast.success(`Machine "${editingMachine.id}" modifiée`);
+      } else {
+        // Mode création
+        if (!formData.id.trim()) {
+          toast.error('Le code (ID) est obligatoire pour une nouvelle machine');
+          return;
+        }
+        await axios.post(`${API}/machines`, formData);
+        toast.success(`Machine "${formData.id}" créée`);
+      }
+      resetForm();
       setShowForm(false);
-      toast.success(`Machine "${formData.id}" créée`);
+      fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erreur lors de la création');
+      toast.error(error.response?.data?.detail || (editingMachine ? 'Erreur lors de la modification' : 'Erreur lors de la création'));
     }
   };
 
@@ -57,23 +90,30 @@ export default function Machines() {
     }
   };
 
+  const handleCancel = () => {
+    resetForm();
+    setShowForm(false);
+  };
+
   const getCentreName = (centreId) => {
     const centre = centres.find(c => c.id === centreId);
     return centre ? `${centre.id} - ${centre.nom || centre.name}` : centreId;
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="machines-page">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold text-slate-800">Machines</h3>
-          <p className="text-sm text-slate-500 mt-1">
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Machines</h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             Définissez les machines avec des codes métier lisibles (ex: PLIEUSE_01)
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
+          data-testid="create-machine-btn"
+          onClick={() => { resetForm(); setShowForm(true); }}
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
         >
           <Plus size={16} />
           Nouvelle Machine
@@ -81,46 +121,80 @@ export default function Machines() {
       </div>
 
       {showForm && (
-        <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
-          <h4 className="text-lg font-semibold text-slate-800 mb-4">Nouvelle Machine</h4>
+        <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {editingMachine ? `Modifier: ${editingMachine.id}` : 'Nouvelle Machine'}
+            </h3>
+            <button 
+              onClick={handleCancel}
+              className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X size={18} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+          
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-                  Code (ID) *
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Code (ID) {!editingMachine && '*'}
                 </label>
                 <input
+                  data-testid="machine-id-input"
                   type="text"
                   value={formData.id}
                   onChange={(e) => setFormData({ ...formData, id: e.target.value.toUpperCase() })}
+                  disabled={!!editingMachine}
                   placeholder="Ex: PLIEUSE_01"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  required
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: editingMachine ? 'var(--bg-sunken)' : 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)',
+                    opacity: editingMachine ? 0.7 : 1
+                  }}
+                  required={!editingMachine}
                 />
-                <p className="text-xs text-slate-500 mt-1">Code métier unique, utilisé pour les règles</p>
+                {!editingMachine && (
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Code métier unique, utilisé pour les règles</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                   Nom *
                 </label>
                 <input
+                  data-testid="machine-name-input"
                   type="text"
                   value={formData.nom}
                   onChange={(e) => setFormData({ ...formData, nom: e.target.value })}
                   placeholder="Ex: Plieuse hydraulique 01"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)'
+                  }}
                   required
                 />
               </div>
             </div>
+            
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                 Centre de Charge *
               </label>
               <select
+                data-testid="machine-centre-select"
                 value={formData.centre_de_charge_id}
                 onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value })}
-                className="w-full h-10 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
+                className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                style={{ 
+                  backgroundColor: 'var(--bg-elevated)', 
+                  borderColor: 'var(--border-default)',
+                  color: 'var(--text-primary)'
+                }}
                 required
               >
                 <option value="">-- Sélectionner un centre --</option>
@@ -131,26 +205,44 @@ export default function Machines() {
                 ))}
               </select>
               {centres.length === 0 && (
-                <p className="text-xs text-red-600 mt-1">Créez d'abord un centre de charge</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--status-error)' }}>Créez d'abord un centre de charge</p>
               )}
             </div>
+            
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+              <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                 Description
               </label>
               <input
+                data-testid="machine-description-input"
                 type="text"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Description optionnelle"
-                className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
+                className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                style={{ 
+                  backgroundColor: 'var(--bg-elevated)', 
+                  borderColor: 'var(--border-default)',
+                  color: 'var(--text-primary)'
+                }}
               />
             </div>
-            <div className="flex gap-2">
-              <button type="submit" className="bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium">
-                Créer
+            
+            <div className="flex gap-2 pt-2">
+              <button
+                type="submit"
+                data-testid="submit-machine-btn"
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
+              >
+                {editingMachine ? 'Enregistrer' : 'Créer'}
               </button>
-              <button type="button" onClick={() => setShowForm(false)} className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-sm px-4 py-2 text-sm font-medium">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
+              >
                 Annuler
               </button>
             </div>
@@ -158,40 +250,57 @@ export default function Machines() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden">
+      <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
         <table className="w-full">
-          <thead className="bg-slate-50 border-b border-slate-200">
+          <thead style={{ backgroundColor: 'var(--bg-sunken)' }}>
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Code</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Nom</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Centre de Charge</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Actions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Code</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Nom</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Centre de Charge</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {machines.map((machine) => (
-              <tr key={machine.id} className="border-b border-slate-100 hover:bg-slate-50">
+              <tr key={machine.id} className="transition-colors hover:bg-opacity-50" style={{ borderBottom: '1px solid var(--border-default)' }} data-testid="machine-row">
                 <td className="px-4 py-3">
-                  <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm font-mono font-semibold">
+                  <span className="px-2 py-1 rounded-lg text-sm font-mono font-semibold" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
                     {machine.id}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-900">{machine.nom || machine.name}</td>
                 <td className="px-4 py-3">
-                  <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs font-mono">
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{machine.nom || machine.name}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="px-2 py-0.5 rounded-lg text-xs font-mono" style={{ backgroundColor: 'var(--status-success-bg)', color: 'var(--status-success)' }}>
                     {machine.centre_de_charge_id || machine.work_center_id}
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <button onClick={() => handleDelete(machine.id)} className="text-red-600 hover:text-red-800 p-1" title="Supprimer">
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      data-testid={`edit-machine-${machine.id}`}
+                      onClick={() => handleEdit(machine)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+                      title="Modifier"
+                    >
+                      <Pencil size={16} style={{ color: 'var(--text-secondary)' }} />
+                    </button>
+                    <button
+                      data-testid={`delete-machine-${machine.id}`}
+                      onClick={() => handleDelete(machine.id)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={16} className="text-red-600" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
             {machines.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={4} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                   Aucune machine. Créez d'abord un centre de charge, puis une machine.
                 </td>
               </tr>

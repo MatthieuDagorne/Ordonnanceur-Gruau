@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, Calendar } from 'lucide-react';
+import { Plus, Trash2, Calendar, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -10,6 +10,7 @@ export default function CentresDeCharge() {
   const [centres, setCentres] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [editingCentre, setEditingCentre] = useState(null);
   const [formData, setFormData] = useState({ id: '', nom: '', description: '', calendar_id: '' });
 
   useEffect(() => {
@@ -35,20 +36,52 @@ export default function CentresDeCharge() {
     }
   };
 
+  const resetForm = () => {
+    setFormData({ id: '', nom: '', description: '', calendar_id: '' });
+    setEditingCentre(null);
+  };
+
+  const handleEdit = (centre) => {
+    setFormData({
+      id: centre.id,
+      nom: centre.nom || centre.name || '',
+      description: centre.description || '',
+      calendar_id: centre.calendar_id || '',
+    });
+    setEditingCentre(centre);
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.id.trim() || !formData.nom.trim()) {
-      toast.error('Le code et le nom sont obligatoires');
+    if (!formData.nom.trim()) {
+      toast.error('Le nom est obligatoire');
       return;
     }
+    
     try {
-      const response = await axios.post(`${API}/centres-de-charge`, formData);
-      setCentres([...centres, response.data]);
-      setFormData({ id: '', nom: '', description: '', calendar_id: '' });
+      if (editingCentre) {
+        // Mode édition
+        await axios.put(`${API}/centres-de-charge/${editingCentre.id}`, {
+          nom: formData.nom,
+          description: formData.description,
+          calendar_id: formData.calendar_id || null,
+        });
+        toast.success(`Centre de charge "${editingCentre.id}" modifié`);
+      } else {
+        // Mode création
+        if (!formData.id.trim()) {
+          toast.error('Le code (ID) est obligatoire pour un nouveau centre');
+          return;
+        }
+        await axios.post(`${API}/centres-de-charge`, formData);
+        toast.success(`Centre de charge "${formData.id}" créé`);
+      }
+      resetForm();
       setShowForm(false);
-      toast.success(`Centre de charge "${formData.id}" créé`);
+      fetchCentres();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erreur lors de la création');
+      toast.error(error.response?.data?.detail || (editingCentre ? 'Erreur lors de la modification' : 'Erreur lors de la création'));
     }
   };
 
@@ -61,6 +94,11 @@ export default function CentresDeCharge() {
     } catch (error) {
       toast.error('Erreur lors de la suppression');
     }
+  };
+
+  const handleCancel = () => {
+    resetForm();
+    setShowForm(false);
   };
 
   const handleCalendarChange = async (centreId, calendarId) => {
@@ -79,18 +117,19 @@ export default function CentresDeCharge() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="centres-de-charge-page">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold text-slate-800">Centres de Charge</h3>
-          <p className="text-sm text-slate-500 mt-1">
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Centres de Charge</h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             Définissez les centres de charge avec des codes métier et assignez-leur un calendrier
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium"
           data-testid="new-centre-btn"
+          onClick={() => { resetForm(); setShowForm(true); }}
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+          style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
         >
           <Plus size={16} />
           Nouveau Centre
@@ -98,77 +137,124 @@ export default function CentresDeCharge() {
       </div>
 
       {showForm && (
-        <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5" data-testid="centre-form">
-          <h4 className="text-lg font-semibold text-slate-800 mb-4">Nouveau Centre de Charge</h4>
+        <div className="rounded-lg p-5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }} data-testid="centre-form">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {editingCentre ? `Modifier: ${editingCentre.id}` : 'Nouveau Centre de Charge'}
+            </h3>
+            <button 
+              onClick={handleCancel}
+              className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X size={18} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+          
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-                  Code (ID) *
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Code (ID) {!editingCentre && '*'}
                 </label>
                 <input
+                  data-testid="centre-id-input"
                   type="text"
                   value={formData.id}
                   onChange={(e) => setFormData({ ...formData, id: e.target.value.toUpperCase() })}
+                  disabled={!!editingCentre}
                   placeholder="Ex: PLI01, USI01"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  required
-                  data-testid="centre-id-input"
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: editingCentre ? 'var(--bg-sunken)' : 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)',
+                    opacity: editingCentre ? 0.7 : 1
+                  }}
+                  required={!editingCentre}
                 />
-                <p className="text-xs text-slate-500 mt-1">Code métier unique, utilisé pour les règles</p>
+                {!editingCentre && (
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Code métier unique, utilisé pour les règles</p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                   Nom *
                 </label>
                 <input
+                  data-testid="centre-nom-input"
                   type="text"
                   value={formData.nom}
                   onChange={(e) => setFormData({ ...formData, nom: e.target.value })}
                   placeholder="Ex: Centre de Pliage"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)'
+                  }}
                   required
-                  data-testid="centre-nom-input"
                 />
               </div>
             </div>
+            
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                   Description
                 </label>
                 <input
+                  data-testid="centre-description-input"
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Description optionnelle"
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  data-testid="centre-description-input"
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)'
+                  }}
                 />
               </div>
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
+                <label className="text-xs font-semibold uppercase tracking-wider block mb-2" style={{ color: 'var(--text-muted)' }}>
                   <Calendar size={12} className="inline mr-1" />
                   Calendrier
                 </label>
                 <select
+                  data-testid="centre-calendar-select"
                   value={formData.calendar_id}
                   onChange={(e) => setFormData({ ...formData, calendar_id: e.target.value })}
-                  className="w-full h-9 rounded-sm border border-slate-300 px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-                  data-testid="centre-calendar-select"
+                  className="w-full h-10 rounded-lg border px-3 text-sm transition-colors focus:outline-none focus:ring-2"
+                  style={{ 
+                    backgroundColor: 'var(--bg-elevated)', 
+                    borderColor: 'var(--border-default)',
+                    color: 'var(--text-primary)'
+                  }}
                 >
                   <option value="">-- Aucun calendrier --</option>
                   {calendars.map(cal => (
-                    <option key={cal.id} value={cal.id}>{cal.name} ({cal.id})</option>
+                    <option key={cal.id} value={cal.id}>{cal.name}</option>
                   ))}
                 </select>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button type="submit" className="bg-slate-900 text-white hover:bg-slate-800 rounded-sm px-4 py-2 text-sm font-medium" data-testid="centre-submit-btn">
-                Créer
+            
+            <div className="flex gap-2 pt-2">
+              <button
+                type="submit"
+                data-testid="centre-submit-btn"
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
+              >
+                {editingCentre ? 'Enregistrer' : 'Créer'}
               </button>
-              <button type="button" onClick={() => setShowForm(false)} className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-sm px-4 py-2 text-sm font-medium">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
+              >
                 Annuler
               </button>
             </div>
@@ -176,32 +262,41 @@ export default function CentresDeCharge() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden" data-testid="centres-table">
+      <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }} data-testid="centres-table">
         <table className="w-full">
-          <thead className="bg-slate-50 border-b border-slate-200">
+          <thead style={{ backgroundColor: 'var(--bg-sunken)' }}>
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Code</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Nom</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Description</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Calendrier</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Actions</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Code</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Nom</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Description</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Calendrier</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {centres.map((centre) => (
-              <tr key={centre.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`centre-row-${centre.id}`}>
+              <tr key={centre.id} className="transition-colors hover:bg-opacity-50" style={{ borderBottom: '1px solid var(--border-default)' }} data-testid={`centre-row-${centre.id}`}>
                 <td className="px-4 py-3">
-                  <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm font-mono font-semibold">
+                  <span className="px-2 py-1 rounded-lg text-sm font-mono font-semibold" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
                     {centre.id}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-900">{centre.nom || centre.name}</td>
-                <td className="px-4 py-3 text-sm text-slate-500">{centre.description || '-'}</td>
+                <td className="px-4 py-3">
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{centre.nom || centre.name}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span style={{ color: 'var(--text-secondary)' }}>{centre.description || '-'}</span>
+                </td>
                 <td className="px-4 py-3">
                   <select
                     value={centre.calendar_id || ''}
                     onChange={(e) => handleCalendarChange(centre.id, e.target.value)}
-                    className="h-8 rounded border border-slate-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
+                    className="h-8 rounded-lg border px-2 text-sm transition-colors focus:outline-none focus:ring-2"
+                    style={{ 
+                      backgroundColor: 'var(--bg-elevated)', 
+                      borderColor: 'var(--border-default)',
+                      color: 'var(--text-primary)'
+                    }}
                     data-testid={`calendar-select-${centre.id}`}
                   >
                     <option value="">-- Aucun --</option>
@@ -211,15 +306,30 @@ export default function CentresDeCharge() {
                   </select>
                 </td>
                 <td className="px-4 py-3">
-                  <button onClick={() => handleDelete(centre.id)} className="text-red-600 hover:text-red-800 p-1" title="Supprimer" data-testid={`delete-btn-${centre.id}`}>
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      data-testid={`edit-btn-${centre.id}`}
+                      onClick={() => handleEdit(centre)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+                      title="Modifier"
+                    >
+                      <Pencil size={16} style={{ color: 'var(--text-secondary)' }} />
+                    </button>
+                    <button
+                      data-testid={`delete-btn-${centre.id}`}
+                      onClick={() => handleDelete(centre.id)}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-100 dark:hover:bg-red-900/30"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={16} className="text-red-600" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
             {centres.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={5} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                   Aucun centre de charge. Créez-en un avec un code métier lisible.
                 </td>
               </tr>

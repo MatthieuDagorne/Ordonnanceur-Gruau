@@ -342,6 +342,26 @@ async def delete_machine(machine_id: str):
         raise HTTPException(status_code=404, detail="Machine non trouvée")
     return {"message": "Supprimé avec succès"}
 
+@api_router.put("/machines/{machine_id}")
+async def update_machine(machine_id: str, updates: Dict[str, Any]):
+    """Met à jour une machine existante."""
+    allowed_fields = {'nom', 'name', 'centre_de_charge_id', 'work_center_id', 'description'}
+    update_data = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    
+    result = await db.machines.update_one(
+        {"id": machine_id},
+        {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Machine non trouvée")
+    
+    # Retourner la machine mise à jour
+    updated_machine = await db.machines.find_one({"id": machine_id}, {"_id": 0})
+    return updated_machine
+
 # Calendars endpoints
 @api_router.post("/calendars", response_model=Calendar)
 async def create_calendar(calendar: Calendar):
@@ -399,6 +419,26 @@ async def delete_unavailability(unavailability_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Unavailability not found")
     return {"message": "Deleted successfully"}
+
+@api_router.put("/unavailability/{unavailability_id}")
+async def update_unavailability(unavailability_id: str, updates: Dict[str, Any]):
+    """Met à jour une indisponibilité existante."""
+    allowed_fields = {'machine_id', 'start_date', 'end_date', 'reason'}
+    update_data = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    
+    result = await db.unavailability.update_one(
+        {"id": unavailability_id},
+        {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Indisponibilité non trouvée")
+    
+    # Retourner l'indisponibilité mise à jour
+    updated = await db.unavailability.find_one({"id": unavailability_id}, {"_id": 0})
+    return updated
 
 # Business Rules endpoints
 @api_router.post("/rules")

@@ -1,0 +1,111 @@
+{
+  "summary": "Iteration 11: Testing P0 UI modernization and P1 CRUD Edit functionality on Machines, Centres de Charge, and Indisponibilités pages. All backend (17/17) and frontend (10/10) tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_crud_edit_endpoints.py",
+    "/app/test_reports/pytest/pytest_crud_edit.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_crud_edit_endpoints.py"],
+  "success_rate": {
+    "backend": "100% (17/17 tests passed)",
+    "frontend": "100% (All UI tests passed)"
+  },
+  "seed_data_creation": "Created and cleaned up test data for e2e verification",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "P0 UI and P1 CRUD Edit features fully verified and working.",
+  "features_verified": {
+    "p0_ui_modernization": {
+      "machines_page": {
+        "css_variables": "var(--text-primary), var(--bg-elevated), var(--border-default), var(--brand-primary)",
+        "rounded_corners": "rounded-lg on buttons, form inputs, table cells",
+        "dark_theme": "Consistent dark mode styling",
+        "status": "PASS"
+      },
+      "centres_de_charge_page": {
+        "css_variables": "var(--text-primary), var(--bg-elevated), var(--border-default), var(--brand-primary)",
+        "rounded_corners": "rounded-lg on buttons, form inputs, table cells",
+        "dark_theme": "Consistent dark mode styling",
+        "status": "PASS"
+      },
+      "unavailability_page": {
+        "css_variables": "var(--text-primary), var(--bg-elevated), var(--border-default), var(--brand-primary), var(--status-warning)",
+        "rounded_corners": "rounded-lg on buttons, form inputs, table cells",
+        "dark_theme": "Consistent dark mode styling",
+        "status": "PASS"
+      }
+    },
+    "p1_crud_edit": {
+      "machines": {
+        "create_button": "'Nouvelle Machine' with Plus icon",
+        "edit_button": "Pencil icon per row with data-testid='edit-machine-{id}'",
+        "edit_form": {
+          "title": "Shows 'Modifier: {machine_id}'",
+          "id_field": "Disabled in edit mode, enabled in create mode",
+          "pre_filled_fields": "nom, centre_de_charge_id, description",
+          "submit_button": "'Enregistrer' in edit mode, 'Créer' in create mode"
+        },
+        "backend_endpoint": "PUT /api/machines/{machine_id} - returns updated machine",
+        "status": "PASS"
+      },
+      "centres_de_charge": {
+        "create_button": "'Nouveau Centre' with Plus icon",
+        "edit_button": "Pencil icon per row with data-testid='edit-btn-{id}'",
+        "edit_form": {
+          "title": "Shows 'Modifier: {centre_id}'",
+          "id_field": "Disabled in edit mode, enabled in create mode",
+          "pre_filled_fields": "nom, description, calendar_id",
+          "submit_button": "'Enregistrer' in edit mode, 'Créer' in create mode"
+        },
+        "backend_endpoint": "PUT /api/centres-de-charge/{centre_id} - returns {message, updated}",
+        "status": "PASS"
+      },
+      "unavailability": {
+        "create_button": "'Nouvelle Indisponibilité' with Plus icon",
+        "edit_button": "Pencil icon per row with data-testid='edit-unavailability-{id}'",
+        "edit_form": {
+          "title": "Shows 'Modifier l'indisponibilité'",
+          "pre_filled_fields": "machine_id, start_date, end_date, reason",
+          "date_format": "datetime-local inputs correctly pre-filled",
+          "submit_button": "'Enregistrer' in edit mode, 'Créer' in create mode"
+        },
+        "backend_endpoint": "PUT /api/unavailability/{unavailability_id} - returns updated unavailability",
+        "status": "PASS"
+      }
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/machines", "status": "PASS"},
+    {"endpoint": "POST /api/machines", "status": "PASS"},
+    {"endpoint": "PUT /api/machines/{id}", "status": "PASS", "notes": "Updates nom, centre_de_charge_id, description"},
+    {"endpoint": "DELETE /api/machines/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/centres-de-charge", "status": "PASS"},
+    {"endpoint": "POST /api/centres-de-charge", "status": "PASS"},
+    {"endpoint": "PUT /api/centres-de-charge/{id}", "status": "PASS", "notes": "Updates nom, description, calendar_id"},
+    {"endpoint": "DELETE /api/centres-de-charge/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/unavailability", "status": "PASS"},
+    {"endpoint": "POST /api/unavailability", "status": "PASS"},
+    {"endpoint": "PUT /api/unavailability/{id}", "status": "PASS", "notes": "Updates machine_id, start_date, end_date, reason"},
+    {"endpoint": "DELETE /api/unavailability/{id}", "status": "PASS"}
+  ],
+  "e2e_test_results": {
+    "machine_crud_cycle": {
+      "create": "Created machine TEST_E2E_EDIT successfully",
+      "edit": "Modified name to 'E2E Test Machine EDITED'",
+      "verify": "Change persisted and visible in table",
+      "delete": "Deleted machine with confirmation toast",
+      "status": "PASS"
+    }
+  },
+  "test_methodology": "Backend: pytest with 17 test cases covering all CRUD operations. Frontend: Playwright browser automation for UI verification and e2e CRUD cycle testing."
+}
