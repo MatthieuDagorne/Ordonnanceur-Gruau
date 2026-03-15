@@ -42,6 +42,10 @@ class MachineAssigner:
                     self.machines_by_centre[centre_id] = []
                 self.machines_by_centre[centre_id].append(machine)
         
+        # LOAD BALANCING: Compteur d'opérations assignées par machine
+        # Permet de distribuer équitablement les opérations entre machines du même centre
+        self.machine_load: Dict[str, int] = {m.get('id'): 0 for m in machines}
+        
         logger.info("\n" + "="*80)
         logger.info("INDEX DES MACHINES PAR CENTRE DE CHARGE")
         logger.info("="*80)
@@ -328,16 +332,35 @@ class MachineAssigner:
         
         for m in allowed_machines:
             score = m.get('preference_score', 0)
-            logger.info(f"  -> {m.get('id')}" + (f" (PREFEREE +{score})" if score > 0 else ""))
+            load = self.machine_load.get(m.get('id'), 0)
+            logger.info(f"  -> {m.get('id')} (charge: {load} ops)" + (f" (PREFEREE +{score})" if score > 0 else ""))
         
-        # ÉTAPE 8: Sélection (la première est la meilleure - triée par score)
-        selected = allowed_machines[0]
+        # ÉTAPE 8: Sélection avec LOAD BALANCING ÉQUITABLE
+        # Stratégie:
+        # - Le load balancing a PRIORITÉ sur les préférences pour une distribution équitable
+        # - On alterne entre les machines du même centre, même si l'une est préférée
+        # - En cas d'égalité de charge, on utilise le score de préférence comme critère secondaire
+        def machine_sort_key(m):
+            pref_score = m.get('preference_score', 0)
+            load = self.machine_load.get(m.get('id'), 0)
+            
+            # Score final: plus bas = meilleur
+            # 1. D'abord la charge (priorité absolue pour équilibrage)
+            # 2. Ensuite le score de préférence (négatif = meilleur si préféré)
+            # 3. Enfin l'ID pour stabilité
+            return (load, -pref_score, m.get('id', ''))
+        
+        sorted_machines = sorted(allowed_machines, key=machine_sort_key)
+        selected = sorted_machines[0]
         selected_id = selected.get('id')
+        
+        # Incrémenter le compteur de charge
+        self.machine_load[selected_id] = self.machine_load.get(selected_id, 0) + 1
         
         diagnostic['machine_choisie'] = selected_id
         diagnostic['is_assigned'] = True
         
-        logger.info(f"\n[ETAPE 7] MACHINE CHOISIE: {selected_id}")
+        logger.info(f"\n[ETAPE 7] MACHINE CHOISIE: {selected_id} (charge: {self.machine_load[selected_id]} ops)")
         
         # Résumé
         logger.info(f"\n[RESUME]")
