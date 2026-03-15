@@ -773,39 +773,90 @@ class SchedulerEngine:
                         scheduled_ops.append(scheduled_op)
                 
                 # POST-TRAITEMENT MATIÈRE: Réserver les matières dans l'ordre du planning
-                # et valider la cohérence du stock projeté
+                # et identifier les opérations en rupture de stock
+                unscheduled_due_to_material = []
+                scheduled_ops_final = []
+                blocked_orders = set()  # OFs dont une opération précédente est bloquée
+                
                 if not ignore_material and self.material_manager:
                     logger.info("\n📦 POST-TRAITEMENT MATIÈRE TEMPORELLE:")
                     # Trier par date de début pour simuler l'ordre réel d'exécution
                     ops_by_start = sorted(scheduled_ops, key=lambda x: x['start_minutes'])
                     
-                    material_warnings = []
+                    # Réinitialiser les consommations planifiées pour une simulation propre
+                    self.material_manager.planned_consumptions = {}
+                    
+                    # Index pour vérifier les dépendances de gamme
+                    ops_by_order = {}
+                    for op in scheduled_ops:
+                        oid = op.get('order_id')
+                        if oid not in ops_by_order:
+                            ops_by_order[oid] = []
+                        ops_by_order[oid].append(op)
+                    
                     for op in ops_by_start:
                         op_id = op['operation_id']
+                        order_id = op.get('order_id')
                         start_dt = self._minutes_to_datetime(op['start_minutes'])
                         
-                        # Vérifier une dernière fois la disponibilité à t=start
+                        # Vérifier si une opération précédente de cet OF est bloquée
+                        if order_id in blocked_orders:
+                            unscheduled_op = {
+                                'operation_id': op_id,
+                                'order_id': order_id,
+                                'article_id': op.get('article_id'),
+                                'originally_planned': op['start_datetime'],
+                                'blocking_components': [],
+                                'reason': f"Opération précédente de l'OF {order_id} non planifiable",
+                                'earliest_possible_date': None
+                            }
+                            unscheduled_due_to_material.append(unscheduled_op)
+                            logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - dépend d'une op précédente bloquée")
+                            continue
+                        
+                        # Vérifier la disponibilité à t=start AVEC les consommations précédentes
                         material_status = self.material_manager.check_operation_materials(op_id, start_dt)
                         
                         if not material_status.all_available:
-                            warning = {
+                            # RUPTURE DE STOCK - cette opération ne peut pas être planifiée
+                            # Marquer l'OF comme bloqué pour les opérations suivantes
+                            blocked_orders.add(order_id)
+                            
+                            # Chercher la prochaine date de disponibilité
+                            earliest = material_status.earliest_start_date
+                            
+                            unscheduled_op = {
                                 'operation_id': op_id,
-                                'start_datetime': op['start_datetime'],
+                                'order_id': order_id,
+                                'article_id': op.get('article_id'),
+                                'originally_planned': op['start_datetime'],
                                 'blocking_components': material_status.blocking_components,
-                                'message': f"Stock insuffisant à {start_dt.strftime('%d/%m %H:%M')}"
+                                'reason': f"Stock insuffisant à {start_dt.strftime('%d/%m %H:%M')}",
+                                'earliest_possible_date': earliest.isoformat() if earliest else None
                             }
-                            material_warnings.append(warning)
-                            logger.warning(f"   ⚠️ {op_id}: {warning['message']} - {material_status.blocking_components}")
+                            unscheduled_due_to_material.append(unscheduled_op)
+                            logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - {unscheduled_op['reason']}")
+                            logger.warning(f"      Composants manquants: {material_status.blocking_components}")
+                            if earliest:
+                                logger.warning(f"      Disponible au plus tôt: {earliest.strftime('%d/%m %H:%M')}")
                         else:
                             # Réserver les matières (consommer du stock projeté)
                             self.material_manager.reserve_materials(op_id, start_dt)
+                            scheduled_ops_final.append(op)
                             logger.debug(f"   ✓ {op_id}: Matières réservées à {start_dt.strftime('%d/%m %H:%M')}")
                     
-                    if material_warnings:
-                        result['material_warnings'] = material_warnings
-                        logger.warning(f"   Total: {len(material_warnings)} avertissements matière")
+                    if unscheduled_due_to_material:
+                        result['unscheduled_operations'] = unscheduled_due_to_material
+                        result['unscheduled_count'] = len(unscheduled_due_to_material)
+                        logger.warning(f"\n   ⚠️ {len(unscheduled_due_to_material)} opérations NON PLANIFIÉES (rupture matière)")
                     else:
                         logger.info("   ✓ Toutes les matières disponibles et réservées")
+                    
+                    # Utiliser les opérations validées uniquement
+                    scheduled_ops = scheduled_ops_final
+                else:
+                    # Sans vérification matière, toutes les opérations sont planifiées
+                    pass
                 
                 # Vérifier l'absence de chevauchement (post-validation)
                 overlap_errors = self._verify_no_overlap(scheduled_ops)

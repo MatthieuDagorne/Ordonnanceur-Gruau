@@ -589,6 +589,7 @@ async def get_operations():
             'status': op.get('status'),
             'production_time_minutes': op.get('production_time_minutes'),
             'setup_time_minutes': op.get('setup_time_minutes'),
+            'transfer_time_minutes': op.get('transfer_time_minutes', 0),  # Temps de déplacement
             'machine_id': op.get('machine_id')
         })
     return result
@@ -1547,10 +1548,20 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
 
 @api_router.post("/import/operations", response_model=ImportResult)
 async def import_operations(file: UploadFile = File(...)):
+    """
+    Import CSV des opérations.
+    
+    Colonnes supportées:
+    - id, order_id, operation_id, tache_id, centre_de_charge_id
+    - production_time_minutes, setup_time_minutes, status
+    - transfer_time_minutes (optionnel, défaut: 0)
+    """
     try:
         previous_count = await db.operations.count_documents({})
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
+        
+        logger.info(f"📥 Import opérations: colonnes = {df.columns.tolist()}")
         
         # Check for duplicate IDs
         if 'id' in df.columns:
@@ -1571,6 +1582,14 @@ async def import_operations(file: UploadFile = File(...)):
                 record['id'] = str(uuid.uuid4())
             else:
                 record['id'] = str(record['id'])
+            
+            # S'assurer que transfer_time_minutes est présent (défaut: 0)
+            if 'transfer_time_minutes' not in record or pd.isna(record.get('transfer_time_minutes')):
+                record['transfer_time_minutes'] = 0
+            else:
+                record['transfer_time_minutes'] = int(record['transfer_time_minutes'])
+            
+            logger.debug(f"  Opération: {record}")
             await db.operations.insert_one(record)
         
         logger.info(f"✅ {len(records)} nouvelles opérations importées")
@@ -1669,6 +1688,13 @@ async def import_articles(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
+
+
+@api_router.get("/stocks")
+async def get_stocks():
+    """Retourne tous les stocks."""
+    stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+    return stocks
 
 @api_router.post("/import/stocks", response_model=ImportResult)
 async def import_stocks(file: UploadFile = File(...)):
