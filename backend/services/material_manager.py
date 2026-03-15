@@ -211,6 +211,11 @@ class MaterialManager:
         """
         Vérifie la disponibilité de tous les composants pour une opération.
         
+        LOGIQUE MATIÈRE TEMPORELLE:
+        - Si un composant n'est JAMAIS disponible (aucune réception planifiée), 
+          earliest_start_date sera None et l'opération sera bloquée.
+        - Sinon, earliest_start_date = max des dates de disponibilité de tous les composants.
+        
         Returns:
             OperationMaterialStatus avec le détail par composant
         """
@@ -228,6 +233,7 @@ class MaterialManager:
         
         status.order_id = materials[0].order_id
         latest_available_date = planned_start
+        has_impossible_component = False  # Un composant n'est JAMAIS disponible
         
         for mat in materials:
             required_qty = mat.quantity
@@ -253,10 +259,18 @@ class MaterialManager:
                 status.all_available = False
                 status.blocking_components.append(mat.article_composant_id)
                 
-                if earliest_date and earliest_date > latest_available_date:
+                if earliest_date is None:
+                    # Ce composant n'est JAMAIS disponible - bloquer l'opération
+                    has_impossible_component = True
+                    logger.warning(f"⛔ {mat.article_composant_id}: JAMAIS disponible (aucune réception planifiée)")
+                elif earliest_date > latest_available_date:
                     latest_available_date = earliest_date
         
-        status.earliest_start_date = latest_available_date
+        # Si un composant n'est jamais disponible, marquer earliest_start_date = None
+        if has_impossible_component:
+            status.earliest_start_date = None
+        else:
+            status.earliest_start_date = latest_available_date
         
         return status
     

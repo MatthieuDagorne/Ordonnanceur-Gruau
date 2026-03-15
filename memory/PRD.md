@@ -18,52 +18,115 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Gantt Interactif, Stock Projeté Avancé
 - Filtres intelligents sur toutes les pages
 
-### Phase 6 - UI Uniformisation + CRUD Edit (14 mars 2026) ✅
+### Phase 6 - UI Uniformisation + CRUD Edit ✅
 - Machines, Centres de Charge, Indisponibilités : Design moderne + boutons Modifier
 - Tests: Backend 17/17 (100%), Frontend 10/10 (100%)
 
-### Phase 7 - Améliorations Gantt + Correction Calendriers (14 mars 2026) ✅
+### Phase 7 - Améliorations Gantt + Correction Calendriers ✅
+- Infobulles enrichies avec matières premières
+- Axe temporel absolu (dates réelles)
+- Périodes de fermeture visibles
+- Filtre Centre de Charge
 
-#### Améliorations Gantt
+### Phase 8 - Nouvelles Fonctionnalités APS (16 mars 2026) ✅
+
+#### 8.1 Précision Calendriers au Quart d'Heure (P0) ✅
 | Fonctionnalité | Description |
 |----------------|-------------|
-| Infobulles enrichies | Section "Matières premières" avec disponibilité stock |
-| Axe temporel absolu | Dates réelles (ex: "16 mars, 08:01") au lieu de "+1h" |
-| Périodes de fermeture | Zones grisées "Hors horaires" basées sur calendriers |
-| Filtre Centre de Charge | Boutons de filtre multi-sélection + compteur machines |
+| Format HH:MM | Calendriers utilisent `start_time` et `end_time` (ex: "07:45", "16:30") |
+| Précision minute | Le moteur calcule les zones interdites en minutes exactes |
+| Rétro-compatibilité | Fallback sur `start_hour`/`end_hour` si `start_time`/`end_time` absents |
+| Validation jours | Filtrage automatique des jours invalides (seuls 0-6 acceptés) |
 
-#### Correction Bug Critique Calendriers ✅
-**Problème résolu**: Les opérations étaient planifiées en dehors des heures de travail du calendrier.
+**Fichiers modifiés:**
+- `scheduler_engine.py`: `CalendarManager._normalize_calendar()`, `calculate_forbidden_time_slots()`
 
-**Corrections apportées**:
-1. `scheduling_start` arrondi à la minute supérieure (évite les microsecondes)
-2. Calcul des zones interdites avec `math.ceil()` pour être conservateur
-3. **Zone interdite immédiate**: Si l'ordonnancement démarre après l'heure de fermeture ou avant l'ouverture, une zone interdite est créée de t=0 jusqu'au prochain créneau de travail
-4. Fusion des plages interdites qui se chevauchent
+#### 8.2 Logique Matière Temporelle (P0 - CRITIQUE) ✅
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Stock projeté dynamique | Calcul du stock disponible à l'horodatage exact de chaque opération |
+| Sources de données | Stock initial + Réceptions fournisseurs + Consommations déjà planifiées |
+| Report automatique | Si composants manquants, l'opération est reportée à la première date de disponibilité |
+| Blocage définitif | Si un composant n'a aucune réception planifiée, l'opération est bloquée |
+| Post-traitement | Réservation des matières dans l'ordre du planning après résolution |
 
-**Résultat**: Toutes les opérations sont maintenant strictement planifiées entre les heures d'ouverture et de fermeture définies dans les calendriers (ex: 08:00-17:00).
+**Comportement validé:**
+- Stock ART3=0, Réception ART3 le 18/03 → Opérations planifiées à partir du 18/03
+- Si ART5 reçu le 20/03 (plus tard) → Opérations reportées au 20/03
+- Si aucune réception pour un composant → Opération bloquée avec `is_valid=False`
+
+**Fichiers modifiés:**
+- `scheduler_engine.py`: Contraintes matière dans CP-SAT, post-traitement
+- `material_manager.py`: `check_operation_materials()` avec détection "jamais disponible"
+
+#### 8.3 Stock Projeté par Scénario (P1) ✅
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Endpoint | `GET /api/projected-stock/{scenario_id}?article_id=XXX` |
+| Timeline | Affiche tous les événements (RECEIPT/CONSUMPTION) triés par date |
+| Contexte scénario | Utilise les dates des opérations planifiées du scénario spécifique |
+| Détection rupture | Identifie si le stock passe en négatif et à quelle date |
+
+**Format réponse:**
+```json
+{
+  "scenario_name": "...",
+  "projected_stock": [{
+    "article_id": "ART3",
+    "initial_stock": 0,
+    "total_receipts": 6,
+    "total_consumptions": 2,
+    "final_stock": 4,
+    "has_shortage": false,
+    "timeline": [
+      {"datetime": "...", "type": "RECEIPT", "quantity_change": 6, "stock_after": 6},
+      {"datetime": "...", "type": "CONSUMPTION", "quantity_change": -1, "stock_after": 5}
+    ]
+  }]
+}
+```
+
+**Fichiers modifiés:**
+- `server.py`: Nouvel endpoint ligne 865
+
+#### 8.4 Temps de Déplacement entre Opérations (P1) ✅
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Nouveau champ | `transfer_time_minutes` dans le modèle Operation (défaut: 0) |
+| Contrainte séquence | Si op2 suit op1 dans la gamme: `start(op2) >= end(op1) + transfer_time(op1)` |
+| Affichage logs | Les temps de déplacement sont affichés dans les logs du moteur |
+
+**Fichiers modifiés:**
+- `server.py`: Modèle Operation ligne 128
+- `scheduler_engine.py`: Contraintes de séquence lignes 688-720
 
 ## APIs Principales
 
 ### Gantt Data Enrichi
-```json
+```
 GET /api/gantt/data/{scenario_id}
+```
+
+### Stock Projeté par Scénario
+```
+GET /api/projected-stock/{scenario_id}?article_id=XXX
+```
+
+### Ordonnancement
+```
+POST /api/scheduling/calculate
 {
-  "scheduling_start": "2026-03-14T18:19:00",
-  "machines": [{
-    "machine_id": "...",
-    "centre_de_charge_id": "...",
-    "tasks": [{
-      "materials": [{"article_id": "...", "needed": 5, "in_stock": 10, "available": true}],
-      "materials_ok": true
-    }]
-  }],
-  "centres_de_charge": [{"id": "...", "nom": "..."}],
-  "calendars": [{"start_hour": 8, "end_hour": 17, "working_days": [0,1,2,3,4,5]}]
+  "scenario_name": "...",
+  "ignore_material": false,
+  "ignore_calendars": false,
+  "debug_mode": true
 }
 ```
 
 ## Backlog
+
+### P2 - En cours
+- [ ] Améliorer les messages de blocage matière (afficher seulement les composants manquants)
 
 ### P3 - À Faire
 - [ ] Export CSV du planning
@@ -71,15 +134,31 @@ GET /api/gantt/data/{scenario_id}
 - [ ] Dashboard temps réel WebSockets
 - [ ] Replanification dynamique
 
-## Fichiers Modifiés (Phase 7)
+## Fichiers Modifiés (Phase 8)
 
 ```
 backend/
-├── services/scheduler_engine.py  # Correction critique: zones interdites calendrier
+├── services/
+│   ├── scheduler_engine.py  # Précision minute, logique matière
+│   └── material_manager.py  # Détection "jamais disponible"
+└── server.py                # Endpoint stock projeté par scénario
 
 frontend/src/pages/
-├── GanttInteractive.js           # Filtres, axe temporel, infobulles, zones fermeture
+└── (Pas de modifications frontend pour cette phase)
 ```
 
-## Tests Reports
-- `/app/test_reports/iteration_11.json` - Validation P0/P1 (100% pass)
+## Tests Validés
+
+### Logique Matière Temporelle
+| Scénario | Résultat |
+|----------|----------|
+| Stock=0, Réception le 18/03 | ✅ Opérations planifiées à partir du 18/03 10:00 |
+| Multi-composants, dates différentes | ✅ Report à la date du dernier composant disponible |
+| Composant sans réception | ✅ Opération bloquée définitivement |
+| Stock initial suffisant | ✅ Opérations planifiées immédiatement |
+
+### Précision Quart d'Heure
+| Scénario | Résultat |
+|----------|----------|
+| Calendrier 07:45-16:45 | ✅ Opérations planifiées après 07:45 |
+| Jour invalide (7) corrigé | ✅ Calendrier FERRAGE utilise [0,3,4,5,6] |

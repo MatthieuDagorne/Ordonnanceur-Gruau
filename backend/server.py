@@ -111,6 +111,10 @@ class Operation(BaseModel):
     
     Clé de jointure: order_id -> ManufacturingOrder.id
     L'article_id est récupéré depuis l'ordre via cette jointure.
+    
+    TEMPS DE DÉPLACEMENT:
+    - transfer_time_minutes: temps nécessaire pour déplacer la pièce vers le poste suivant
+    - Ce temps est ajouté APRÈS la fin de l'opération, avant le début de l'opération suivante
     """
     model_config = ConfigDict(extra="ignore")
     id: str  # Code opération (ex: OF001_10, LV1100007_10)
@@ -121,6 +125,7 @@ class Operation(BaseModel):
     status: Optional[str] = "pending"
     production_time_minutes: int
     setup_time_minutes: int
+    transfer_time_minutes: int = 0  # Temps de déplacement vers le poste suivant
     
     # Note: article_id n'est PAS dans l'opération, il vient de l'ordre via order_id
     
@@ -850,6 +855,192 @@ async def get_projected_stock():
         
     except Exception as e:
         logger.error(f"Projected stock error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# ==========================================
+# STOCK PROJETE PAR SCENARIO - Timeline détaillée
+# ==========================================
+@api_router.get("/projected-stock/{scenario_id}")
+async def get_projected_stock_by_scenario(scenario_id: str, article_id: Optional[str] = None):
+    """
+    Calcule le stock projeté dans le contexte d'un scénario d'ordonnancement spécifique.
+    
+    LOGIQUE MATIÈRE TEMPORELLE:
+    - Utilise les opérations planifiées du scénario pour déterminer les dates de consommation exactes
+    - Affiche une timeline d'événements (réceptions et consommations) pour chaque article
+    - Permet de diagnostiquer pourquoi le moteur a reporté certaines opérations
+    
+    Paramètres:
+    - scenario_id: ID du scénario d'ordonnancement
+    - article_id: (optionnel) Filtrer par article spécifique
+    
+    Returns:
+    - projected_stock: Liste des articles avec leur projection
+    - timeline: Événements triés chronologiquement
+    - scenario_info: Informations sur le scénario
+    """
+    try:
+        # Récupérer le scénario
+        scenario = await db.scenarios.find_one({"id": scenario_id}, {"_id": 0})
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scénario non trouvé")
+        
+        # Récupérer les données de base
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
+        planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        
+        # Extraire les opérations planifiées du scénario
+        schedule_data = scenario.get('schedule_data', {})
+        scheduled_operations = schedule_data.get('operations', [])
+        scheduling_start = schedule_data.get('scheduling_start')
+        
+        # Index des opérations planifiées par ID
+        scheduled_ops_by_id = {op.get('operation_id'): op for op in scheduled_operations}
+        
+        # Stock initial par article
+        stock_by_article = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
+        
+        # Construire la timeline d'événements
+        all_events = []
+        articles_set = set()
+        
+        # 1. Ajouter les réceptions fournisseurs comme événements
+        for receipt in planned_receipts:
+            art_id = receipt.get('article_id')
+            if article_id and art_id != article_id:
+                continue
+            articles_set.add(art_id)
+            all_events.append({
+                'type': 'RECEIPT',
+                'article_id': art_id,
+                'quantity': receipt.get('quantity', 0),
+                'datetime': receipt.get('planned_date'),
+                'reference': "Réception fournisseur",
+                'details': {
+                    'source': 'planned_supplier_receipts'
+                }
+            })
+        
+        # 2. Ajouter les consommations des opérations planifiées
+        for mat in operation_materials:
+            art_id = mat.get('article_composant_id')
+            if article_id and art_id != article_id:
+                continue
+            articles_set.add(art_id)
+            
+            op_id = mat.get('id')
+            order_id = mat.get('order_id')
+            qty = mat.get('due_quantity') or mat.get('quantity', 0)
+            
+            # Récupérer la date de l'opération depuis le scénario
+            scheduled_op = scheduled_ops_by_id.get(op_id, {})
+            consumption_datetime = scheduled_op.get('start_datetime')
+            
+            if not consumption_datetime:
+                # Opération non planifiée dans ce scénario - marquer comme "à planifier"
+                consumption_datetime = None
+            
+            all_events.append({
+                'type': 'CONSUMPTION',
+                'article_id': art_id,
+                'quantity': -qty,  # Négatif car sortie de stock
+                'datetime': consumption_datetime,
+                'reference': f"Op {op_id} (OF {order_id})",
+                'details': {
+                    'operation_id': op_id,
+                    'order_id': order_id,
+                    'is_scheduled': consumption_datetime is not None,
+                    'machine_id': scheduled_op.get('machine_id')
+                }
+            })
+        
+        # Trier les événements par datetime (les None à la fin)
+        def sort_key(e):
+            dt = e.get('datetime')
+            if dt is None:
+                return ('9999-99-99', e.get('article_id', ''))
+            return (dt, e.get('article_id', ''))
+        
+        all_events.sort(key=sort_key)
+        
+        # Calculer le stock projeté par article
+        projected_stock = []
+        
+        for art_id in sorted(articles_set):
+            initial_stock = stock_by_article.get(art_id, 0)
+            
+            # Filtrer les événements pour cet article
+            article_events = [e for e in all_events if e.get('article_id') == art_id]
+            
+            # Simuler l'évolution du stock
+            current_stock = initial_stock
+            timeline = []
+            has_shortage = False
+            first_shortage_datetime = None
+            min_stock = initial_stock
+            
+            for event in article_events:
+                prev_stock = current_stock
+                current_stock += event.get('quantity', 0)
+                
+                timeline.append({
+                    'datetime': event.get('datetime'),
+                    'type': event.get('type'),
+                    'quantity_change': event.get('quantity'),
+                    'stock_before': prev_stock,
+                    'stock_after': current_stock,
+                    'reference': event.get('reference'),
+                    'is_scheduled': event.get('details', {}).get('is_scheduled', True)
+                })
+                
+                if current_stock < 0 and not has_shortage:
+                    has_shortage = True
+                    first_shortage_datetime = event.get('datetime')
+                
+                min_stock = min(min_stock, current_stock)
+            
+            # Calculer les totaux
+            total_receipts = sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'RECEIPT')
+            total_consumptions = abs(sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'CONSUMPTION'))
+            
+            projected_stock.append({
+                'article_id': art_id,
+                'initial_stock': initial_stock,
+                'total_receipts': total_receipts,
+                'total_consumptions': total_consumptions,
+                'final_stock': current_stock,
+                'min_stock': min_stock,
+                'has_shortage': has_shortage,
+                'first_shortage_datetime': first_shortage_datetime,
+                'timeline': timeline,
+                'events_count': len(article_events)
+            })
+        
+        # Trier par rupture puis par article
+        projected_stock.sort(key=lambda x: (0 if x['has_shortage'] else 1, x['article_id']))
+        
+        return {
+            'scenario_id': scenario_id,
+            'scenario_name': scenario.get('name'),
+            'scenario_status': schedule_data.get('status'),
+            'scheduling_start': scheduling_start,
+            'operations_count': len(scheduled_operations),
+            'projected_stock': projected_stock,
+            'summary': {
+                'total_articles': len(projected_stock),
+                'articles_with_shortage': len([p for p in projected_stock if p['has_shortage']]),
+                'articles_ok': len([p for p in projected_stock if not p['has_shortage']]),
+                'total_events': len(all_events)
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Projected stock by scenario error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
