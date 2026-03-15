@@ -2116,12 +2116,27 @@ async def get_gantt_data(scenario_id: str):
             if mid not in by_machine:
                 machine = machines_dict.get(mid, {})
                 centre_id = machine.get('centre_de_charge_id') or machine.get('work_center_id')
+                centre = centres_dict.get(centre_id, {})
+                
+                # Récupérer le calendrier spécifique de cette machine
+                calendar_id = centre.get('calendar_id')
+                machine_calendar = calendars_dict.get(calendar_id, {
+                    'start_hour': 0,
+                    'end_hour': 24,
+                    'working_days': [0, 1, 2, 3, 4, 5, 6]
+                })
+                
                 by_machine[mid] = {
                     'machine_id': mid,
                     'machine_name': task['machine_name'],
                     'color': task['color'],
                     'centre_de_charge_id': centre_id,
                     'centre_de_charge_nom': task.get('centre_de_charge_nom', centre_id),
+                    'calendar': {
+                        'start_hour': machine_calendar.get('start_hour', 0),
+                        'end_hour': machine_calendar.get('end_hour', 24),
+                        'working_days': machine_calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6])
+                    },
                     'tasks': []
                 }
             by_machine[mid]['tasks'].append(task)

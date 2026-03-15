@@ -112,44 +112,67 @@ export default function GanttInteractive() {
     return ganttData.machines.filter(m => selectedCentres.includes(m.centre_de_charge_id));
   }, [ganttData?.machines, selectedCentres]);
 
-  // Calculer les zones de fermeture basées sur le calendrier et l'heure de scheduling
-  const closurePeriods = useMemo(() => {
-    if (!ganttData) return [];
-    const { scheduling_start, calendars, time_range } = ganttData;
-    if (!scheduling_start || !calendars || calendars.length === 0) return [];
+  // Fonction pour calculer les zones de fermeture pour une machine spécifique
+  // Les positions sont relatives au début visible du Gantt (pas au scheduling_start)
+  const calculateClosurePeriods = (machineCalendar, schedulingStart, totalMinutes, minMinutes) => {
+    if (!schedulingStart || !machineCalendar) return [];
     
     const periods = [];
-    const cal = calendars[0];
-    if (!cal) return [];
+    const workStartHour = machineCalendar.start_hour ?? 0;
+    const workEndHour = machineCalendar.end_hour ?? 24;
+    const workingDays = new Set(machineCalendar.working_days || [0, 1, 2, 3, 4, 5, 6]);
     
-    // Récupérer les heures de travail du calendrier
-    const workStartHour = cal.start_hour ?? 8;
-    const workEndHour = cal.end_hour ?? 17;
+    // Si calendrier 24/7, pas de zones de fermeture
+    if (workStartHour === 0 && workEndHour === 24 && workingDays.size === 7) {
+      return [];
+    }
     
-    // Parser la date de début du scheduling
-    const schedStart = new Date(scheduling_start);
+    // Le scheduling_start est la référence absolue
+    const schedStart = new Date(schedulingStart);
     
-    // Calculer combien de jours sont couverts par le Gantt
-    const totalMinutes = time_range?.total_minutes || 480;
-    const totalDays = Math.ceil(totalMinutes / (24 * 60)) + 2;
+    // Le Gantt affiche à partir de (scheduling_start + min_minutes)
+    // jusqu'à (scheduling_start + min_minutes + total_minutes)
+    const ganttStartTime = new Date(schedStart.getTime() + minMinutes * 60000);
+    const ganttEndTime = new Date(schedStart.getTime() + (minMinutes + totalMinutes) * 60000);
     
-    // Pour chaque jour, calculer les zones de fermeture
-    for (let d = -1; d < totalDays; d++) {
-      const dayDate = new Date(schedStart);
+    // Nombre de jours à parcourir
+    const totalDays = Math.ceil((totalMinutes + 24 * 60) / (24 * 60));
+    
+    for (let d = -1; d < totalDays + 1; d++) {
+      // Date du jour courant (basée sur le début visible du Gantt)
+      const dayDate = new Date(ganttStartTime);
       dayDate.setHours(0, 0, 0, 0);
       dayDate.setDate(dayDate.getDate() + d);
+      
+      const dayOfWeek = dayDate.getDay(); // 0=Dimanche, 1=Lundi, ... 6=Samedi
+      // Convertir en format Python (0=Lundi, 6=Dimanche)
+      const pythonDayOfWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      
+      // Si jour non travaillé, tout le jour est fermé
+      if (!workingDays.has(pythonDayOfWeek)) {
+        // Position dans le Gantt = (heure absolue - gantt_start) en minutes
+        const closureStartMin = Math.floor((dayDate - ganttStartTime) / 60000);
+        const closureEndMin = closureStartMin + 24 * 60;
+        
+        if (closureEndMin > 0 && closureStartMin < totalMinutes) {
+          periods.push({
+            start: Math.max(0, closureStartMin),
+            end: Math.min(totalMinutes, closureEndMin),
+            reason: 'Jour non travaillé'
+          });
+        }
+        continue;
+      }
       
       // Zone de fermeture du matin (00:00 -> workStartHour)
       if (workStartHour > 0) {
         const closureStartDate = new Date(dayDate);
-        closureStartDate.setHours(0, 0, 0, 0);
-        
         const closureEndDate = new Date(dayDate);
         closureEndDate.setHours(workStartHour, 0, 0, 0);
         
-        // Convertir en minutes relatives au scheduling_start
-        const closureStartMin = Math.floor((closureStartDate - schedStart) / 60000);
-        const closureEndMin = Math.floor((closureEndDate - schedStart) / 60000);
+        // Position dans le Gantt
+        const closureStartMin = Math.floor((closureStartDate - ganttStartTime) / 60000);
+        const closureEndMin = Math.floor((closureEndDate - ganttStartTime) / 60000);
         
         if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
@@ -164,13 +187,13 @@ export default function GanttInteractive() {
       if (workEndHour < 24) {
         const closureStartDate = new Date(dayDate);
         closureStartDate.setHours(workEndHour, 0, 0, 0);
-        
         const closureEndDate = new Date(dayDate);
-        closureEndDate.setHours(24, 0, 0, 0);
+        closureEndDate.setDate(closureEndDate.getDate() + 1); // Minuit du jour suivant
+        closureEndDate.setHours(0, 0, 0, 0);
         
-        // Convertir en minutes relatives au scheduling_start
-        const closureStartMin = Math.floor((closureStartDate - schedStart) / 60000);
-        const closureEndMin = Math.floor((closureEndDate - schedStart) / 60000);
+        // Position dans le Gantt
+        const closureStartMin = Math.floor((closureStartDate - ganttStartTime) / 60000);
+        const closureEndMin = Math.floor((closureEndDate - ganttStartTime) / 60000);
         
         if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
@@ -182,8 +205,23 @@ export default function GanttInteractive() {
       }
     }
     
+    // Fusionner les périodes qui se chevauchent
+    if (periods.length > 0) {
+      periods.sort((a, b) => a.start - b.start);
+      const merged = [periods[0]];
+      for (let i = 1; i < periods.length; i++) {
+        const last = merged[merged.length - 1];
+        if (periods[i].start <= last.end) {
+          last.end = Math.max(last.end, periods[i].end);
+        } else {
+          merged.push(periods[i]);
+        }
+      }
+      return merged;
+    }
+    
     return periods;
-  }, [ganttData]);
+  };
 
   // Calcul des positions et dimensions
   const pixelsPerMinute = 2 * zoom;
@@ -428,15 +466,22 @@ export default function GanttInteractive() {
 
                 {/* Tasks */}
                 <div className="relative flex-1">
-                  {/* Closure periods (gray zones) */}
-                  {closurePeriods.map((period, pIdx) => (
+                  {/* Closure periods (gray zones) - spécifiques à cette machine */}
+                  {calculateClosurePeriods(
+                    machine.calendar, 
+                    scheduling_start, 
+                    time_range?.total_minutes || 480,
+                    time_range?.min_minutes || 0
+                  ).map((period, pIdx) => (
                     <div
-                      key={pIdx}
-                      className="absolute top-0 bottom-0 opacity-30"
+                      key={`closure-${machine.machine_id}-${pIdx}`}
+                      className="absolute top-0 bottom-0"
                       style={{
                         left: period.start * pixelsPerMinute,
-                        width: (period.end - period.start) * pixelsPerMinute,
-                        backgroundColor: 'var(--text-muted)'
+                        width: Math.max((period.end - period.start) * pixelsPerMinute, 1),
+                        backgroundColor: 'rgba(100, 100, 100, 0.3)',
+                        pointerEvents: 'none',
+                        zIndex: 1
                       }}
                       title={period.reason}
                     />
