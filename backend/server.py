@@ -1585,6 +1585,14 @@ async def import_operations(file: UploadFile = File(...)):
         logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
+
+@api_router.get("/articles")
+async def get_articles():
+    """Retourne tous les articles avec leurs attributs."""
+    articles = await db.articles.find({}, {"_id": 0}).to_list(1000)
+    return articles
+
+
 @api_router.post("/import/articles", response_model=ImportResult)
 async def import_articles(file: UploadFile = File(...)):
     """
@@ -1827,10 +1835,11 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
         machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        articles = await db.articles.find({}, {"_id": 0}).to_list(1000)  # Pour les règles sur attributs
         
         engine = SchedulerEngine(db)
         material_checker = MaterialChecker(stocks)
-        rules_engine = RulesEngine(rules)
+        rules_engine = RulesEngine(rules, articles)  # Passer les articles pour règles sur attributs
         
         options = {
             'ignore_rules': request.ignore_rules,
@@ -2227,9 +2236,21 @@ async def get_gantt_data(scenario_id: str):
                     materials_by_op[op_id] = []
                 materials_by_op[op_id].append(mat)
         
-        # Charger les stocks pour calculer la disponibilité
+        # Charger les stocks et réceptions pour le stock projeté dynamique
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         stocks_dict = {s.get('article_id'): s.get('quantity', 0) for s in stocks}
+        planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        
+        # Initialiser le MaterialManager pour le calcul de stock projeté temporel
+        from services.material_manager import MaterialManager
+        material_manager = MaterialManager(stocks, operation_materials, planned_receipts)
+        
+        # Trier les opérations par date de début pour simuler les consommations dans l'ordre
+        sorted_operations = sorted(operations, key=lambda x: x.get('start_datetime', ''))
+        
+        # Simuler les consommations pour calculer le stock projeté à chaque horodatage
+        # On utilise un dictionnaire pour tracker les consommations cumulées
+        cumulated_consumptions = {}  # {article_id: total_consumed}
         
         # Couleurs par machine
         colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
@@ -2237,9 +2258,9 @@ async def get_gantt_data(scenario_id: str):
         for i, m in enumerate(machines):
             machine_colors[m.get('id')] = colors[i % len(colors)]
         
-        # Formater les tâches pour le Gantt
+        # Formater les tâches pour le Gantt (dans l'ordre chronologique pour le calcul matière)
         gantt_tasks = []
-        for op in operations:
+        for op in sorted_operations:
             machine_id = op.get('machine_id')
             order_id = op.get('order_id')
             order = orders_dict.get(order_id, {})
@@ -2259,24 +2280,52 @@ async def get_gantt_data(scenario_id: str):
                 except:
                     pass
             
-            # Calculer disponibilité matières
+            # Calculer le stock projeté à l'horodatage exact de l'opération
             op_id = op.get('operation_id')
+            op_start_dt = op.get('start_datetime')
             materials = materials_by_op.get(op_id, [])
             materials_info = []
             materials_ok = True
+            
+            # Parser la date de début de l'opération
+            op_start = None
+            if op_start_dt:
+                try:
+                    op_start = datetime.fromisoformat(op_start_dt.replace('Z', '+00:00'))
+                except:
+                    pass
+            
             for mat in materials:
                 article_id = mat.get('article_composant_id') or mat.get('article_id')
                 qty_needed = mat.get('due_quantity') or mat.get('quantity', 0)
-                qty_stock = stocks_dict.get(article_id, 0)
+                
+                # Calculer le stock projeté à l'horodatage de l'opération
+                # = stock initial + réceptions avant t - consommations des opérations précédentes
+                if op_start:
+                    # Stock projeté = MaterialManager.get_projected_stock(article, date) - consommations cumulées
+                    base_projected = material_manager.get_projected_stock(article_id, op_start)
+                    already_consumed = cumulated_consumptions.get(article_id, 0)
+                    qty_stock = base_projected - already_consumed
+                else:
+                    qty_stock = stocks_dict.get(article_id, 0)
+                
                 available = qty_stock >= qty_needed
                 if not available:
                     materials_ok = False
                 materials_info.append({
                     'article_id': article_id,
                     'needed': qty_needed,
-                    'in_stock': qty_stock,
+                    'in_stock': round(qty_stock, 2),  # Stock projeté à t
                     'available': available
                 })
+            
+            # Après avoir traité cette opération, enregistrer ses consommations
+            for mat in materials:
+                article_id = mat.get('article_composant_id') or mat.get('article_id')
+                qty_needed = mat.get('due_quantity') or mat.get('quantity', 0)
+                if article_id not in cumulated_consumptions:
+                    cumulated_consumptions[article_id] = 0
+                cumulated_consumptions[article_id] += qty_needed
             
             gantt_tasks.append({
                 'id': op.get('operation_id'),
