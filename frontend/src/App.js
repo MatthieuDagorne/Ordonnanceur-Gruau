@@ -15,6 +15,7 @@ import GanttInteractive from '@/pages/GanttInteractive';
 import ScenariosComparison from '@/pages/ScenariosComparison';
 import DiagnosticAssignment from '@/pages/DiagnosticAssignment';
 import ProjectedStock from '@/pages/ProjectedStock';
+import ProjectedStockScenario from '@/pages/ProjectedStockScenario';
 import APSDashboard from '@/pages/APSDashboard';
 import MatrixView from '@/pages/MatrixView';
 import '@/App.css';
@@ -37,6 +38,7 @@ function App() {
               <Route path="scheduling" element={<Scheduling />} />
               <Route path="diagnostic" element={<DiagnosticAssignment />} />
               <Route path="projected-stock" element={<ProjectedStock />} />
+              <Route path="projected-stock/:scenarioId" element={<ProjectedStockScenario />} />
               <Route path="aps" element={<APSDashboard />} />
               <Route path="matrix" element={<MatrixView />} />
               <Route path="gantt/:scenarioId" element={<GanttInteractive />} />

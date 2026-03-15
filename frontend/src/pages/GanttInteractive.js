@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers } from 'lucide-react';
+import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -305,6 +305,15 @@ export default function GanttInteractive() {
             <Download size={16} />
             Exporter
           </button>
+          <Link
+            to={`/projected-stock/${scenarioId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            data-testid="stock-btn"
+          >
+            <TrendingDown size={16} />
+            Stock Projeté
+          </Link>
         </div>
       </div>
 
@@ -356,7 +365,7 @@ export default function GanttInteractive() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
             <Package size={16} style={{ color: 'var(--brand-primary)' }} />
@@ -395,7 +404,60 @@ export default function GanttInteractive() {
             {ganttData.status}
           </p>
         </div>
+        {/* Badge Opérations Non Planifiées */}
+        {scenario?.schedule_data?.unscheduled_count > 0 && (
+          <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--status-error)' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <AlertCircle size={16} style={{ color: 'var(--status-error)' }} />
+              <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--status-error)' }}>Non planifiées</span>
+            </div>
+            <p className="text-2xl font-bold font-mono" style={{ color: 'var(--status-error)' }}>
+              {scenario.schedule_data.unscheduled_count}
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* Liste des opérations non planifiées */}
+      {scenario?.schedule_data?.unscheduled_operations?.length > 0 && (
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--status-error)' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <AlertCircle size={18} style={{ color: 'var(--status-error)' }} />
+            <h3 className="font-semibold" style={{ color: 'var(--status-error)' }}>
+              Opérations non planifiables ({scenario.schedule_data.unscheduled_count})
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {scenario.schedule_data.unscheduled_operations.map((op, idx) => (
+              <div 
+                key={idx}
+                className="flex items-center justify-between p-3 rounded-lg"
+                style={{ backgroundColor: 'var(--bg-elevated)' }}
+              >
+                <div>
+                  <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {op.operation_id}
+                  </span>
+                  <span className="ml-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    (OF {op.order_id})
+                  </span>
+                </div>
+                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  {op.reason}
+                </div>
+                {op.blocking_components?.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Package size={14} style={{ color: 'var(--status-error)' }} />
+                    <span className="text-sm font-mono" style={{ color: 'var(--status-error)' }}>
+                      {op.blocking_components.join(', ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Gantt Chart */}
       <div 

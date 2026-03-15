@@ -18,6 +18,10 @@ class CalendarManager:
     - Déterminer les plages horaires de travail par machine
     - Calculer le temps effectif de travail
     - Créer des contraintes de calendrier pour le solveur
+    
+    PRÉCISION QUART D'HEURE:
+    - Utilise start_time/end_time (format HH:MM) pour une précision à la minute
+    - Rétro-compatible avec start_hour/end_hour si start_time/end_time absents
     """
     
     def __init__(self, calendars: List[Dict], centres_de_charge: List[Dict], machines: List[Dict]):
@@ -36,57 +40,122 @@ class CalendarManager:
             calendar_id = centre.get('calendar_id')
             
             if calendar_id and calendar_id in self.calendars_by_id:
-                self.machine_calendar[machine_id] = self.calendars_by_id[calendar_id]
+                cal = self.calendars_by_id[calendar_id]
+                # Normaliser le calendrier avec précision minute
+                self.machine_calendar[machine_id] = self._normalize_calendar(cal)
             else:
                 # Calendrier par défaut: 24/7
                 self.machine_calendar[machine_id] = {
                     'id': 'default',
                     'name': 'Default 24/7',
-                    'working_days': [0, 1, 2, 3, 4, 5, 6],  # Lundi-Dimanche
-                    'start_hour': 0,
-                    'end_hour': 24
+                    'working_days': [0, 1, 2, 3, 4, 5, 6],
+                    'start_time': '00:00',
+                    'end_time': '24:00',
+                    'start_minutes': 0,
+                    'end_minutes': 1440  # 24 * 60
                 }
         
         logger.info("\n" + "="*60)
-        logger.info("CALENDRIERS DES CENTRES DE CHARGE")
+        logger.info("CALENDRIERS DES CENTRES DE CHARGE (PRÉCISION MINUTE)")
         logger.info("="*60)
         for machine_id, cal in self.machine_calendar.items():
             centre_id = next((m.get('centre_de_charge_id') for m in machines if m.get('id') == machine_id), None)
             logger.info(f"  Machine {machine_id} (centre {centre_id}): {cal.get('name', 'Default')}")
-            logger.info(f"    Jours: {cal.get('working_days')}, Heures: {cal.get('start_hour')}-{cal.get('end_hour')}")
+            logger.info(f"    Jours: {cal.get('working_days')}, Horaires: {cal.get('start_time')}-{cal.get('end_time')} ({cal.get('start_minutes')}-{cal.get('end_minutes')} min)")
         logger.info("="*60 + "\n")
+    
+    def _normalize_calendar(self, cal: Dict) -> Dict:
+        """
+        Normalise un calendrier pour avoir les minutes précises.
+        Utilise start_time/end_time si disponible, sinon start_hour/end_hour.
+        """
+        normalized = dict(cal)
+        
+        # Filtrer les jours invalides (0-6 uniquement)
+        working_days = cal.get('working_days', [0, 1, 2, 3, 4, 5, 6])
+        normalized['working_days'] = [d for d in working_days if 0 <= d <= 6]
+        
+        # Parser start_time (format HH:MM)
+        start_time = cal.get('start_time')
+        if start_time and ':' in str(start_time):
+            try:
+                parts = str(start_time).split(':')
+                hours = int(parts[0])
+                minutes = int(parts[1]) if len(parts) > 1 else 0
+                normalized['start_minutes'] = hours * 60 + minutes
+                normalized['start_time'] = start_time
+            except (ValueError, IndexError):
+                # Fallback sur start_hour
+                normalized['start_minutes'] = cal.get('start_hour', 0) * 60
+                normalized['start_time'] = f"{cal.get('start_hour', 0):02d}:00"
+        else:
+            # Utiliser start_hour
+            start_hour = cal.get('start_hour', 0)
+            normalized['start_minutes'] = start_hour * 60
+            normalized['start_time'] = f"{start_hour:02d}:00"
+        
+        # Parser end_time (format HH:MM)
+        end_time = cal.get('end_time')
+        if end_time and ':' in str(end_time):
+            try:
+                parts = str(end_time).split(':')
+                hours = int(parts[0])
+                minutes = int(parts[1]) if len(parts) > 1 else 0
+                normalized['end_minutes'] = hours * 60 + minutes
+                normalized['end_time'] = end_time
+            except (ValueError, IndexError):
+                # Fallback sur end_hour
+                normalized['end_minutes'] = cal.get('end_hour', 24) * 60
+                normalized['end_time'] = f"{cal.get('end_hour', 24):02d}:00"
+        else:
+            # Utiliser end_hour
+            end_hour = cal.get('end_hour', 24)
+            normalized['end_minutes'] = end_hour * 60
+            normalized['end_time'] = f"{end_hour:02d}:00"
+        
+        return normalized
     
     def get_calendar_for_machine(self, machine_id: str) -> Dict:
         """Retourne le calendrier pour une machine."""
         return self.machine_calendar.get(machine_id, {
             'working_days': [0, 1, 2, 3, 4, 5, 6],
-            'start_hour': 0,
-            'end_hour': 24
+            'start_time': '00:00',
+            'end_time': '24:00',
+            'start_minutes': 0,
+            'end_minutes': 1440
         })
     
     def is_working_time(self, machine_id: str, dt: datetime) -> bool:
-        """Vérifie si un moment donné est un temps de travail pour la machine."""
+        """
+        Vérifie si un moment donné est un temps de travail pour la machine.
+        PRÉCISION À LA MINUTE.
+        """
         calendar = self.get_calendar_for_machine(machine_id)
         working_days = calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6])
-        start_hour = calendar.get('start_hour', 0)
-        end_hour = calendar.get('end_hour', 24)
+        start_minutes = calendar.get('start_minutes', 0)
+        end_minutes = calendar.get('end_minutes', 1440)
         
         # weekday(): 0=Lundi, 6=Dimanche
         if dt.weekday() not in working_days:
             return False
         
-        hour = dt.hour + dt.minute / 60
-        if hour < start_hour or hour >= end_hour:
+        # Minutes depuis minuit
+        current_minutes = dt.hour * 60 + dt.minute
+        if current_minutes < start_minutes or current_minutes >= end_minutes:
             return False
         
         return True
     
+    def get_working_minutes_per_day(self, machine_id: str) -> int:
+        """Retourne le nombre de minutes de travail par jour pour une machine."""
+        calendar = self.get_calendar_for_machine(machine_id)
+        start_minutes = calendar.get('start_minutes', 0)
+        end_minutes = calendar.get('end_minutes', 1440)
+        return max(0, end_minutes - start_minutes)
+    
     def get_working_hours_per_day(self, machine_id: str) -> float:
         """Retourne le nombre d'heures de travail par jour pour une machine."""
-        calendar = self.get_calendar_for_machine(machine_id)
-        start_hour = calendar.get('start_hour', 0)
-        end_hour = calendar.get('end_hour', 24)
-        return max(0, end_hour - start_hour)
+        return self.get_working_minutes_per_day(machine_id) / 60
     
     def calculate_forbidden_time_slots(
         self, 
@@ -97,6 +166,8 @@ class CalendarManager:
         """
         Calcule les plages horaires interdites (hors calendrier) pour une machine.
         
+        PRÉCISION À LA MINUTE (supporte les quarts d'heure comme 07:45, 16:30, etc.)
+        
         Retourne une liste de tuples (start_minute, end_minute) relatifs au scheduling_start.
         Ces plages représentent les périodes où la machine ne peut pas travailler.
         
@@ -105,11 +176,11 @@ class CalendarManager:
         """
         calendar = self.get_calendar_for_machine(machine_id)
         working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
-        start_hour = calendar.get('start_hour', 0)
-        end_hour = calendar.get('end_hour', 24)
+        start_minutes_of_day = calendar.get('start_minutes', 0)  # Ex: 7*60+45 = 465 pour 07:45
+        end_minutes_of_day = calendar.get('end_minutes', 1440)   # Ex: 16*60+45 = 1005 pour 16:45
         
         # Si calendrier 24/7, pas de plages interdites
-        if working_days == {0, 1, 2, 3, 4, 5, 6} and start_hour == 0 and end_hour == 24:
+        if working_days == {0, 1, 2, 3, 4, 5, 6} and start_minutes_of_day == 0 and end_minutes_of_day >= 1440:
             return []
         
         forbidden_slots = []
@@ -119,14 +190,14 @@ class CalendarManager:
         
         # IMPORTANT: Ajouter une zone interdite immédiate si on est hors des heures de travail
         # au moment du scheduling_start
-        current_hour = scheduling_start.hour + scheduling_start.minute / 60
+        current_minutes_in_day = scheduling_start.hour * 60 + scheduling_start.minute
         current_weekday = scheduling_start.weekday()
         
         if current_weekday not in working_days:
             # On démarre un jour non travaillé - tout est interdit jusqu'au prochain jour travaillé
             # Cette situation sera gérée par la boucle ci-dessous
             pass
-        elif current_hour >= end_hour:
+        elif current_minutes_in_day >= end_minutes_of_day:
             # On est APRÈS l'heure de fermeture - zone interdite de maintenant jusqu'au lendemain matin
             # Chercher le prochain jour travaillé
             next_work_day = base_date + timedelta(days=1)
@@ -137,16 +208,17 @@ class CalendarManager:
                     break
             
             # Zone interdite de 0 (maintenant) jusqu'à l'heure d'ouverture du prochain jour travaillé
-            next_opening = next_work_day + timedelta(hours=start_hour)
+            # Utilise start_minutes_of_day pour la précision minute
+            next_opening = next_work_day + timedelta(minutes=start_minutes_of_day)
             slot_end = math.ceil((next_opening - scheduling_start).total_seconds() / 60) + 1
             forbidden_slots.append((0, slot_end))
-            logger.info(f"      Zone immédiate (après fermeture): [0 - {slot_end}]")
-        elif current_hour < start_hour:
+            logger.info(f"      Zone immédiate (après fermeture): [0 - {slot_end}] (jusqu'à {next_opening.strftime('%d/%m %H:%M')})")
+        elif current_minutes_in_day < start_minutes_of_day:
             # On est AVANT l'heure d'ouverture - zone interdite de maintenant jusqu'à l'ouverture
-            today_opening = base_date + timedelta(hours=start_hour)
+            today_opening = base_date + timedelta(minutes=start_minutes_of_day)
             slot_end = math.ceil((today_opening - scheduling_start).total_seconds() / 60) + 1
             forbidden_slots.append((0, slot_end))
-            logger.info(f"      Zone immédiate (avant ouverture): [0 - {slot_end}]")
+            logger.info(f"      Zone immédiate (avant ouverture): [0 - {slot_end}] (jusqu'à {today_opening.strftime('%d/%m %H:%M')})")
         
         # Calculer les zones interdites pour chaque jour de l'horizon
         for day_offset in range(horizon_days + 1):
@@ -167,21 +239,21 @@ class CalendarManager:
             else:
                 # Jour travaillé - ajouter les plages hors heures de travail
                 
-                # MATIN: De minuit jusqu'à l'heure d'ouverture
-                if start_hour > 0:
+                # MATIN: De minuit jusqu'à l'heure d'ouverture (précision minute)
+                if start_minutes_of_day > 0:
                     slot_start_dt = day_start  # 00:00
-                    slot_end_dt = day_start + timedelta(hours=start_hour)  # Ex: 08:00
+                    slot_end_dt = day_start + timedelta(minutes=start_minutes_of_day)  # Ex: 07:45
                     
                     slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
-                    # +1 pour s'assurer que 08:00:00 est APRÈS la zone interdite
+                    # +1 pour s'assurer que l'heure d'ouverture est APRÈS la zone interdite
                     slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60) + 1
                     
                     if slot_end > 0:
                         forbidden_slots.append((max(0, slot_start), slot_end))
                 
-                # SOIR: De l'heure de fermeture jusqu'à minuit
-                if end_hour < 24:
-                    slot_start_dt = day_start + timedelta(hours=end_hour)  # Ex: 17:00
+                # SOIR: De l'heure de fermeture jusqu'à minuit (précision minute)
+                if end_minutes_of_day < 1440:
+                    slot_start_dt = day_start + timedelta(minutes=end_minutes_of_day)  # Ex: 16:45
                     slot_end_dt = day_start + timedelta(days=1)  # Minuit du jour suivant
                     
                     slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
@@ -213,14 +285,23 @@ class SchedulerEngine:
     1. Non-chevauchement: une machine ne peut traiter qu'une opération à la fois
     2. Séquence: les opérations d'un même OF respectent l'ordre des gammes
     3. Priorité: les opérations urgentes (due_date proche) sont planifiées en premier
+    4. Disponibilité matière avec projection du stock DYNAMIQUE
+    5. Respect des calendriers des centres de charge avec PRÉCISION MINUTE
     
     Format datetime: ISO 8601 (YYYY-MM-DDTHH:MM:SS)
+    
+    LOGIQUE MATIÈRE TEMPORELLE:
+    - Calcule le stock projeté à l'horodatage exact de chaque opération
+    - Tient compte des 3 sources: stock initial, réceptions fournisseurs, consommations déjà planifiées
+    - Reporte automatiquement les opérations si composants manquants
     """
     
     def __init__(self, db):
         self.db = db
         self.diagnostics = None
         self.scheduling_start = None
+        self.calendar_manager = None
+        self.material_manager = None  # Pour la logique matière temporelle
     
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
         """
@@ -259,7 +340,7 @@ class SchedulerEngine:
     
     async def schedule(self, orders, operations, machines, rules_engine, material_checker, options=None):
         """
-        Main scheduling function using OR-Tools CP-SAT with ITERATIVE MATERIAL REPLANIFICATION.
+        Main scheduling function using OR-Tools CP-SAT with ITERATIVE MATERIAL CONSTRAINT.
         
         Garantit:
         - Non-chevauchement sur chaque machine (contrainte NoOverlap)
@@ -272,12 +353,11 @@ class SchedulerEngine:
         Options:
         - ignore_rules: bool
         - ignore_material: bool
-        - ignore_calendars: bool
+        - ignore_calendars: bool (new)
         - debug_mode: bool
         - auto_assign_machines: bool (default True)
         - max_solver_time_seconds: int (default 60)
-        - _material_date_constraints: dict (internal - for iterative replanning)
-        - _iteration: int (internal - current iteration number)
+        - max_material_iterations: int (default 5)
         """
         options = options or {}
         debug_mode = options.get('debug_mode', True)
@@ -286,15 +366,9 @@ class SchedulerEngine:
         ignore_calendars = options.get('ignore_calendars', False)
         auto_assign_machines = options.get('auto_assign_machines', True)
         max_solver_time_seconds = options.get('max_solver_time_seconds', 60)
-        
-        # Paramètres internes pour la replanification itérative
-        material_date_constraints = options.get('_material_date_constraints', {})
-        current_iteration = options.get('_iteration', 1)
-        max_iterations = 5
+        max_material_iterations = options.get('max_material_iterations', 5)
         
         # Point de départ pour l'horizon de planification
-        # IMPORTANT: Arrondir à la minute supérieure pour éviter les problèmes de microsecondes
-        # qui pourraient permettre des opérations juste avant les heures d'ouverture
         now = datetime.now()
         self.scheduling_start = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         
@@ -324,6 +398,7 @@ class SchedulerEngine:
             logger.info(f"  Centres de charge: {len(centres_de_charge)}")
             logger.info(f"  Temps max solveur: {max_solver_time_seconds}s")
             logger.info(f"  Ignorer calendriers: {ignore_calendars}")
+            logger.info(f"  Max itérations matière: {max_material_iterations}")
             logger.info(f"{'='*60}\n")
             
             # Initialiser le gestionnaire de calendriers
@@ -338,13 +413,188 @@ class SchedulerEngine:
                 logger.error("❌ Données insuffisantes pour l'ordonnancement")
                 return self._error_result("Données insuffisantes")
             
-            # Initialiser le gestionnaire de matières (attribut de classe pour le post-traitement)
+            # Initialiser le gestionnaire de matières (LOGIQUE TEMPORELLE)
             self.material_manager = MaterialManager(stocks, operation_materials, planned_receipts)
             
             logger.info("\n📦 LOGIQUE MATIÈRE TEMPORELLE ACTIVÉE")
             logger.info(f"   Stock initial: {len(stocks)} articles")
             logger.info(f"   Réceptions planifiées: {len(planned_receipts)}")
             logger.info(f"   Besoins opérations: {len(operation_materials)}")
+            
+            # CONTRAINTES MATIÈRE INITIALES (vides au départ)
+            # Format: {operation_id: datetime} - date minimum de début pour chaque opération
+            material_constraints = {}
+            
+            # BOUCLE ITÉRATIVE DE PLANIFICATION
+            final_result = None
+            for iteration in range(1, max_material_iterations + 1):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"🔄 ITÉRATION {iteration}/{max_material_iterations}")
+                logger.info(f"{'='*60}")
+                
+                if material_constraints:
+                    logger.info(f"   Contraintes matière actives: {len(material_constraints)}")
+                    for op_id, min_date in material_constraints.items():
+                        logger.info(f"      {op_id}: start >= {min_date.strftime('%d/%m %H:%M')}")
+                
+                # Résoudre avec les contraintes actuelles
+                result = await self._solve_with_constraints(
+                    orders, operations, machines, rules_engine,
+                    ignore_rules, ignore_material, ignore_calendars,
+                    auto_assign_machines, max_solver_time_seconds,
+                    material_constraints
+                )
+                
+                if result['status'] not in ['OPTIMAL', 'FEASIBLE']:
+                    logger.warning(f"   ❌ Pas de solution à l'itération {iteration}")
+                    final_result = result
+                    break
+                
+                # Si ignore_material, pas de post-traitement
+                if ignore_material:
+                    final_result = result
+                    break
+                
+                # POST-TRAITEMENT: Simuler les consommations et détecter les ruptures
+                scheduled_ops = result.get('operations', [])
+                material_issues = self._check_material_availability(scheduled_ops)
+                
+                if not material_issues['needs_replan']:
+                    # Pas de rupture ou ruptures sans solution → terminé
+                    logger.info(f"   ✅ Aucune rupture matière détectée - Planification terminée")
+                    result['unscheduled_operations'] = material_issues.get('truly_unschedulable', [])
+                    result['unscheduled_count'] = len(material_issues.get('truly_unschedulable', []))
+                    final_result = result
+                    break
+                
+                # Des opérations doivent être reportées
+                new_constraints = material_issues['new_constraints']
+                logger.info(f"   📅 {len(new_constraints)} opérations à reporter")
+                
+                # Mettre à jour les contraintes pour la prochaine itération
+                for op_id, new_min_date in new_constraints.items():
+                    if op_id not in material_constraints or new_min_date > material_constraints[op_id]:
+                        material_constraints[op_id] = new_min_date
+                        logger.info(f"      {op_id}: nouvelle contrainte >= {new_min_date.strftime('%d/%m %H:%M')}")
+                
+                final_result = result
+            
+            if final_result is None:
+                final_result = self._error_result("Aucune solution trouvée après toutes les itérations")
+            
+            # Log solver result
+            self.diagnostics.log_solver_result(
+                final_result['status'],
+                final_result.get('operations', []),
+                final_result.get('conflicts', []),
+                final_result.get('solver_time', 0)
+            )
+            
+            final_result['diagnostics'] = self.diagnostics.get_report()
+            final_result['material_iterations'] = iteration if 'iteration' in dir() else 1
+            
+            return final_result
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur d'ordonnancement: {str(e)}", exc_info=True)
+            return self._error_result(str(e))
+    
+    def _check_material_availability(self, scheduled_ops: List[Dict]) -> Dict:
+        """
+        Vérifie la disponibilité matière pour toutes les opérations planifiées.
+        
+        Returns:
+            {
+                'needs_replan': bool,  # True si des opérations doivent être reportées
+                'new_constraints': {op_id: datetime},  # Nouvelles contraintes de date min
+                'truly_unschedulable': []  # Opérations sans solution (pas de réception future)
+            }
+        """
+        result = {
+            'needs_replan': False,
+            'new_constraints': {},
+            'truly_unschedulable': []
+        }
+        
+        if not scheduled_ops or not self.material_manager:
+            return result
+        
+        # Trier par date de début
+        ops_by_start = sorted(scheduled_ops, key=lambda x: x.get('start_minutes', 0))
+        
+        # Réinitialiser les consommations pour une simulation propre
+        self.material_manager.planned_consumptions = {}
+        
+        # Tracker les OFs bloqués (cascade de gamme)
+        blocked_orders = set()
+        
+        for op in ops_by_start:
+            op_id = op.get('operation_id')
+            order_id = op.get('order_id')
+            start_minutes = op.get('start_minutes', 0)
+            start_dt = self._minutes_to_datetime(start_minutes)
+            
+            # Vérifier si une opération précédente de cet OF est bloquée
+            if order_id in blocked_orders:
+                # Propager le blocage
+                continue
+            
+            # Vérifier la disponibilité
+            material_status = self.material_manager.check_operation_materials(op_id, start_dt)
+            
+            if material_status.all_available:
+                # OK - réserver les matières
+                self.material_manager.reserve_materials(op_id, start_dt)
+            else:
+                # RUPTURE - chercher la date de disponibilité
+                earliest = material_status.earliest_start_date
+                
+                if earliest and earliest > start_dt:
+                    # Reporter l'opération à cette date
+                    result['needs_replan'] = True
+                    result['new_constraints'][op_id] = earliest
+                    logger.info(f"   📅 {op_id}: reporter de {start_dt.strftime('%d/%m %H:%M')} à {earliest.strftime('%d/%m %H:%M')}")
+                    
+                    # Bloquer les opérations suivantes de cet OF
+                    blocked_orders.add(order_id)
+                else:
+                    # Pas de solution - marquer comme non planifiable
+                    result['truly_unschedulable'].append({
+                        'operation_id': op_id,
+                        'order_id': order_id,
+                        'article_id': op.get('article_id'),
+                        'blocking_components': material_status.blocking_components,
+                        'reason': "Aucune réception fournisseur planifiée pour les composants manquants"
+                    })
+                    blocked_orders.add(order_id)
+                    logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - pas de réception future")
+        
+        return result
+    
+    async def _solve_with_constraints(
+        self, 
+        orders, 
+        operations, 
+        machines, 
+        rules_engine,
+        ignore_rules,
+        ignore_material,
+        ignore_calendars,
+        auto_assign_machines,
+        max_solver_time_seconds,
+        material_constraints
+    ):
+        """
+        Résout le problème d'ordonnancement avec les contraintes matière données.
+        
+        Args:
+            material_constraints: {operation_id: datetime} - date minimum de début pour chaque opération
+        """
+        # Charger les données nécessaires pour cette résolution
+        planned_receipts = await self.db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
+        
+        for receipt in planned_receipts[:5]:
+            logger.info(f"   📥 {receipt.get('article_id')}: +{receipt.get('quantity')} le {receipt.get('planned_date')}")
             
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
             if auto_assign_machines and not ignore_rules:
@@ -385,9 +635,10 @@ class SchedulerEngine:
                     is_valid = False
                     blocking_reason = f'Machine {machine_id} introuvable'
                 
-                # Vérification matière avec projection
+                # Vérification matière avec projection TEMPORELLE
                 if is_valid and not ignore_material:
-                    # Vérifier les besoins matière de l'opération
+                    # Vérifier les besoins matière de l'opération à t=scheduling_start
+                    # La contrainte exacte sera ajoutée au modèle CP-SAT plus tard
                     material_status = self.material_manager.check_operation_materials(
                         op_id,
                         self.scheduling_start
@@ -468,15 +719,14 @@ class SchedulerEngine:
                 op_id = op.get('id')
                 duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
                 
-                # CONTRAINTE MATIÈRE: Date minimum de début depuis les itérations précédentes
+                # Calculer la contrainte matière: date minimum de début
+                earliest_material_date = op.get('_material_earliest_date')
                 min_start = 0
-                if op_id in material_date_constraints:
-                    min_date = material_date_constraints[op_id]
-                    min_start = self._datetime_to_minutes(min_date)
-                    min_start = max(0, min_start)
-                    logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min ({min_date.strftime('%d/%m %H:%M')})")
+                if earliest_material_date:
+                    min_start = self._datetime_to_minutes(earliest_material_date)
+                    min_start = max(0, min_start)  # Pas de valeur négative
                 
-                # Variable de début (avec contrainte matière si applicable)
+                # Variable de début (avec contrainte matière intégrée)
                 start_var = model.new_int_var(min_start, horizon - duration, f'start_{op_id}')
                 start_vars[op_id] = start_var
                 
@@ -502,12 +752,18 @@ class SchedulerEngine:
                         'interval': interval_var,
                         'op_id': op_id,
                         'duration': duration,
-                        'min_start': min_start
+                        'min_start': min_start,
+                        'earliest_material_date': earliest_material_date
                     })
             
-            # Log des contraintes matière actives
-            if material_date_constraints:
-                logger.info(f"\n📦 ITÉRATION {current_iteration}: {len(material_date_constraints)} contraintes matière actives")
+            # Log des contraintes matière
+            material_constraint_count = sum(1 for op in valid_operations if op.get('_material_earliest_date'))
+            if material_constraint_count > 0:
+                logger.info(f"\n📦 CONTRAINTES MATIÈRE TEMPORELLE: {material_constraint_count} opérations avec date minimum")
+                for op in valid_operations:
+                    if op.get('_material_earliest_date'):
+                        min_start = self._datetime_to_minutes(op['_material_earliest_date'])
+                        logger.info(f"   ✓ {op['id']}: start >= {min_start} min ({op['_material_earliest_date'].strftime('%d/%m %H:%M')})")
             
             # Log solver input
             self.diagnostics.log_solver_input(valid_operations, machine_to_intervals, horizon)
@@ -527,16 +783,18 @@ class SchedulerEngine:
             # CONTRAINTES DE CALENDRIER: Interdire les plages hors horaires de travail
             calendar_constraints_count = 0
             if self.calendar_manager and not ignore_calendars:
-                logger.info("\n📌 CONTRAINTES DE CALENDRIER:")
+                logger.info("\n📌 CONTRAINTES DE CALENDRIER (PRÉCISION MINUTE):")
                 
                 for machine_id, intervals_data in machine_to_intervals.items():
                     calendar = self.calendar_manager.get_calendar_for_machine(machine_id)
                     working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
-                    start_hour = calendar.get('start_hour', 0)
-                    end_hour = calendar.get('end_hour', 24)
+                    start_minutes = calendar.get('start_minutes', 0)
+                    end_minutes = calendar.get('end_minutes', 1440)
+                    start_time = calendar.get('start_time', '00:00')
+                    end_time = calendar.get('end_time', '24:00')
                     
                     # Vérifier si le calendrier est 24/7 (pas de contrainte)
-                    is_24_7 = (working_days == {0, 1, 2, 3, 4, 5, 6} and start_hour == 0 and end_hour >= 23)
+                    is_24_7 = (working_days == {0, 1, 2, 3, 4, 5, 6} and start_minutes == 0 and end_minutes >= 1440)
                     
                     if is_24_7:
                         logger.info(f"   ○ Machine {machine_id}: Calendrier 24/7 (pas de contrainte)")
@@ -552,7 +810,7 @@ class SchedulerEngine:
                         continue
                     
                     logger.info(f"   ✓ Machine {machine_id}: {len(forbidden_slots)} plages interdites")
-                    logger.info(f"      Calendrier: jours={list(working_days)}, heures={start_hour}-{end_hour}")
+                    logger.info(f"      Calendrier: jours={list(working_days)}, horaires={start_time}-{end_time}")
                     # Log des premières plages pour debug
                     for i, (fs, fe) in enumerate(forbidden_slots[:3]):
                         fs_dt = self.scheduling_start + timedelta(minutes=fs)
@@ -588,7 +846,7 @@ class SchedulerEngine:
                 logger.info("\n📌 CONTRAINTES DE CALENDRIER: Désactivées")
             
             
-            # Contraintes de séquence (opérations d'un même OF)
+            # Contraintes de séquence (opérations d'un même OF) avec TEMPS DE DÉPLACEMENT
             operations_by_order = {}
             for op in valid_operations:
                 order_id = op.get('order_id')
@@ -598,29 +856,50 @@ class SchedulerEngine:
                     operations_by_order[order_id].append(op)
             
             sequence_constraints_count = 0
-            logger.info("\n📌 CONTRAINTES DE SÉQUENCE (gammes):")
+            transfer_time_constraints_count = 0
+            logger.info("\n📌 CONTRAINTES DE SÉQUENCE (gammes) + TEMPS DE DÉPLACEMENT:")
             for order_id, order_ops in operations_by_order.items():
                 # Trier par numéro d'opération dans la gamme
                 sorted_ops = sorted(order_ops, key=lambda x: x.get('operation_id', 0))
                 for i in range(len(sorted_ops) - 1):
-                    op1_id = sorted_ops[i].get('id')
-                    op2_id = sorted_ops[i + 1].get('id')
+                    op1 = sorted_ops[i]
+                    op2 = sorted_ops[i + 1]
+                    op1_id = op1.get('id')
+                    op2_id = op2.get('id')
+                    
                     if op1_id in end_vars and op2_id in start_vars:
-                        model.add(start_vars[op2_id] >= end_vars[op1_id])
+                        # Temps de déplacement entre op1 et op2
+                        transfer_time = op1.get('transfer_time_minutes', 0)
+                        
+                        # Contrainte: op2 commence APRÈS fin de op1 + temps de déplacement
+                        if transfer_time > 0:
+                            model.add(start_vars[op2_id] >= end_vars[op1_id] + transfer_time)
+                            transfer_time_constraints_count += 1
+                        else:
+                            model.add(start_vars[op2_id] >= end_vars[op1_id])
+                        
                         sequence_constraints_count += 1
                 
                 if len(sorted_ops) > 1:
-                    ops_seq = [f"{o.get('id')}(op{o.get('operation_id')})" for o in sorted_ops]
+                    ops_seq = []
+                    for j, o in enumerate(sorted_ops):
+                        transfer = o.get('transfer_time_minutes', 0)
+                        if transfer > 0 and j < len(sorted_ops) - 1:
+                            ops_seq.append(f"{o.get('id')}(op{o.get('operation_id')}) +{transfer}min")
+                        else:
+                            ops_seq.append(f"{o.get('id')}(op{o.get('operation_id')})")
                     logger.info(f"   ✓ OF {order_id}: {' -> '.join(ops_seq)}")
             
             logger.info(f"\n   Total: {sequence_constraints_count} contraintes de séquence")
+            if transfer_time_constraints_count > 0:
+                logger.info(f"   🚚 Dont {transfer_time_constraints_count} avec temps de déplacement")
             
             # Objectif: minimiser le makespan (temps total)
             if end_vars:
                 makespan = model.new_int_var(0, horizon, 'makespan')
                 model.add_max_equality(makespan, list(end_vars.values()))
                 model.minimize(makespan)
-                logger.info(f"   ✓ Objectif: minimiser makespan")
+                logger.info("   ✓ Objectif: minimiser makespan")
             
             # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
@@ -640,13 +919,12 @@ class SchedulerEngine:
                 'solver_time': solver.wall_time,
                 'max_solver_time': max_solver_time_seconds,
                 'objective_value': solver.objective_value if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
-                'scheduling_start': self.scheduling_start.isoformat(),
-                'material_iteration': current_iteration
+                'scheduling_start': self.scheduling_start.isoformat()
             }
             
             # Extraire la solution
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-                logger.info(f"\n📊 SOLUTION TROUVÉE (itération {current_iteration}):")
+                logger.info("\n📊 SOLUTION TROUVÉE:")
                 
                 scheduled_ops = []
                 for op in valid_operations:
@@ -669,85 +947,96 @@ class SchedulerEngine:
                         }
                         scheduled_ops.append(scheduled_op)
                 
-                # POST-TRAITEMENT MATIÈRE: Vérifier les ruptures et replanifier si nécessaire
-                if not ignore_material and self.material_manager and current_iteration < max_iterations:
-                    logger.info(f"\n📦 POST-TRAITEMENT MATIÈRE (itération {current_iteration}):")
-                    
-                    # Trier par date de début pour simuler dans l'ordre
+                # POST-TRAITEMENT MATIÈRE: Réserver les matières dans l'ordre du planning
+                # et identifier les opérations en rupture de stock
+                unscheduled_due_to_material = []
+                scheduled_ops_final = []
+                blocked_orders = set()  # OFs dont une opération précédente est bloquée
+                
+                if not ignore_material and self.material_manager:
+                    logger.info("\n📦 POST-TRAITEMENT MATIÈRE TEMPORELLE:")
+                    # Trier par date de début pour simuler l'ordre réel d'exécution
                     ops_by_start = sorted(scheduled_ops, key=lambda x: x['start_minutes'])
                     
-                    # Réinitialiser les consommations planifiées
+                    # Réinitialiser les consommations planifiées pour une simulation propre
                     self.material_manager.planned_consumptions = {}
                     
-                    # Tracker les nouvelles contraintes et les OFs bloqués
-                    new_constraints = {}
-                    blocked_orders = set()
-                    truly_unschedulable = []
+                    # Index pour vérifier les dépendances de gamme
+                    ops_by_order = {}
+                    for op in scheduled_ops:
+                        oid = op.get('order_id')
+                        if oid not in ops_by_order:
+                            ops_by_order[oid] = []
+                        ops_by_order[oid].append(op)
                     
                     for op in ops_by_start:
                         op_id = op['operation_id']
                         order_id = op.get('order_id')
                         start_dt = self._minutes_to_datetime(op['start_minutes'])
                         
-                        # Skip si OF déjà bloqué (cascade de gamme)
+                        # Vérifier si une opération précédente de cet OF est bloquée
                         if order_id in blocked_orders:
+                            unscheduled_op = {
+                                'operation_id': op_id,
+                                'order_id': order_id,
+                                'article_id': op.get('article_id'),
+                                'originally_planned': op['start_datetime'],
+                                'blocking_components': [],
+                                'reason': f"Opération précédente de l'OF {order_id} non planifiable",
+                                'earliest_possible_date': None
+                            }
+                            unscheduled_due_to_material.append(unscheduled_op)
+                            logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - dépend d'une op précédente bloquée")
                             continue
                         
-                        # Vérifier la disponibilité à cette date
+                        # Vérifier la disponibilité à t=start AVEC les consommations précédentes
                         material_status = self.material_manager.check_operation_materials(op_id, start_dt)
                         
-                        if material_status.all_available:
-                            # OK - réserver les matières
-                            self.material_manager.reserve_materials(op_id, start_dt)
-                        else:
-                            # RUPTURE - chercher la date de disponibilité
+                        if not material_status.all_available:
+                            # RUPTURE DE STOCK - cette opération ne peut pas être planifiée
+                            # Marquer l'OF comme bloqué pour les opérations suivantes
+                            blocked_orders.add(order_id)
+                            
+                            # Chercher la prochaine date de disponibilité
                             earliest = material_status.earliest_start_date
                             
-                            if earliest and earliest > start_dt:
-                                # Reporter cette opération
-                                new_constraints[op_id] = earliest
-                                blocked_orders.add(order_id)
-                                logger.info(f"   📅 {op_id}: rupture à {start_dt.strftime('%d/%m %H:%M')}, reporter à {earliest.strftime('%d/%m %H:%M')}")
-                            else:
-                                # Pas de réception future - vraiment non planifiable
-                                truly_unschedulable.append({
-                                    'operation_id': op_id,
-                                    'order_id': order_id,
-                                    'article_id': op.get('article_id'),
-                                    'blocking_components': material_status.blocking_components,
-                                    'reason': "Aucune réception fournisseur planifiée pour les composants manquants"
-                                })
-                                blocked_orders.add(order_id)
-                                logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - pas de réception future")
+                            unscheduled_op = {
+                                'operation_id': op_id,
+                                'order_id': order_id,
+                                'article_id': op.get('article_id'),
+                                'originally_planned': op['start_datetime'],
+                                'blocking_components': material_status.blocking_components,
+                                'reason': f"Stock insuffisant à {start_dt.strftime('%d/%m %H:%M')}",
+                                'earliest_possible_date': earliest.isoformat() if earliest else None
+                            }
+                            unscheduled_due_to_material.append(unscheduled_op)
+                            logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - {unscheduled_op['reason']}")
+                            logger.warning(f"      Composants manquants: {material_status.blocking_components}")
+                            if earliest:
+                                logger.warning(f"      Disponible au plus tôt: {earliest.strftime('%d/%m %H:%M')}")
+                        else:
+                            # Réserver les matières (consommer du stock projeté)
+                            self.material_manager.reserve_materials(op_id, start_dt)
+                            scheduled_ops_final.append(op)
+                            logger.debug(f"   ✓ {op_id}: Matières réservées à {start_dt.strftime('%d/%m %H:%M')}")
                     
-                    # Si des opérations doivent être reportées, relancer la planification
-                    if new_constraints:
-                        logger.info(f"\n🔄 REPLANIFICATION NÉCESSAIRE: {len(new_constraints)} opérations à reporter")
-                        
-                        # Fusionner les contraintes
-                        updated_constraints = dict(material_date_constraints)
-                        for op_id, new_date in new_constraints.items():
-                            if op_id not in updated_constraints or new_date > updated_constraints[op_id]:
-                                updated_constraints[op_id] = new_date
-                        
-                        # Relancer la planification avec les nouvelles contraintes
-                        new_options = dict(options)
-                        new_options['_material_date_constraints'] = updated_constraints
-                        new_options['_iteration'] = current_iteration + 1
-                        
-                        return await self.schedule(
-                            orders, operations, machines, rules_engine, material_checker, new_options
-                        )
+                    if unscheduled_due_to_material:
+                        result['unscheduled_operations'] = unscheduled_due_to_material
+                        result['unscheduled_count'] = len(unscheduled_due_to_material)
+                        logger.warning(f"\n   ⚠️ {len(unscheduled_due_to_material)} opérations NON PLANIFIÉES (rupture matière)")
+                    else:
+                        logger.info("   ✓ Toutes les matières disponibles et réservées")
                     
-                    # Ajouter les opérations vraiment non planifiables au résultat
-                    if truly_unschedulable:
-                        result['unscheduled_operations'] = truly_unschedulable
-                        result['unscheduled_count'] = len(truly_unschedulable)
+                    # Utiliser les opérations validées uniquement
+                    scheduled_ops = scheduled_ops_final
+                else:
+                    # Sans vérification matière, toutes les opérations sont planifiées
+                    pass
                 
                 # Vérifier l'absence de chevauchement (post-validation)
                 overlap_errors = self._verify_no_overlap(scheduled_ops)
                 if overlap_errors:
-                    logger.error(f"⚠️ ERREUR: Chevauchements détectés!")
+                    logger.error("⚠️ ERREUR: Chevauchements détectés!")
                     for err in overlap_errors:
                         logger.error(f"   {err}")
                     result['overlap_errors'] = overlap_errors
