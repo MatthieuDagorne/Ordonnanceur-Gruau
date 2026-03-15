@@ -686,7 +686,8 @@ async def get_projected_stock():
         
         for mat in operation_materials:
             article_id = mat.get('article_composant_id')
-            qty = mat.get('quantity', 0)
+            # Le champ est 'due_quantity' (ou 'quantity' pour compatibilité)
+            qty = mat.get('due_quantity') or mat.get('quantity', 0)
             op_id = mat.get('id')
             order_id = mat.get('order_id')
             
@@ -2027,10 +2028,13 @@ async def get_gantt_data(scenario_id: str):
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
         materials_by_op = {}
         for mat in operation_materials:
-            op_id = mat.get('id', '').split('_')[0] if '_' in str(mat.get('id', '')) else mat.get('id')
-            if op_id not in materials_by_op:
-                materials_by_op[op_id] = []
-            materials_by_op[op_id].append(mat)
+            # L'id dans operation_materials est au format "ORDER_ID_OPERATION_SEQ" (ex: LV1100001_10)
+            # C'est le même format que operation_id dans les opérations ordonnancées
+            op_id = mat.get('id')
+            if op_id:
+                if op_id not in materials_by_op:
+                    materials_by_op[op_id] = []
+                materials_by_op[op_id].append(mat)
         
         # Charger les stocks pour calculer la disponibilité
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
@@ -2070,8 +2074,8 @@ async def get_gantt_data(scenario_id: str):
             materials_info = []
             materials_ok = True
             for mat in materials:
-                article_id = mat.get('article_id')
-                qty_needed = mat.get('quantity', 0)
+                article_id = mat.get('article_composant_id') or mat.get('article_id')
+                qty_needed = mat.get('due_quantity') or mat.get('quantity', 0)
                 qty_stock = stocks_dict.get(article_id, 0)
                 available = qty_stock >= qty_needed
                 if not available:
@@ -2222,8 +2226,8 @@ async def get_projected_stock_advanced():
         
         for mat in operation_materials:
             op_id = mat.get('operation_id')
-            article_id = mat.get('article_id')
-            quantity = mat.get('quantity', 0)
+            article_id = mat.get('article_composant_id') or mat.get('article_id')
+            quantity = mat.get('due_quantity') or mat.get('quantity', 0)
             
             if not article_id or not quantity:
                 continue

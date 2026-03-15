@@ -101,7 +101,7 @@ class MaterialManager:
                     order_id=mat.get('order_id', ''),
                     operation_seq=mat.get('operation_id', 0),
                     article_composant_id=mat.get('article_composant_id', ''),
-                    quantity=mat.get('quantity', 0)
+                    quantity=mat.get('due_quantity') or mat.get('quantity', 0)
                 ))
         
         # Réceptions planifiées
