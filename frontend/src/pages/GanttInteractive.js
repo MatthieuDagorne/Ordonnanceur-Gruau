@@ -64,21 +64,28 @@ export default function GanttInteractive() {
     return `${hours}h${mins.toString().padStart(2, '0')}`;
   };
 
-  // Formater la date/heure absolue à partir du scheduling_start
-  const formatAbsoluteTime = (minutes, schedulingStart) => {
-    if (!schedulingStart) return formatTime(minutes);
-    try {
-      const start = new Date(schedulingStart);
-      const targetDate = new Date(start.getTime() + minutes * 60000);
-      return targetDate.toLocaleString('fr-FR', {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch {
-      return formatTime(minutes);
-    }
+  // Formater juste l'heure (HH:MM)
+  const formatHourMinute = (date) => {
+    return date.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Formater la date courte (DD/MM)
+  const formatShortDate = (date) => {
+    return date.toLocaleDateString('fr-FR', {
+      day: '2-digit',
+      month: '2-digit'
+    });
+  };
+
+  // Calculer l'intervalle basé sur le zoom
+  const getTimeInterval = (zoomLevel) => {
+    if (zoomLevel >= 2) return 15;      // Zoom fort: 15 minutes
+    if (zoomLevel >= 1.5) return 30;    // Zoom moyen: 30 minutes  
+    if (zoomLevel >= 1) return 60;       // Zoom standard: 1 heure
+    return 120;                          // Zoom faible: 2 heures
   };
 
   const formatDateTime = (isoString) => {
@@ -257,6 +264,105 @@ export default function GanttInteractive() {
   const headerHeight = 60;
   const sidebarWidth = 180;
 
+  // Extraire les données du Gantt (avec valeurs par défaut)
+  const time_range = ganttData?.time_range || {};
+  const total_tasks = ganttData?.total_tasks || 0;
+  const scheduling_start = ganttData?.scheduling_start;
+  const centres_de_charge = ganttData?.centres_de_charge || [];
+  const calendars = ganttData?.calendars || [];
+  const totalWidth = (time_range?.total_minutes || 480) * pixelsPerMinute;
+
+  // Générer les marqueurs de temps avec timeline continue par heures
+  // Avec séparateurs de jour à minuit
+  const timeMarkers = useMemo(() => {
+    if (!scheduling_start || !time_range?.total_minutes) return [];
+    
+    const markers = [];
+    const interval = getTimeInterval(zoom);
+    const startDate = new Date(scheduling_start);
+    const minMinutes = time_range.min_minutes || 0;
+    const maxMinutes = time_range.total_minutes || 480;
+    
+    // Calculer la première minute alignée sur l'intervalle
+    const startDateTime = new Date(startDate.getTime() + minMinutes * 60000);
+    
+    // Arrondir au prochain intervalle
+    const startMin = startDateTime.getMinutes();
+    const alignedMin = Math.ceil(startMin / interval) * interval;
+    const alignedStartDate = new Date(startDateTime);
+    alignedStartDate.setMinutes(alignedMin % 60);
+    alignedStartDate.setSeconds(0);
+    alignedStartDate.setMilliseconds(0);
+    if (alignedMin >= 60) {
+      alignedStartDate.setHours(alignedStartDate.getHours() + 1);
+      alignedStartDate.setMinutes(0);
+    }
+    
+    // Parcourir la timeline
+    let currentDate = alignedStartDate;
+    let lastDay = -1;
+    
+    while (true) {
+      const minutesSinceStart = Math.round((currentDate.getTime() - startDate.getTime()) / 60000);
+      const relativeMinutes = minutesSinceStart - minMinutes;
+      
+      if (relativeMinutes > maxMinutes) break;
+      if (relativeMinutes >= 0) {
+        const currentDay = currentDate.getDate();
+        const isNewDay = lastDay !== -1 && currentDay !== lastDay;
+        const isMidnight = currentDate.getHours() === 0 && currentDate.getMinutes() === 0;
+        
+        markers.push({
+          minutes: relativeMinutes,
+          label: formatHourMinute(currentDate),
+          isNewDay: isNewDay || isMidnight,
+          dayLabel: isNewDay || isMidnight ? formatShortDate(currentDate) : null,
+          fullDate: currentDate.toISOString()
+        });
+        
+        lastDay = currentDay;
+      }
+      
+      // Avancer à l'intervalle suivant
+      currentDate = new Date(currentDate.getTime() + interval * 60000);
+    }
+    
+    return markers;
+  }, [scheduling_start, time_range?.min_minutes, time_range?.total_minutes, zoom]);
+
+  // Calculer les séparateurs de jour (lignes verticales à minuit)
+  const daySeparators = useMemo(() => {
+    if (!scheduling_start || !time_range?.total_minutes) return [];
+    
+    const separators = [];
+    const startDate = new Date(scheduling_start);
+    const minMinutes = time_range.min_minutes || 0;
+    const maxMinutes = time_range.total_minutes || 480;
+    
+    // Trouver le premier minuit après le début
+    const firstDate = new Date(startDate.getTime() + minMinutes * 60000);
+    let midnight = new Date(firstDate);
+    midnight.setHours(0, 0, 0, 0);
+    midnight.setDate(midnight.getDate() + 1);
+    
+    while (true) {
+      const minutesSinceStart = Math.round((midnight.getTime() - startDate.getTime()) / 60000);
+      const relativeMinutes = minutesSinceStart - minMinutes;
+      
+      if (relativeMinutes > maxMinutes) break;
+      if (relativeMinutes >= 0) {
+        separators.push({
+          minutes: relativeMinutes,
+          label: formatShortDate(midnight)
+        });
+      }
+      
+      midnight = new Date(midnight.getTime() + 24 * 60 * 60000);
+    }
+    
+    return separators;
+  }, [scheduling_start, time_range?.min_minutes, time_range?.total_minutes]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -271,19 +377,6 @@ export default function GanttInteractive() {
         Données non disponibles
       </div>
     );
-  }
-
-  const { time_range, total_tasks, scheduling_start, centres_de_charge, calendars } = ganttData;
-  const totalWidth = (time_range?.total_minutes || 480) * pixelsPerMinute;
-
-  // Générer les marqueurs de temps avec dates réelles
-  const timeMarkers = [];
-  const markerInterval = zoom >= 1 ? 60 : 120;
-  for (let m = 0; m <= (time_range?.total_minutes || 480); m += markerInterval) {
-    timeMarkers.push({
-      minutes: m,
-      label: formatAbsoluteTime(m + (time_range?.min_minutes || 0), scheduling_start)
-    });
   }
 
   return (
@@ -310,17 +403,26 @@ export default function GanttInteractive() {
             className="p-2 rounded-lg transition-colors"
             style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
             title="Zoom -"
+            data-testid="zoom-out-btn"
           >
             <ZoomOut size={16} />
           </button>
-          <span className="text-sm font-mono px-2" style={{ color: 'var(--text-secondary)' }}>
-            {(zoom * 100).toFixed(0)}%
-          </span>
+          <div className="text-center min-w-[80px]">
+            <span className="text-sm font-mono block" style={{ color: 'var(--text-secondary)' }}>
+              {(zoom * 100).toFixed(0)}%
+            </span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {getTimeInterval(zoom) === 15 ? '15 min' : 
+               getTimeInterval(zoom) === 30 ? '30 min' : 
+               getTimeInterval(zoom) === 60 ? '1 heure' : '2 heures'}
+            </span>
+          </div>
           <button
             onClick={() => setZoom(Math.min(3, zoom + 0.25))}
             className="p-2 rounded-lg transition-colors"
             style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
             title="Zoom +"
+            data-testid="zoom-in-btn"
           >
             <ZoomIn size={16} />
           </button>
@@ -504,8 +606,8 @@ export default function GanttInteractive() {
       >
         <div className="overflow-x-auto" ref={containerRef}>
           <div style={{ minWidth: sidebarWidth + totalWidth + 40 }}>
-            {/* Timeline Header */}
-            <div className="flex" style={{ height: headerHeight, borderBottom: '1px solid var(--border-default)' }}>
+            {/* Timeline Header avec heures continues et séparateurs de jour */}
+            <div className="flex" style={{ height: headerHeight + 20, borderBottom: '1px solid var(--border-default)' }}>
               <div 
                 className="flex-shrink-0 flex items-center justify-center font-semibold text-sm"
                 style={{ width: sidebarWidth, backgroundColor: 'var(--bg-sunken)', color: 'var(--text-muted)', borderRight: '1px solid var(--border-default)' }}
@@ -513,16 +615,45 @@ export default function GanttInteractive() {
                 Machine
               </div>
               <div className="relative flex-1" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                {/* Séparateurs de jour (lignes à minuit) */}
+                {daySeparators.map((sep, idx) => (
+                  <div
+                    key={`sep-${idx}`}
+                    className="absolute top-0 bottom-0"
+                    style={{ 
+                      left: sep.minutes * pixelsPerMinute,
+                      borderLeft: '2px solid var(--accent-primary)',
+                      zIndex: 10
+                    }}
+                  >
+                    <span 
+                      className="absolute top-0 left-1 text-xs font-bold px-1 rounded"
+                      style={{ 
+                        color: 'var(--accent-primary)',
+                        backgroundColor: 'var(--bg-elevated)'
+                      }}
+                    >
+                      {sep.label}
+                    </span>
+                  </div>
+                ))}
+                
+                {/* Marqueurs d'heures */}
                 {timeMarkers.map((marker, idx) => (
                   <div
                     key={idx}
-                    className="absolute top-0 bottom-0 flex flex-col justify-center"
+                    className="absolute flex flex-col justify-end pb-1"
                     style={{ 
                       left: marker.minutes * pixelsPerMinute,
-                      borderLeft: '1px solid var(--border-default)'
+                      top: 16,
+                      bottom: 0,
+                      borderLeft: marker.isNewDay ? '2px solid var(--accent-primary)' : '1px solid var(--border-default)'
                     }}
                   >
-                    <span className="ml-1 text-xs font-mono whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                    <span 
+                      className="ml-1 text-xs font-mono whitespace-nowrap" 
+                      style={{ color: marker.isNewDay ? 'var(--accent-primary)' : 'var(--text-muted)' }}
+                    >
                       {marker.label}
                     </span>
                   </div>
@@ -586,15 +717,27 @@ export default function GanttInteractive() {
                     />
                   ))}
                   
-                  {/* Grid lines */}
+                  {/* Grid lines - avec séparateurs de jour plus marqués */}
+                  {daySeparators.map((sep, sIdx) => (
+                    <div
+                      key={`grid-sep-${sIdx}`}
+                      className="absolute top-0 bottom-0"
+                      style={{ 
+                        left: sep.minutes * pixelsPerMinute,
+                        borderLeft: '2px solid var(--accent-primary)',
+                        opacity: 0.5,
+                        zIndex: 2
+                      }}
+                    />
+                  ))}
                   {timeMarkers.map((marker, mIdx) => (
                     <div
                       key={mIdx}
                       className="absolute top-0 bottom-0"
                       style={{ 
                         left: marker.minutes * pixelsPerMinute,
-                        borderLeft: '1px dashed var(--border-default)',
-                        opacity: 0.5
+                        borderLeft: marker.isNewDay ? '2px solid var(--accent-primary)' : '1px dashed var(--border-default)',
+                        opacity: marker.isNewDay ? 0.5 : 0.3
                       }}
                     />
                   ))}

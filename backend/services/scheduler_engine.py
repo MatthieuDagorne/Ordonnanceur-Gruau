@@ -101,16 +101,37 @@ class CalendarManager:
         Retourne une liste de tuples (start_minute, end_minute) relatifs au scheduling_start.
         Ces plages représentent les périodes où la machine ne peut pas travailler.
         
-        IMPORTANT: Utilise ceil() pour être conservateur et garantir qu'aucune opération
-        ne puisse commencer ou se terminer dans une plage interdite.
+        Utilise start_time/end_time (format HH:MM) pour une précision à la minute.
         """
         calendar = self.get_calendar_for_machine(machine_id)
         working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
-        start_hour = calendar.get('start_hour', 0)
-        end_hour = calendar.get('end_hour', 24)
+        
+        # Utiliser start_time/end_time si disponibles (précision minute), sinon fallback sur start_hour/end_hour
+        start_time_str = calendar.get('start_time', '')
+        end_time_str = calendar.get('end_time', '')
+        
+        if start_time_str and ':' in start_time_str:
+            parts = start_time_str.split(':')
+            start_hour = int(parts[0])
+            start_minute = int(parts[1]) if len(parts) > 1 else 0
+        else:
+            start_hour = calendar.get('start_hour', 0)
+            start_minute = 0
+        
+        if end_time_str and ':' in end_time_str:
+            parts = end_time_str.split(':')
+            end_hour = int(parts[0])
+            end_minute = int(parts[1]) if len(parts) > 1 else 0
+        else:
+            end_hour = calendar.get('end_hour', 24)
+            end_minute = 0
+        
+        # Convertir en minutes depuis minuit pour faciliter les calculs
+        work_start_minutes = start_hour * 60 + start_minute  # Ex: 7*60+45 = 465 pour 07:45
+        work_end_minutes = end_hour * 60 + end_minute  # Ex: 16*60+45 = 1005 pour 16:45
         
         # Si calendrier 24/7, pas de plages interdites
-        if working_days == {0, 1, 2, 3, 4, 5, 6} and start_hour == 0 and end_hour == 24:
+        if working_days == {0, 1, 2, 3, 4, 5, 6} and work_start_minutes == 0 and work_end_minutes == 24*60:
             return []
         
         forbidden_slots = []
@@ -118,18 +139,15 @@ class CalendarManager:
         # Normaliser scheduling_start au début de la journée pour les calculs
         base_date = scheduling_start.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # IMPORTANT: Ajouter une zone interdite immédiate si on est hors des heures de travail
-        # au moment du scheduling_start
-        current_hour = scheduling_start.hour + scheduling_start.minute / 60
+        # Heure actuelle en minutes depuis minuit
+        current_minutes = scheduling_start.hour * 60 + scheduling_start.minute
         current_weekday = scheduling_start.weekday()
         
         if current_weekday not in working_days:
-            # On démarre un jour non travaillé - tout est interdit jusqu'au prochain jour travaillé
-            # Cette situation sera gérée par la boucle ci-dessous
+            # On démarre un jour non travaillé - géré par la boucle ci-dessous
             pass
-        elif current_hour >= end_hour:
-            # On est APRÈS l'heure de fermeture - zone interdite de maintenant jusqu'au lendemain matin
-            # Chercher le prochain jour travaillé
+        elif current_minutes >= work_end_minutes:
+            # On est APRÈS l'heure de fermeture - zone interdite jusqu'au lendemain matin
             next_work_day = base_date + timedelta(days=1)
             for d in range(7):
                 check_day = base_date + timedelta(days=1 + d)
@@ -137,17 +155,14 @@ class CalendarManager:
                     next_work_day = check_day
                     break
             
-            # Zone interdite de 0 (maintenant) jusqu'à l'heure d'ouverture du prochain jour travaillé
-            next_opening = next_work_day + timedelta(hours=start_hour)
+            next_opening = next_work_day + timedelta(minutes=work_start_minutes)
             slot_end = math.ceil((next_opening - scheduling_start).total_seconds() / 60) + 1
             forbidden_slots.append((0, slot_end))
-            logger.info(f"      Zone immédiate (après fermeture): [0 - {slot_end}]")
-        elif current_hour < start_hour:
-            # On est AVANT l'heure d'ouverture - zone interdite de maintenant jusqu'à l'ouverture
-            today_opening = base_date + timedelta(hours=start_hour)
+        elif current_minutes < work_start_minutes:
+            # On est AVANT l'heure d'ouverture - zone interdite jusqu'à l'ouverture
+            today_opening = base_date + timedelta(minutes=work_start_minutes)
             slot_end = math.ceil((today_opening - scheduling_start).total_seconds() / 60) + 1
             forbidden_slots.append((0, slot_end))
-            logger.info(f"      Zone immédiate (avant ouverture): [0 - {slot_end}]")
         
         # Calculer les zones interdites pour chaque jour de l'horizon
         for day_offset in range(horizon_days + 1):
@@ -155,40 +170,37 @@ class CalendarManager:
             day_weekday = day_start.weekday()
             
             if day_weekday not in working_days:
-                # Journée entière non travaillée (weekend ou jour férié)
+                # Journée entière non travaillée
                 slot_start_dt = day_start
                 slot_end_dt = day_start + timedelta(days=1)
                 
-                # Convertir en minutes relatives au scheduling_start
                 slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
                 slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60)
                 
-                if slot_end > 0:  # La plage chevauche ou est après le scheduling_start
+                if slot_end > 0:
                     forbidden_slots.append((max(0, slot_start), slot_end))
             else:
                 # Jour travaillé - ajouter les plages hors heures de travail
                 
-                # MATIN: De minuit jusqu'à l'heure d'ouverture
-                if start_hour > 0:
+                # MATIN: De minuit jusqu'à l'heure d'ouverture (ex: 00:00 - 07:45)
+                if work_start_minutes > 0:
                     slot_start_dt = day_start  # 00:00
-                    slot_end_dt = day_start + timedelta(hours=start_hour)  # Ex: 08:00
+                    slot_end_dt = day_start + timedelta(minutes=work_start_minutes)  # Ex: 07:45
                     
                     slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
-                    # +1 pour s'assurer que 08:00:00 est APRÈS la zone interdite
                     slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60) + 1
                     
                     if slot_end > 0:
                         forbidden_slots.append((max(0, slot_start), slot_end))
                 
-                # SOIR: De l'heure de fermeture jusqu'à minuit
-                if end_hour < 24:
-                    slot_start_dt = day_start + timedelta(hours=end_hour)  # Ex: 17:00
+                # SOIR: De l'heure de fermeture jusqu'à minuit (ex: 16:45 - 24:00)
+                if work_end_minutes < 24 * 60:
+                    slot_start_dt = day_start + timedelta(minutes=work_end_minutes)  # Ex: 16:45
                     slot_end_dt = day_start + timedelta(days=1)  # Minuit du jour suivant
                     
                     slot_start = math.ceil((slot_start_dt - scheduling_start).total_seconds() / 60)
                     slot_end = math.ceil((slot_end_dt - scheduling_start).total_seconds() / 60)
                     
-                    # Ajouter même si slot_start < 0 (on est déjà dans la zone interdite)
                     if slot_end > 0:
                         forbidden_slots.append((max(0, slot_start), slot_end))
         
