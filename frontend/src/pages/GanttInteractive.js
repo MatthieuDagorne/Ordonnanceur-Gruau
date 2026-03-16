@@ -15,6 +15,7 @@ export default function GanttInteractive() {
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [hoveredTask, setHoveredTask] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [selectedCentres, setSelectedCentres] = useState([]);
   const containerRef = useRef(null);
 
@@ -760,7 +761,13 @@ export default function GanttInteractive() {
                           backgroundColor: task.is_urgent ? '#eab308' : task.is_late ? '#EF4444' : hasMaterialIssue ? '#F59E0B' : task.color,
                           border: task.is_urgent ? '2px solid #ca8a04' : task.is_late ? '2px solid #B91C1C' : hasMaterialIssue ? '2px solid #D97706' : 'none'
                         }}
-                        onMouseEnter={() => setHoveredTask(task)}
+                        onMouseEnter={(e) => {
+                          setHoveredTask(task);
+                          setTooltipPosition({ x: e.clientX, y: e.clientY });
+                        }}
+                        onMouseMove={(e) => {
+                          setTooltipPosition({ x: e.clientX, y: e.clientY });
+                        }}
                         onMouseLeave={() => setHoveredTask(null)}
                         data-testid={`task-${task.id}`}
                       >
@@ -787,16 +794,15 @@ export default function GanttInteractive() {
         </div>
       </div>
 
-      {/* Tooltip enrichi */}
+      {/* Tooltip enrichi - suit le curseur */}
       {hoveredTask && (
         <div 
-          className="fixed z-50 p-4 rounded-lg shadow-lg"
+          className="fixed z-50 p-4 rounded-lg shadow-lg pointer-events-none"
           style={{ 
             backgroundColor: 'var(--bg-elevated)', 
             border: '1px solid var(--border-default)',
-            top: '50%',
-            right: 20,
-            transform: 'translateY(-50%)',
+            left: Math.min(tooltipPosition.x + 15, window.innerWidth - 380),
+            top: Math.min(tooltipPosition.y + 15, window.innerHeight - 400),
             maxWidth: 360
           }}
         >

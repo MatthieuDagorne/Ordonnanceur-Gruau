@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, CheckCircle, Clock, Package, Zap, ArrowRight, Info } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, CheckCircle, Clock, Package, Zap, ArrowRight, Info, FastForward, Rewind, Settings } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -8,7 +8,7 @@ export default function ScenarioDiagnostic() {
   const { scenarioId } = useParams();
   const [scenario, setScenario] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('priority');
+  const [activeTab, setActiveTab] = useState('params');
 
   useEffect(() => {
     fetchScenario();
@@ -53,8 +53,11 @@ export default function ScenarioDiagnostic() {
   const materialDelayed = scheduleData.material_delayed || [];
   const unscheduledOps = scheduleData.unscheduled_operations || [];
   const diagnostics = scheduleData.diagnostics || {};
+  const schedulingStrategy = scheduleData.scheduling_strategy || 'ASAP';
+  const schedulingStart = scheduleData.scheduling_start;
 
   const tabs = [
+    { id: 'params', label: 'Paramètres', icon: Settings, count: null },
     { id: 'priority', label: 'Priorités', icon: Zap, count: priorityPropagation.length },
     { id: 'material', label: 'Matière', icon: Package, count: materialDelayed.length },
     { id: 'productions', label: 'Productions', icon: CheckCircle, count: productions.length },
@@ -158,6 +161,92 @@ export default function ScenarioDiagnostic() {
 
       {/* Content */}
       <div className="rounded-xl p-6" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+        {/* Onglet Paramètres */}
+        {activeTab === 'params' && (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <Settings className="text-blue-500" size={20} />
+              Paramètres du Scénario
+            </h3>
+            
+            {/* Stratégie de planification */}
+            <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+              <div className="text-sm font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>
+                Stratégie de Planification
+              </div>
+              <div className="flex items-center gap-4">
+                <div 
+                  className="flex items-center gap-3 p-3 rounded-lg border-2"
+                  style={{ 
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: schedulingStrategy === 'ASAP' ? '#3B82F6' : '#8B5CF6'
+                  }}
+                >
+                  {schedulingStrategy === 'ASAP' ? (
+                    <FastForward size={24} style={{ color: '#3B82F6' }} />
+                  ) : (
+                    <Rewind size={24} style={{ color: '#8B5CF6' }} />
+                  )}
+                  <div>
+                    <div className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>
+                      {schedulingStrategy === 'ASAP' ? 'Au plus tôt' : 'Au plus tard (JIT)'}
+                    </div>
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      {schedulingStrategy === 'ASAP' 
+                        ? 'Les opérations sont planifiées dès que possible'
+                        : 'Les opérations sont planifiées le plus tard possible (Juste-à-temps)'
+                      }
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Informations supplémentaires */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                <div className="text-xs font-medium uppercase mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Date de début planification
+                </div>
+                <div className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {schedulingStart ? new Date(schedulingStart).toLocaleString('fr-FR') : '-'}
+                </div>
+              </div>
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                <div className="text-xs font-medium uppercase mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Itérations matière
+                </div>
+                <div className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {scheduleData.material_iteration || 1}
+                </div>
+              </div>
+            </div>
+            
+            {/* Explication de la stratégie */}
+            <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border-default)' }}>
+              <div className="flex items-start gap-3">
+                <Info size={20} style={{ color: 'var(--text-muted)', flexShrink: 0, marginTop: 2 }} />
+                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {schedulingStrategy === 'ASAP' ? (
+                    <>
+                      <strong>Mode Au plus tôt :</strong> Le moteur minimise le makespan (temps total de production). 
+                      Les opérations démarrent dès que toutes les contraintes (machine, matière, calendrier) le permettent.
+                      Ce mode maximise l'utilisation des ressources mais peut générer des encours importants.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Mode Juste-à-temps :</strong> Le moteur repousse les opérations le plus tard possible 
+                      tout en respectant les dates de besoin des ordres de fabrication.
+                      Ce mode limite les encours et les entrées en stock anticipées.
+                      Les opérations sans date de besoin sont planifiées en mode "au plus tôt".
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'priority' && (
           <div className="space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>

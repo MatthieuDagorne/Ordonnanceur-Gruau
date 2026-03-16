@@ -4,31 +4,28 @@ import axios from 'axios';
 import { 
   Play, Loader2, AlertTriangle, CheckCircle, Settings2, 
   Clock, Package, Sliders, BarChart3, Zap, Calendar,
-  ChevronDown, ChevronUp, Target, Scale, Timer
+  ChevronDown, ChevronUp, Target, Scale, Timer, FastForward, Rewind
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const PRIORITY_MODES = [
+// Nouvelle configuration: 2 stratégies de planification
+const SCHEDULING_STRATEGIES = [
   { 
-    value: 'due_date', 
-    label: 'Priorité Date de Besoin', 
-    description: 'Minimise les retards en priorisant les dates dues',
-    icon: Calendar 
+    value: 'ASAP', 
+    label: 'Au plus tôt', 
+    description: 'Planifie les opérations dès que possible, en respectant les contraintes',
+    icon: FastForward,
+    color: '#3B82F6'  // blue
   },
   { 
-    value: 'material_availability', 
-    label: 'Priorité Disponibilité Matière', 
-    description: 'Planifie dès que les composants sont disponibles',
-    icon: Package 
-  },
-  { 
-    value: 'balanced', 
-    label: 'Mode Équilibré', 
-    description: 'Optimise selon les poids définis ci-dessous',
-    icon: Scale 
+    value: 'JIT', 
+    label: 'Au plus tard (Juste-à-temps)', 
+    description: 'Planifie le plus tard possible tout en respectant les dates de besoin',
+    icon: Rewind,
+    color: '#8B5CF6'  // purple
   }
 ];
 
@@ -48,12 +45,7 @@ export default function Scheduling() {
 
   // Paramètres du scénario
   const [scenarioName, setScenarioName] = useState('');
-  const [priorityMode, setPriorityMode] = useState('due_date');
-  
-  // Poids de priorité (mode équilibré)
-  const [dueDateWeight, setDueDateWeight] = useState(100);
-  const [materialWeight, setMaterialWeight] = useState(50);
-  const [setupTimeWeight, setSetupTimeWeight] = useState(20);
+  const [schedulingStrategy, setSchedulingStrategy] = useState('ASAP');
   
   // Contraintes
   const [ignoreRules, setIgnoreRules] = useState(false);
@@ -97,10 +89,7 @@ export default function Scheduling() {
       // Lancer le calcul avec toutes les options
       const response = await axios.post(`${API}/scheduling/calculate`, {
         scenario_name: scenarioName,
-        priority_mode: priorityMode,
-        due_date_weight: dueDateWeight,
-        material_weight: materialWeight,
-        setup_time_weight: setupTimeWeight,
+        scheduling_strategy: schedulingStrategy,
         ignore_rules: ignoreRules,
         ignore_material: ignoreMaterial,
         ignore_calendars: ignoreCalendars,
@@ -129,7 +118,7 @@ export default function Scheduling() {
     }
   };
 
-  const selectedMode = PRIORITY_MODES.find(m => m.value === priorityMode);
+  const selectedStrategy = SCHEDULING_STRATEGIES.find(s => s.value === schedulingStrategy);
 
   return (
     <div className="space-y-6 animate-fade-in-up">
@@ -193,7 +182,7 @@ export default function Scheduling() {
         />
       </div>
 
-      {/* Priority Mode Selection */}
+      {/* Stratégie de Planification */}
       <div 
         className="card p-5 animate-fade-in-up stagger-2"
         style={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)' }}
@@ -204,96 +193,51 @@ export default function Scheduling() {
             className="text-lg font-semibold"
             style={{ color: 'var(--text-primary)', fontFamily: 'Chivo, sans-serif' }}
           >
-            Mode de Priorité
+            Stratégie de Planification
           </h4>
         </div>
         
-        <div className="grid grid-cols-3 gap-4">
-          {PRIORITY_MODES.map((mode) => {
-            const Icon = mode.icon;
-            const isSelected = priorityMode === mode.value;
+        <div className="grid grid-cols-2 gap-4">
+          {SCHEDULING_STRATEGIES.map((strategy) => {
+            const Icon = strategy.icon;
+            const isSelected = schedulingStrategy === strategy.value;
             return (
               <button
-                key={mode.value}
-                onClick={() => setPriorityMode(mode.value)}
-                data-testid={`priority-mode-${mode.value}`}
-                className="p-4 rounded-sm border-2 text-left transition-all hover-lift"
+                key={strategy.value}
+                onClick={() => setSchedulingStrategy(strategy.value)}
+                data-testid={`strategy-${strategy.value}`}
+                className="p-4 rounded-lg border-2 text-left transition-all hover:scale-[1.02]"
                 style={{ 
                   backgroundColor: isSelected ? 'var(--bg-secondary)' : 'var(--surface)',
-                  borderColor: isSelected ? 'var(--accent-blue)' : 'var(--border)'
+                  borderColor: isSelected ? strategy.color : 'var(--border)'
                 }}
               >
-                <div className="flex items-center gap-2 mb-2">
-                  <Icon size={18} style={{ color: isSelected ? 'var(--accent-blue)' : 'var(--text-muted)' }} />
+                <div className="flex items-center gap-3 mb-2">
+                  <div 
+                    className="w-10 h-10 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: isSelected ? strategy.color : 'var(--bg-elevated)' }}
+                  >
+                    <Icon size={20} style={{ color: isSelected ? 'white' : 'var(--text-muted)' }} />
+                  </div>
                   <span 
-                    className="font-medium"
+                    className="font-semibold text-base"
                     style={{ color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}
                   >
-                    {mode.label}
+                    {strategy.label}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500">{mode.description}</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{strategy.description}</p>
+                
+                {/* Info supplémentaire pour JIT */}
+                {strategy.value === 'JIT' && (
+                  <div className="mt-3 p-2 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-muted)' }}>
+                    <strong>Avantages :</strong> Limite les encours, réduit les entrées en stock anticipées
+                  </div>
+                )}
               </button>
             );
           })}
         </div>
-
-        {/* Weight sliders for balanced mode */}
-        {priorityMode === 'balanced' && (
-          <div className="mt-6 p-4 bg-slate-50 rounded-sm border border-slate-200">
-            <h5 className="text-sm font-semibold text-slate-700 mb-4">Poids de Priorité</h5>
-            
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-600">Date de besoin</span>
-                  <span className="font-mono font-medium text-slate-900">{dueDateWeight}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={dueDateWeight}
-                  onChange={(e) => setDueDateWeight(parseInt(e.target.value))}
-                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                  data-testid="due-date-weight"
-                />
-              </div>
-              
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-600">Disponibilité matière</span>
-                  <span className="font-mono font-medium text-slate-900">{materialWeight}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={materialWeight}
-                  onChange={(e) => setMaterialWeight(parseInt(e.target.value))}
-                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                  data-testid="material-weight"
-                />
-              </div>
-              
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-600">Minimiser temps de setup</span>
-                  <span className="font-mono font-medium text-slate-900">{setupTimeWeight}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={setupTimeWeight}
-                  onChange={(e) => setSetupTimeWeight(parseInt(e.target.value))}
-                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                  data-testid="setup-weight"
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Solver Settings */}
@@ -491,8 +435,8 @@ export default function Scheduling() {
         </div>
         <div className="grid grid-cols-4 gap-4 text-xs font-mono text-slate-400">
           <div>
-            <p className="text-slate-300 mb-1">Mode</p>
-            <p>{selectedMode?.label}</p>
+            <p className="text-slate-300 mb-1">Stratégie</p>
+            <p>{selectedStrategy?.label || 'Au plus tôt'}</p>
           </div>
           <div>
             <p className="text-slate-300 mb-1">Temps max</p>

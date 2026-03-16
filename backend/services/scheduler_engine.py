@@ -399,7 +399,7 @@ class SchedulerEngine:
             urgent_orders = [o for o in orders if o.get('priority', 0) == 1]
             
             if urgent_orders:
-                logger.info(f"\n🚨 PROPAGATION DE PRIORITÉ:")
+                logger.info("\n🚨 PROPAGATION DE PRIORITÉ:")
                 logger.info(f"   OFs urgents initiaux: {[o.get('id') for o in urgent_orders]}")
                 
                 for urgent_order in urgent_orders:
@@ -777,12 +777,89 @@ class SchedulerEngine:
             
             logger.info(f"\n   Total: {sequence_constraints_count} contraintes de séquence, {transfer_time_applied} avec temps de transfert")
             
-            # Objectif: minimiser le makespan (temps total)
-            if end_vars:
-                makespan = model.new_int_var(0, horizon, 'makespan')
-                model.add_max_equality(makespan, list(end_vars.values()))
-                model.minimize(makespan)
-                logger.info(f"   ✓ Objectif: minimiser makespan")
+            # Récupérer la stratégie de planification
+            scheduling_strategy = options.get('scheduling_strategy', 'ASAP')
+            
+            # STRATÉGIE ASAP (Au plus tôt) - Comportement par défaut
+            # Objectif: minimiser le makespan (temps total de fin)
+            if scheduling_strategy == 'ASAP':
+                if end_vars:
+                    makespan = model.new_int_var(0, horizon, 'makespan')
+                    model.add_max_equality(makespan, list(end_vars.values()))
+                    model.minimize(makespan)
+                    logger.info("   ✓ Stratégie: ASAP (Au plus tôt)")
+                    logger.info("   ✓ Objectif: minimiser makespan")
+            
+            # STRATÉGIE JIT (Juste-à-temps / Au plus tard)
+            # Objectif: maximiser les temps de début tout en respectant les dates de besoin
+            elif scheduling_strategy == 'JIT':
+                logger.info("   ✓ Stratégie: JIT (Au plus tard)")
+                
+                # Index des ordres pour accéder aux dates de besoin
+                orders_by_id = {o.get('id'): o for o in orders}
+                
+                # Identifier la dernière opération de chaque OF 
+                # On utilise sequence_number si disponible, sinon on parse le suffixe de l'ID (ex: OF1_20 -> 20)
+                last_ops_per_order = {}
+                for op in valid_operations:
+                    order_id = op.get('order_id')
+                    op_id = op.get('id')
+                    
+                    # Déterminer le numéro de séquence
+                    seq_num = op.get('sequence_number')
+                    if seq_num is None:
+                        # Extraire le numéro du suffixe (ex: OF1_20 -> 20)
+                        try:
+                            parts = op_id.rsplit('_', 1)
+                            if len(parts) == 2:
+                                seq_num = int(parts[1])
+                            else:
+                                seq_num = 0
+                        except (ValueError, IndexError):
+                            seq_num = 0
+                    
+                    if order_id not in last_ops_per_order or seq_num > last_ops_per_order[order_id]['sequence_number']:
+                        last_ops_per_order[order_id] = {'op_id': op_id, 'sequence_number': seq_num, 'transfer_time': op.get('transfer_time_minutes', 0)}
+                
+                # Pour chaque dernière opération, ajouter une contrainte de date de besoin
+                jit_constraints_added = 0
+                ops_without_due_date = []
+                
+                for order_id, last_op_info in last_ops_per_order.items():
+                    op_id = last_op_info['op_id']
+                    order = orders_by_id.get(order_id, {})
+                    due_date_str = order.get('due_date')
+                    transfer_time = last_op_info['transfer_time']
+                    
+                    if due_date_str and op_id in end_vars:
+                        try:
+                            due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+                            due_date_minutes = self._datetime_to_minutes(due_date)
+                            
+                            # Contrainte: fin de la dernière op + temps de transfert <= date de besoin
+                            # Donc: fin de la dernière op <= date de besoin - temps de transfert
+                            max_end = due_date_minutes - transfer_time
+                            if max_end > 0:
+                                model.add(end_vars[op_id] <= max_end)
+                                jit_constraints_added += 1
+                                logger.info(f"      📅 {op_id} (dernière op OF {order_id}): fin <= {due_date.strftime('%d/%m %H:%M')} - {transfer_time}min transfert")
+                        except Exception:
+                            logger.warning(f"      ⚠️ {op_id}: date de besoin invalide '{due_date_str}'")
+                    else:
+                        ops_without_due_date.append(order_id)
+                
+                if ops_without_due_date:
+                    logger.info(f"      ℹ️ {len(ops_without_due_date)} ordres sans date de besoin (planification ASAP)")
+                
+                logger.info(f"   ✓ {jit_constraints_added} contraintes de date de besoin ajoutées")
+                
+                # Objectif JIT: Maximiser la somme des temps de début
+                # Cela repousse les opérations le plus tard possible
+                if start_vars:
+                    sum_starts = model.new_int_var(0, horizon * len(start_vars), 'sum_starts')
+                    model.add(sum_starts == sum(start_vars.values()))
+                    model.maximize(sum_starts)
+                    logger.info("   ✓ Objectif: maximiser somme des débuts (planifier au plus tard)")
             
             # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
@@ -815,7 +892,8 @@ class SchedulerEngine:
                 'max_solver_time': max_solver_time_seconds,
                 'objective_value': solver.objective_value if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
                 'scheduling_start': self.scheduling_start.isoformat(),
-                'material_iteration': current_iteration
+                'material_iteration': current_iteration,
+                'scheduling_strategy': scheduling_strategy  # Stocker la stratégie utilisée
             }
             
             # Extraire la solution
@@ -997,7 +1075,7 @@ class SchedulerEngine:
                 # Vérifier l'absence de chevauchement (post-validation)
                 overlap_errors = self._verify_no_overlap(scheduled_ops)
                 if overlap_errors:
-                    logger.error(f"⚠️ ERREUR: Chevauchements détectés!")
+                    logger.error("⚠️ ERREUR: Chevauchements détectés!")
                     for err in overlap_errors:
                         logger.error(f"   {err}")
                     result['overlap_errors'] = overlap_errors

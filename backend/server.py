@@ -263,11 +263,8 @@ class ScheduleRequestWithOptions(BaseModel):
     scenario_id: Optional[str] = None
     scenario_name: Optional[str] = None
     
-    # Priorités (poids relatifs)
-    priority_mode: str = "due_date"  # "due_date", "material_availability", "balanced"
-    due_date_weight: int = 100        # Poids de la priorité date
-    material_weight: int = 50         # Poids de la disponibilité matière
-    setup_time_weight: int = 20       # Poids pour minimiser les changements de série
+    # Stratégie de planification
+    scheduling_strategy: str = "ASAP"  # "ASAP" (au plus tôt) ou "JIT" (au plus tard)
     
     # Contraintes à ignorer (debug)
     ignore_rules: bool = False
@@ -1993,10 +1990,7 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             'debug_mode': request.debug_mode,
             'auto_assign_machines': request.auto_assign_machines,
             'max_solver_time_seconds': request.max_solver_time_seconds,
-            'priority_mode': request.priority_mode,
-            'due_date_weight': request.due_date_weight,
-            'material_weight': request.material_weight,
-            'setup_time_weight': request.setup_time_weight,
+            'scheduling_strategy': request.scheduling_strategy,  # ASAP ou JIT
             'optimization_gap': request.optimization_gap,
             'allow_splitting': request.allow_splitting,
             'respect_sequence': request.respect_sequence
