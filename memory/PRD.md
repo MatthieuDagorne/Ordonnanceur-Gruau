@@ -257,3 +257,23 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | **Infobulle Gantt mal positionnée** | **Tooltip suit le curseur (tooltipPosition state)** |
 | **3 modes de priorité confus** | **Remplacés par 2 stratégies claires (ASAP/JIT)** |
 | **JIT retourne INFEASIBLE si dates non respectables** | **Contraintes souples avec pénalité de retard** |
+
+|| **Délai anormal entre producteur et consommateur (P0)** | **Contraintes matière obsolètes remplacées par valeurs actuelles à chaque replanification** |
+
+### Bug Critique Corrigé - Délai Anormal en JIT (16 mars 2026)
+
+**Symptôme** : Délai de plusieurs heures entre la fin de production d'un composant (OF1) et son utilisation (OF2), au lieu du simple temps de transfert.
+
+**Cause racine** : Dans `scheduler_engine.py`, lors de la fusion des contraintes matière pour la replanification (ligne 1461), l'ancienne logique ne mettait à jour la contrainte que si `new_date > old_date`. Cela ignorait les cas où un producteur est avancé (termine plus tôt), laissant une contrainte obsolète.
+
+**Correction** : La contrainte est maintenant **toujours remplacée** par la nouvelle valeur (date de production réelle) :
+```python
+# AVANT (bug)
+if op_id not in updated_constraints or new_date > updated_constraints[op_id]:
+    updated_constraints[op_id] = new_date
+
+# APRÈS (corrigé)
+updated_constraints[op_id] = new_date  # Toujours remplacer
+```
+
+**Résultat** : Le délai entre producteur et consommateur est maintenant de **0 minutes** (composant disponible exactement quand nécessaire après le temps de transfert).
