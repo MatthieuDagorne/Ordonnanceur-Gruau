@@ -35,12 +35,43 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 - Si pas de `due_date`, l'OF est planifié en ASAP
 - **Contrainte SOUPLE** : Si la date ne peut pas être respectée, l'ordre est planifié en retard (pas d'INFEASIBLE)
 - Les ordres/opérations en retard sont marqués `is_late=true` avec `lateness_minutes`
+- **Flux tiré (16/03)** : Minimisation des encours entre opérations d'un même OF
 
 **Interface utilisateur :**
 - Page Ordonnancement : 2 cartes de sélection (ASAP bleu, JIT violet)
 - Page Diagnostic : Onglet "Paramètres" affiche la stratégie utilisée
 - Page Diagnostic : Onglet "Retards" liste les ordres en retard avec détails
 - Page Gantt : Barres rouges (#EF4444) pour les opérations en retard
+
+### Phase 9 - Améliorations Gantt et Indisponibilités (16 mars 2026) ✅
+
+#### 9.1 Filtres avancés Gantt ✅
+- Filtre par **Ordre de Fabrication** (dropdown)
+- Filtre par **Article** (dropdown)
+- **Plage de dates** (sélecteurs Du/Au)
+- Résumé des filtres actifs avec compteur d'opérations
+- Bouton "Réinitialiser tout"
+
+#### 9.2 Format de date complet ✅
+- Dates affichées au format **"Mercredi 18 mars 2026"**
+- Labels sur fond bleu pour meilleure visibilité
+- Jours complets en français
+
+#### 9.3 Indisponibilités machines ✅
+- Classe `UnavailabilityManager` dans le moteur
+- Contraintes `(end <= unavail_start) OR (start >= unavail_end)`
+- Si machine indisponible : report automatique après la période
+- Log des périodes d'indisponibilité au démarrage
+
+#### 9.4 Fuseau horaire Europe/Paris ✅
+- `PARIS_TZ = ZoneInfo('Europe/Paris')` dans le moteur
+- `scheduling_start` calculé en heure de Paris
+- Cohérence timezone dans tous les calculs
+
+#### 9.5 Suppression page Matrice Compat. ✅
+- Route `/matrix` supprimée
+- Lien menu supprimé
+- Fichier `MatrixView.js` supprimé
 
 #### 8.1 Précision Calendriers au Quart d'Heure (P0) ✅
 - Format HH:MM pour `start_time` et `end_time` (ex: "07:45", "16:30")
