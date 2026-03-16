@@ -28,8 +28,13 @@ load_dotenv(ROOT_DIR / '.env')
 
 def detect_csv_separator(contents: bytes) -> str:
     """
-    Détecte automatiquement le séparateur CSV (virgule ou point-virgule).
-    Analyse les premières lignes pour déterminer le séparateur le plus probable.
+    Détecte automatiquement le séparateur CSV.
+    
+    Bonnes pratiques :
+    - Point-virgule (;) : Standard européen, évite les conflits avec les décimales "5,2"
+    - Virgule (,) : Standard US/international, nécessite des décimales avec point "5.2"
+    
+    Cette fonction analyse les premières lignes pour déterminer le séparateur.
     """
     try:
         # Décoder le contenu
@@ -40,36 +45,54 @@ def detect_csv_separator(contents: bytes) -> str:
         except:
             text = contents.decode('utf-8', errors='ignore')
     
-    # Prendre les premières lignes
+    # Prendre les premières lignes (header + quelques données)
     first_lines = text.split('\n')[:5]
-    first_content = '\n'.join(first_lines)
     
-    # Compter les occurrences de chaque séparateur
-    semicolon_count = first_content.count(';')
-    comma_count = first_content.count(',')
+    # Analyser uniquement la première ligne (header) pour éviter les faux positifs avec les décimales
+    header_line = first_lines[0] if first_lines else ''
     
-    # Le séparateur avec le plus d'occurrences gagne
-    if semicolon_count > comma_count:
+    # Compter les occurrences de chaque séparateur dans le header
+    semicolon_count = header_line.count(';')
+    comma_count = header_line.count(',')
+    
+    # Le séparateur avec le plus d'occurrences dans le header gagne
+    # En cas d'égalité, préférer le point-virgule (standard européen)
+    if semicolon_count >= comma_count and semicolon_count > 0:
         return ';'
-    return ','
+    elif comma_count > 0:
+        return ','
+    
+    # Fallback : point-virgule par défaut
+    return ';'
 
 
 def read_csv_auto(contents: bytes) -> pd.DataFrame:
     """
     Lit un CSV avec détection automatique du séparateur et de l'encodage.
+    
+    Gère les décimales européennes (virgule) si le séparateur est point-virgule.
     """
     separator = detect_csv_separator(contents)
+    
+    # Si séparateur point-virgule, les décimales peuvent utiliser la virgule
+    decimal_char = ',' if separator == ';' else '.'
     
     # Essayer différents encodages
     for encoding in ['utf-8', 'latin-1', 'cp1252']:
         try:
-            df = pd.read_csv(io.BytesIO(contents), sep=separator, encoding=encoding)
-            logger.info(f"📄 CSV lu avec séparateur '{separator}' et encodage '{encoding}'")
+            df = pd.read_csv(
+                io.BytesIO(contents), 
+                sep=separator, 
+                encoding=encoding,
+                decimal=decimal_char
+            )
+            logger.info(f"📄 CSV lu avec séparateur '{separator}', décimales '{decimal_char}', encodage '{encoding}'")
             return df
-        except Exception:
+        except Exception as e:
             continue
     
-    # Fallback
+    # Fallback sans conversion décimale
+    logger.warning(f"⚠️ CSV fallback: lecture basique avec séparateur '{separator}'")
     return pd.read_csv(io.BytesIO(contents), sep=separator)
 
 mongo_url = os.environ['MONGO_URL']
@@ -1916,9 +1939,13 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
     try:
         scenario_id = request.scenario_id or str(uuid.uuid4())
         
+        # Créer le scénario avec la date de création actuelle
         await db.scenarios.update_one(
             {"id": scenario_id},
-            {"$set": {"status": "calculating"}},
+            {
+                "$set": {"status": "calculating"},
+                "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}
+            },
             upsert=True
         )
         

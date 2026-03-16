@@ -546,8 +546,25 @@ class SchedulerEngine:
             # PHASE 4: CONSTRUCTION DU MODÈLE OR-TOOLS
             model = cp_model.CpModel()
             
-            # Horizon: 7 jours en minutes
-            horizon = 7 * 24 * 60
+            # Horizon de base: 14 jours en minutes (extensible si nécessaire)
+            base_horizon = 14 * 24 * 60
+            
+            # Calculer l'horizon nécessaire en fonction des contraintes matière
+            max_material_constraint = 0
+            for op in valid_operations:
+                op_id = op.get('id')
+                if op_id in material_date_constraints:
+                    min_date = material_date_constraints[op_id]
+                    min_minutes = self._datetime_to_minutes(min_date)
+                    max_material_constraint = max(max_material_constraint, min_minutes)
+                elif op.get('_material_earliest_date') and op.get('_material_earliest_date') > self.scheduling_start:
+                    min_date = op.get('_material_earliest_date')
+                    min_minutes = self._datetime_to_minutes(min_date)
+                    max_material_constraint = max(max_material_constraint, min_minutes)
+            
+            # L'horizon doit être au moins égal à la contrainte max + marge pour les opérations
+            horizon = max(base_horizon, max_material_constraint + 7 * 24 * 60)
+            logger.info(f"   📐 Horizon de planification: {horizon} minutes ({horizon // (24*60)} jours)")
             
             # Variables de décision
             start_vars = {}
