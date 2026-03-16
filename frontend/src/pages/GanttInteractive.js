@@ -118,12 +118,34 @@ export default function GanttInteractive() {
     if (!schedulingStart || !machineCalendar) return [];
     
     const periods = [];
-    const workStartHour = machineCalendar.start_hour ?? 0;
-    const workEndHour = machineCalendar.end_hour ?? 24;
+    
+    // Utiliser start_time/end_time (format HH:MM) si disponibles, sinon fallback sur start_hour/end_hour
+    let workStartHour = 0;
+    let workStartMinute = 0;
+    let workEndHour = 24;
+    let workEndMinute = 0;
+    
+    if (machineCalendar.start_time) {
+      const [h, m] = machineCalendar.start_time.split(':').map(Number);
+      workStartHour = h;
+      workStartMinute = m || 0;
+    } else {
+      workStartHour = machineCalendar.start_hour ?? 0;
+    }
+    
+    if (machineCalendar.end_time) {
+      const [h, m] = machineCalendar.end_time.split(':').map(Number);
+      workEndHour = h;
+      workEndMinute = m || 0;
+    } else {
+      workEndHour = machineCalendar.end_hour ?? 24;
+    }
+    
     const workingDays = new Set(machineCalendar.working_days || [0, 1, 2, 3, 4, 5, 6]);
     
     // Si calendrier 24/7, pas de zones de fermeture
-    if (workStartHour === 0 && workEndHour === 24 && workingDays.size === 7) {
+    const is24h7 = workStartHour === 0 && workStartMinute === 0 && workEndHour === 24 && workEndMinute === 0 && workingDays.size === 7;
+    if (is24h7) {
       return [];
     }
     
@@ -164,29 +186,32 @@ export default function GanttInteractive() {
         continue;
       }
       
-      // Zone de fermeture du matin (00:00 -> workStartHour)
-      if (workStartHour > 0) {
+      // Zone de fermeture du matin (00:00 -> heure d'ouverture)
+      if (workStartHour > 0 || workStartMinute > 0) {
         const closureStartDate = new Date(dayDate);
         const closureEndDate = new Date(dayDate);
-        closureEndDate.setHours(workStartHour, 0, 0, 0);
+        closureEndDate.setHours(workStartHour, workStartMinute, 0, 0);
         
         // Position dans le Gantt
         const closureStartMin = Math.floor((closureStartDate - ganttStartTime) / 60000);
         const closureEndMin = Math.floor((closureEndDate - ganttStartTime) / 60000);
         
+        // Formater l'heure pour l'affichage
+        const timeStr = workStartMinute > 0 ? `${workStartHour}h${workStartMinute.toString().padStart(2, '0')}` : `${workStartHour}h`;
+        
         if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
             start: Math.max(0, closureStartMin),
             end: Math.min(totalMinutes, closureEndMin),
-            reason: `Avant ${workStartHour}h`
+            reason: `Avant ${timeStr}`
           });
         }
       }
       
-      // Zone de fermeture du soir (workEndHour -> 24:00)
-      if (workEndHour < 24) {
+      // Zone de fermeture du soir (heure de fermeture -> 24:00)
+      if (workEndHour < 24 || (workEndHour === 24 && workEndMinute > 0)) {
         const closureStartDate = new Date(dayDate);
-        closureStartDate.setHours(workEndHour, 0, 0, 0);
+        closureStartDate.setHours(workEndHour, workEndMinute, 0, 0);
         const closureEndDate = new Date(dayDate);
         closureEndDate.setDate(closureEndDate.getDate() + 1); // Minuit du jour suivant
         closureEndDate.setHours(0, 0, 0, 0);
@@ -195,11 +220,14 @@ export default function GanttInteractive() {
         const closureStartMin = Math.floor((closureStartDate - ganttStartTime) / 60000);
         const closureEndMin = Math.floor((closureEndDate - ganttStartTime) / 60000);
         
+        // Formater l'heure pour l'affichage
+        const timeStr = workEndMinute > 0 ? `${workEndHour}h${workEndMinute.toString().padStart(2, '0')}` : `${workEndHour}h`;
+        
         if (closureEndMin > 0 && closureStartMin < totalMinutes) {
           periods.push({
             start: Math.max(0, closureStartMin),
             end: Math.min(totalMinutes, closureEndMin),
-            reason: `Après ${workEndHour}h`
+            reason: `Après ${timeStr}`
           });
         }
       }

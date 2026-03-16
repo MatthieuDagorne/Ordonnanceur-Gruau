@@ -2401,6 +2401,8 @@ async def get_gantt_data(scenario_id: str):
                     'calendar': {
                         'start_hour': machine_calendar.get('start_hour', 0),
                         'end_hour': machine_calendar.get('end_hour', 24),
+                        'start_time': machine_calendar.get('start_time', '00:00'),
+                        'end_time': machine_calendar.get('end_time', '24:00'),
                         'working_days': machine_calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6])
                     },
                     'tasks': []
