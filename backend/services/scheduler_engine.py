@@ -742,9 +742,9 @@ class SchedulerEngine:
                     # Réinitialiser les consommations planifiées
                     self.material_manager.planned_consumptions = {}
                     
-                    # Tracker les nouvelles contraintes et les OFs bloqués
+                    # Tracker les nouvelles contraintes et les OFs avec première op bloquée
                     new_constraints = {}
-                    blocked_orders = set()
+                    first_op_blocked_orders = set()  # OFs dont la PREMIÈRE opération est bloquée
                     truly_unschedulable = []
                     
                     for op in ops_by_start:
@@ -752,16 +752,18 @@ class SchedulerEngine:
                         order_id = op.get('order_id')
                         start_dt = self._minutes_to_datetime(op['start_minutes'])
                         
-                        # Skip si OF déjà bloqué (cascade de gamme)
-                        if order_id in blocked_orders:
-                            continue
+                        # Si la PREMIÈRE opération de cet OF est bloquée, les suivantes doivent
+                        # être vérifiées mais pas réservées (car elles seront décalées par la séquence)
+                        skip_reservation = order_id in first_op_blocked_orders
                         
                         # Vérifier la disponibilité à cette date
                         material_status = self.material_manager.check_operation_materials(op_id, start_dt)
                         
                         if material_status.all_available:
-                            # OK - réserver les matières
-                            self.material_manager.reserve_materials(op_id, start_dt)
+                            # OK - réserver les matières (sauf si l'OF est déjà bloqué en amont)
+                            if not skip_reservation:
+                                self.material_manager.reserve_materials(op_id, start_dt)
+                            # Sinon, on ne réserve pas car cette op sera décalée par la séquence
                         else:
                             # RUPTURE - chercher la date de disponibilité
                             earliest = material_status.earliest_start_date
@@ -769,7 +771,7 @@ class SchedulerEngine:
                             if earliest and earliest > start_dt:
                                 # Reporter cette opération
                                 new_constraints[op_id] = earliest
-                                blocked_orders.add(order_id)
+                                first_op_blocked_orders.add(order_id)
                                 logger.info(f"   📅 {op_id}: rupture à {start_dt.strftime('%d/%m %H:%M')}, reporter à {earliest.strftime('%d/%m %H:%M')}")
                             else:
                                 # Pas de réception future - vraiment non planifiable
@@ -780,7 +782,7 @@ class SchedulerEngine:
                                     'blocking_components': material_status.blocking_components,
                                     'reason': "Aucune réception fournisseur planifiée pour les composants manquants"
                                 })
-                                blocked_orders.add(order_id)
+                                first_op_blocked_orders.add(order_id)
                                 logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - pas de réception future")
                     
                     # Si des opérations doivent être reportées ET qu'il reste du temps, relancer
