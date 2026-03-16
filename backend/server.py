@@ -25,6 +25,53 @@ from models.business_rule import BusinessRule as BusinessRuleModel
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+
+def detect_csv_separator(contents: bytes) -> str:
+    """
+    Détecte automatiquement le séparateur CSV (virgule ou point-virgule).
+    Analyse les premières lignes pour déterminer le séparateur le plus probable.
+    """
+    try:
+        # Décoder le contenu
+        text = contents.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            text = contents.decode('latin-1')
+        except:
+            text = contents.decode('utf-8', errors='ignore')
+    
+    # Prendre les premières lignes
+    first_lines = text.split('\n')[:5]
+    first_content = '\n'.join(first_lines)
+    
+    # Compter les occurrences de chaque séparateur
+    semicolon_count = first_content.count(';')
+    comma_count = first_content.count(',')
+    
+    # Le séparateur avec le plus d'occurrences gagne
+    if semicolon_count > comma_count:
+        return ';'
+    return ','
+
+
+def read_csv_auto(contents: bytes) -> pd.DataFrame:
+    """
+    Lit un CSV avec détection automatique du séparateur et de l'encodage.
+    """
+    separator = detect_csv_separator(contents)
+    
+    # Essayer différents encodages
+    for encoding in ['utf-8', 'latin-1', 'cp1252']:
+        try:
+            df = pd.read_csv(io.BytesIO(contents), sep=separator, encoding=encoding)
+            logger.info(f"📄 CSV lu avec séparateur '{separator}' et encodage '{encoding}'")
+            return df
+        except Exception:
+            continue
+    
+    # Fallback
+    return pd.read_csv(io.BytesIO(contents), sep=separator)
+
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
@@ -1527,7 +1574,7 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
     try:
         previous_count = await db.manufacturing_orders.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         # Check for duplicate IDs
         if 'id' in df.columns:
@@ -1578,7 +1625,7 @@ async def import_operations(file: UploadFile = File(...)):
     try:
         previous_count = await db.operations.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         logger.info(f"📥 Import opérations: colonnes = {df.columns.tolist()}")
         
@@ -1650,7 +1697,7 @@ async def import_articles(file: UploadFile = File(...)):
     try:
         previous_count = await db.articles.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         if 'id' in df.columns:
             duplicate_ids = df['id'].duplicated().sum()
@@ -1720,7 +1767,7 @@ async def import_stocks(file: UploadFile = File(...)):
     try:
         previous_count = await db.stocks.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         await db.stocks.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens stocks supprimés")
@@ -1756,7 +1803,7 @@ async def import_operation_materials(file: UploadFile = File(...)):
     try:
         previous_count = await db.operation_materials.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         await db.operation_materials.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens besoins matière supprimés")
@@ -1792,7 +1839,7 @@ async def import_planned_supplier_receipts(file: UploadFile = File(...)):
     try:
         previous_count = await db.planned_supplier_receipts.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         await db.planned_supplier_receipts.delete_many({})
         logger.info(f"🗑️  {previous_count} anciennes réceptions planifiées supprimées")
@@ -1833,7 +1880,7 @@ async def import_bom(file: UploadFile = File(...)):
     try:
         previous_count = await db.bom.count_documents({})
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        df = read_csv_auto(contents)
         
         await db.bom.delete_many({})
         logger.info(f"🗑️  {previous_count} anciennes lignes BOM supprimées")
