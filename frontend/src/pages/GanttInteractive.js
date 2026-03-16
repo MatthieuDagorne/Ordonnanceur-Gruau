@@ -172,11 +172,11 @@ export default function GanttInteractive() {
       
       // Filtrer les tâches par order_id, article_id et plage de dates
       const filteredTasks = machine.tasks?.filter(task => {
-        // Filtre par order_id
-        if (filterOrderId && task.order_id !== filterOrderId) return false;
+        // Filtre par order_id (recherche partielle insensible à la casse)
+        if (filterOrderId && !task.order_id?.toLowerCase().includes(filterOrderId.toLowerCase())) return false;
         
-        // Filtre par article_id
-        if (filterArticleId && task.article_id !== filterArticleId) return false;
+        // Filtre par article_id (recherche partielle insensible à la casse)
+        if (filterArticleId && !task.article_id?.toLowerCase().includes(filterArticleId.toLowerCase())) return false;
         
         // Filtre par plage de dates
         if (dateRangeStart || dateRangeEnd) {
@@ -597,52 +597,82 @@ export default function GanttInteractive() {
         
         {showFilters && (
           <div className="space-y-4 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
-            {/* Ligne 1: Filtres par OF et Article */}
+            {/* Ligne 1: Filtres par OF et Article (saisie texte avec suggestions) */}
             <div className="grid grid-cols-2 gap-4">
               {/* Filtre par Ordre de Fabrication */}
-              <div>
+              <div className="relative">
                 <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                   Ordre de Fabrication
                 </label>
-                <select
-                  value={filterOrderId}
-                  onChange={(e) => setFilterOrderId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg text-sm"
-                  style={{ 
-                    backgroundColor: 'var(--bg-sunken)', 
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-default)'
-                  }}
-                  data-testid="filter-order-select"
-                >
-                  <option value="">Tous les ordres</option>
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    value={filterOrderId}
+                    onChange={(e) => setFilterOrderId(e.target.value)}
+                    placeholder="Rechercher un OF..."
+                    className="w-full pl-9 pr-8 py-2 rounded-lg text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg-sunken)', 
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-default)'
+                    }}
+                    list="order-suggestions"
+                    data-testid="filter-order-input"
+                  />
+                  {filterOrderId && (
+                    <button
+                      onClick={() => setFilterOrderId('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-opacity-20"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <datalist id="order-suggestions">
                   {uniqueOrders.map(orderId => (
-                    <option key={orderId} value={orderId}>{orderId}</option>
+                    <option key={orderId} value={orderId} />
                   ))}
-                </select>
+                </datalist>
               </div>
               
               {/* Filtre par Article */}
-              <div>
+              <div className="relative">
                 <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
                   Article
                 </label>
-                <select
-                  value={filterArticleId}
-                  onChange={(e) => setFilterArticleId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg text-sm"
-                  style={{ 
-                    backgroundColor: 'var(--bg-sunken)', 
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-default)'
-                  }}
-                  data-testid="filter-article-select"
-                >
-                  <option value="">Tous les articles</option>
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    value={filterArticleId}
+                    onChange={(e) => setFilterArticleId(e.target.value)}
+                    placeholder="Rechercher un article..."
+                    className="w-full pl-9 pr-8 py-2 rounded-lg text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg-sunken)', 
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-default)'
+                    }}
+                    list="article-suggestions"
+                    data-testid="filter-article-input"
+                  />
+                  {filterArticleId && (
+                    <button
+                      onClick={() => setFilterArticleId('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-opacity-20"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <datalist id="article-suggestions">
                   {uniqueArticles.map(articleId => (
-                    <option key={articleId} value={articleId}>{articleId}</option>
+                    <option key={articleId} value={articleId} />
                   ))}
-                </select>
+                </datalist>
               </div>
             </div>
             
@@ -869,18 +899,20 @@ export default function GanttInteractive() {
                     className="absolute top-0 bottom-0"
                     style={{ 
                       left: sep.minutes * pixelsPerMinute,
-                      borderLeft: '3px solid var(--accent-primary)',
+                      borderLeft: '3px solid #1e40af',
                       zIndex: 10
                     }}
                   >
                     <div 
-                      className="absolute top-0 left-2 py-1 px-2 rounded-lg shadow-sm"
+                      className="absolute top-0 left-2 py-1.5 px-3 rounded-lg shadow-md"
                       style={{ 
-                        backgroundColor: 'var(--accent-primary)',
-                        color: 'white',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        whiteSpace: 'nowrap'
+                        backgroundColor: '#1e40af',
+                        color: '#ffffff',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        whiteSpace: 'nowrap',
+                        letterSpacing: '0.01em',
+                        textShadow: '0 1px 2px rgba(0,0,0,0.2)'
                       }}
                     >
                       {sep.label}
