@@ -649,12 +649,28 @@ class SchedulerEngine:
                     transfer_time = op1.get('transfer_time_minutes', 0)
                     
                     if op1_id in end_vars and op2_id in start_vars:
-                        # Contrainte: op2 commence après fin de op1 + temps de transfert
-                        model.add(start_vars[op2_id] >= end_vars[op1_id] + transfer_time)
-                        sequence_constraints_count += 1
-                        if transfer_time > 0:
-                            transfer_time_applied += 1
-                            logger.info(f"      🚚 {op1_id} -> {op2_id}: +{transfer_time} min de transfert")
+                        # Vérifier si op2 a une contrainte matière
+                        op2_material_constraint = material_date_constraints.get(op2_id)
+                        op2_prevalidation_constraint = op2.get('_material_earliest_date')
+                        
+                        if op2_material_constraint or op2_prevalidation_constraint:
+                            # Si op2 a une contrainte matière, la contrainte de séquence est:
+                            # start(op2) >= max(end(op1) + transfer_time, contrainte_matière)
+                            # OR-Tools gère cela automatiquement via les bornes des variables,
+                            # donc on ajoute quand même la contrainte de séquence
+                            model.add(start_vars[op2_id] >= end_vars[op1_id] + transfer_time)
+                            sequence_constraints_count += 1
+                            if transfer_time > 0:
+                                transfer_time_applied += 1
+                                constraint_date = op2_material_constraint or op2_prevalidation_constraint
+                                logger.info(f"      🚚 {op1_id} -> {op2_id}: +{transfer_time} min transfert (matière: {constraint_date.strftime('%d/%m %H:%M')})")
+                        else:
+                            # Pas de contrainte matière, séquence normale
+                            model.add(start_vars[op2_id] >= end_vars[op1_id] + transfer_time)
+                            sequence_constraints_count += 1
+                            if transfer_time > 0:
+                                transfer_time_applied += 1
+                                logger.info(f"      🚚 {op1_id} -> {op2_id}: +{transfer_time} min de transfert")
                 
                 if len(sorted_ops) > 1:
                     ops_seq = [f"{o.get('id')}(op{o.get('operation_id')})" for o in sorted_ops]
