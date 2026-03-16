@@ -27,16 +27,20 @@ Application web APS (Advanced Planning & Scheduling) pour l'ordonnancement indus
 | Stratégie | Description | Objectif OR-Tools |
 |-----------|-------------|-------------------|
 | **ASAP (Au plus tôt)** | Planifie dès que possible | `minimize(makespan)` |
-| **JIT (Au plus tard)** | Planifie le plus tard possible en respectant les dates de besoin | `maximize(sum(start_times))` + contraintes `due_date` |
+| **JIT (Au plus tard)** | Planifie le plus tard possible en respectant les dates de besoin | `maximize(sum(start_times))` - PENALTY × retards |
 
 **Mode JIT - Détails :**
 - Contrainte de date de besoin sur la **dernière opération** de chaque OF uniquement
 - Prend en compte le temps de transfert final : `fin_op <= due_date - transfer_time`
 - Si pas de `due_date`, l'OF est planifié en ASAP
+- **Contrainte SOUPLE** : Si la date ne peut pas être respectée, l'ordre est planifié en retard (pas d'INFEASIBLE)
+- Les ordres/opérations en retard sont marqués `is_late=true` avec `lateness_minutes`
 
 **Interface utilisateur :**
 - Page Ordonnancement : 2 cartes de sélection (ASAP bleu, JIT violet)
 - Page Diagnostic : Onglet "Paramètres" affiche la stratégie utilisée
+- Page Diagnostic : Onglet "Retards" liste les ordres en retard avec détails
+- Page Gantt : Barres rouges (#EF4444) pour les opérations en retard
 
 #### 8.1 Précision Calendriers au Quart d'Heure (P0) ✅
 - Format HH:MM pour `start_time` et `end_time` (ex: "07:45", "16:30")
@@ -221,3 +225,4 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | **Productions non visibles dans Stock Projeté** | **Événements PRODUCTION_RECEIPT ajoutés à la timeline** |
 | **Infobulle Gantt mal positionnée** | **Tooltip suit le curseur (tooltipPosition state)** |
 | **3 modes de priorité confus** | **Remplacés par 2 stratégies claires (ASAP/JIT)** |
+| **JIT retourne INFEASIBLE si dates non respectables** | **Contraintes souples avec pénalité de retard** |
