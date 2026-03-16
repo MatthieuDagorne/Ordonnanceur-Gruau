@@ -172,8 +172,8 @@ export default function BusinessRules() {
     }
     
     if (ruleMode === 'simple') {
-      if (!formData.tache_id && !formData.centre_de_charge_id && !formData.article_id) {
-        setFormError('Au moins un critère simple (tâche, centre ou article) doit être défini');
+      if (!formData.tache_id && !formData.article_id) {
+        setFormError('Au moins un critère simple (tâche ou article) doit être défini');
         return false;
       }
     } else {
@@ -603,7 +603,7 @@ export default function BusinessRules() {
             {ruleMode === 'simple' && (
               <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
                 <h5 className="text-sm font-semibold text-slate-700 mb-3">Critères Simples</h5>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs text-slate-500">Tâche</label>
                     <input
@@ -612,16 +612,6 @@ export default function BusinessRules() {
                       onChange={(e) => setFormData({ ...formData, tache_id: e.target.value })}
                       className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-sm"
                       placeholder="LVT001"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500">Centre de Charge</label>
-                    <input
-                      type="text"
-                      value={formData.centre_de_charge_id}
-                      onChange={(e) => setFormData({ ...formData, centre_de_charge_id: e.target.value })}
-                      className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-sm"
-                      placeholder="LVC001"
                     />
                   </div>
                   <div>
