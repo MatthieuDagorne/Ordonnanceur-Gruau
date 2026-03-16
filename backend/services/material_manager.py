@@ -10,10 +10,19 @@ Gère:
 
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_datetime(dt: datetime) -> datetime:
+    """Normalise un datetime pour avoir une timezone UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @dataclass
@@ -194,17 +203,22 @@ class MaterialManager:
         
         Stock projeté = Stock initial + Réceptions avant date + Productions avant date - Consommations planifiées
         """
+        # Normaliser la date pour les comparaisons
+        at_date = _normalize_datetime(at_date)
+        
         # Stock initial
         stock = self.initial_stocks.get(article_id, 0)
         
         # Ajouter les réceptions planifiées avant la date
         for receipt in self.planned_receipts:
-            if receipt.article_id == article_id and receipt.planned_date <= at_date:
+            receipt_date = _normalize_datetime(receipt.planned_date)
+            if receipt.article_id == article_id and receipt_date <= at_date:
                 stock += receipt.quantity
         
         # Ajouter les productions planifiées avant la date (articles fabriqués)
         for production in self.planned_productions:
-            if production.article_id == article_id and production.end_date <= at_date:
+            prod_date = _normalize_datetime(production.end_date)
+            if production.article_id == article_id and prod_date <= at_date:
                 stock += production.quantity
         
         # Soustraire les consommations déjà planifiées
@@ -225,6 +239,9 @@ class MaterialManager:
         Returns:
             (is_available_now, earliest_date)
         """
+        # Normaliser la date pour les comparaisons
+        from_date = _normalize_datetime(from_date)
+        
         # Vérifier si disponible maintenant
         current_stock = self.get_projected_stock(article_id, from_date)
         if current_stock >= required_quantity:
@@ -234,12 +251,14 @@ class MaterialManager:
         future_entries = []
         
         for receipt in self.planned_receipts:
-            if receipt.article_id == article_id and receipt.planned_date > from_date:
-                future_entries.append(('RECEIPT', receipt.planned_date, receipt.quantity))
+            receipt_date = _normalize_datetime(receipt.planned_date)
+            if receipt.article_id == article_id and receipt_date > from_date:
+                future_entries.append(('RECEIPT', receipt_date, receipt.quantity))
         
         for production in self.planned_productions:
-            if production.article_id == article_id and production.end_date > from_date:
-                future_entries.append(('PRODUCTION', production.end_date, production.quantity))
+            prod_date = _normalize_datetime(production.end_date)
+            if production.article_id == article_id and prod_date > from_date:
+                future_entries.append(('PRODUCTION', prod_date, production.quantity))
         
         # Trier par date
         future_entries.sort(key=lambda x: x[1])
@@ -283,7 +302,7 @@ class MaterialManager:
             return status
         
         status.order_id = materials[0].order_id
-        latest_available_date = planned_start
+        latest_available_date = _normalize_datetime(planned_start)
         has_impossible_component = False  # Un composant n'est JAMAIS disponible
         
         for mat in materials:
@@ -314,8 +333,11 @@ class MaterialManager:
                     # Ce composant n'est JAMAIS disponible - bloquer l'opération
                     has_impossible_component = True
                     logger.warning(f"⛔ {mat.article_composant_id}: JAMAIS disponible (aucune réception planifiée)")
-                elif earliest_date > latest_available_date:
-                    latest_available_date = earliest_date
+                else:
+                    # Normaliser pour la comparaison
+                    earliest_date_norm = _normalize_datetime(earliest_date)
+                    if earliest_date_norm > latest_available_date:
+                        latest_available_date = earliest_date_norm
         
         # Si un composant n'est jamais disponible, marquer earliest_start_date = None
         if has_impossible_component:
