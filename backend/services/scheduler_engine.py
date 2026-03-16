@@ -550,6 +550,55 @@ class SchedulerEngine:
                 operations, orders, machines, rules_engine, material_checker
             )
             
+            # PHASE 2.5: PRÉ-ESTIMATION DES PRODUCTIONS (pour vérification matière)
+            # Estimer quand chaque OF va produire son article, basé sur les durées des opérations
+            if not ignore_material:
+                logger.info("\n📦 PRÉ-ESTIMATION DES PRODUCTIONS:")
+                
+                # Regrouper les opérations par OF
+                ops_by_order = {}
+                for op in operations:
+                    order_id = op.get('order_id')
+                    if order_id:
+                        if order_id not in ops_by_order:
+                            ops_by_order[order_id] = []
+                        ops_by_order[order_id].append(op)
+                
+                # Pour chaque OF, calculer la durée totale estimée
+                for order in orders:
+                    order_id = order.get('id')
+                    article_produit = order.get('article_id') or order.get('article')
+                    quantity_produite = order.get('quantity', 0)
+                    
+                    if not article_produit or not order_id:
+                        continue
+                    
+                    order_ops = ops_by_order.get(order_id, [])
+                    if not order_ops:
+                        continue
+                    
+                    # Calculer la durée totale (somme des durées + transferts)
+                    total_duration = 0
+                    last_transfer_time = 0
+                    for op in sorted(order_ops, key=lambda x: x.get('id', '').rsplit('_', 1)[-1] if '_' in x.get('id', '') else '0'):
+                        duration = op.get('duration_minutes') or op.get('planned_duration', 0)
+                        transfer = op.get('transfer_time_minutes', 0)
+                        total_duration += duration + transfer
+                        last_transfer_time = transfer
+                    
+                    # Date de fin estimée = scheduling_start + durée totale
+                    # On ajoute une marge de 8h (1 journée de travail) pour les contraintes calendrier
+                    estimated_end = self.scheduling_start + timedelta(minutes=total_duration + 480)
+                    
+                    # Ajouter la production estimée au MaterialManager
+                    self.material_manager.add_planned_production(
+                        order_id=order_id,
+                        article_id=article_produit,
+                        quantity=quantity_produite,
+                        end_date=estimated_end
+                    )
+                    logger.info(f"   📦 {order_id} -> {article_produit} x{quantity_produite} estimé le {estimated_end.strftime('%d/%m %H:%M')}")
+            
             # PHASE 3: FILTRAGE ET TRI DES OPÉRATIONS VALIDES
             # Index des ordres pour enrichissement
             orders_by_id = {o.get('id'): o for o in orders}
