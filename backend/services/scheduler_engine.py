@@ -1,6 +1,7 @@
 from ortools.sat.python import cp_model
 import logging
 import math
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from services.diagnostics import SchedulingDiagnostics
@@ -275,9 +276,14 @@ class SchedulerEngine:
         - ignore_calendars: bool
         - debug_mode: bool
         - auto_assign_machines: bool (default True)
-        - max_solver_time_seconds: int (default 60)
+        - max_solver_time_seconds: int (default 60) - Budget temps GLOBAL pour toutes les itérations
         - _material_date_constraints: dict (internal - for iterative replanning)
         - _iteration: int (internal - current iteration number)
+        - _start_time: float (internal - timestamp de début pour le budget temps)
+        - _total_solver_time: float (internal - temps cumulé passé dans le solveur)
+        
+        Le moteur itère jusqu'à obtenir un ordonnancement SANS RUPTURE DE STOCK
+        ou jusqu'à épuisement du budget temps défini par l'utilisateur.
         """
         options = options or {}
         debug_mode = options.get('debug_mode', True)
@@ -290,7 +296,22 @@ class SchedulerEngine:
         # Paramètres internes pour la replanification itérative
         material_date_constraints = options.get('_material_date_constraints', {})
         current_iteration = options.get('_iteration', 1)
-        max_iterations = 5
+        
+        # Gestion du budget temps global
+        # Si c'est la première itération, initialiser le timestamp de début
+        if current_iteration == 1:
+            start_time = time.time()
+        else:
+            start_time = options.get('_start_time', time.time())
+        total_solver_time = options.get('_total_solver_time', 0.0)
+        
+        # Calculer le temps restant
+        elapsed_time = time.time() - start_time
+        remaining_time = max(1, max_solver_time_seconds - elapsed_time)  # Au moins 1 seconde
+        
+        # Temps alloué pour cette itération (répartition dynamique)
+        # On garde une marge pour les itérations suivantes potentielles
+        iteration_time = min(remaining_time * 0.8, remaining_time - 2) if remaining_time > 5 else remaining_time
         
         # Point de départ pour l'horizon de planification
         # IMPORTANT: Arrondir à la minute supérieure pour éviter les problèmes de microsecondes
@@ -468,13 +489,27 @@ class SchedulerEngine:
                 op_id = op.get('id')
                 duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
                 
-                # CONTRAINTE MATIÈRE: Date minimum de début depuis les itérations précédentes
+                # CONTRAINTE MATIÈRE: Date minimum de début
+                # 1. D'abord vérifier les contraintes des itérations précédentes
+                # 2. Sinon utiliser la date de disponibilité matière de la pré-validation
                 min_start = 0
+                min_date_source = None
+                
                 if op_id in material_date_constraints:
+                    # Contrainte des itérations précédentes
                     min_date = material_date_constraints[op_id]
                     min_start = self._datetime_to_minutes(min_date)
                     min_start = max(0, min_start)
-                    logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min ({min_date.strftime('%d/%m %H:%M')})")
+                    min_date_source = f"itération précédente ({min_date.strftime('%d/%m %H:%M')})"
+                elif op.get('_material_earliest_date') and op.get('_material_earliest_date') > self.scheduling_start:
+                    # Contrainte de la pré-validation (première itération)
+                    min_date = op.get('_material_earliest_date')
+                    min_start = self._datetime_to_minutes(min_date)
+                    min_start = max(0, min_start)
+                    min_date_source = f"pré-validation ({min_date.strftime('%d/%m %H:%M')})"
+                
+                if min_date_source:
+                    logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min - {min_date_source}")
                 
                 # Variable de début (avec contrainte matière si applicable)
                 start_var = model.new_int_var(min_start, horizon - duration, f'start_{op_id}')
@@ -624,13 +659,22 @@ class SchedulerEngine:
             
             # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = max_solver_time_seconds
+            # Utiliser le temps d'itération calculé (budget temps restant réparti)
+            solver.parameters.max_time_in_seconds = iteration_time
             solver.parameters.num_search_workers = 4
             
-            logger.info(f"\n🔄 Lancement du solveur OR-Tools CP-SAT (max {max_solver_time_seconds}s)...")
+            logger.info(f"\n🔄 ITÉRATION {current_iteration} - Lancement du solveur OR-Tools CP-SAT")
+            logger.info(f"   Budget temps total: {max_solver_time_seconds}s")
+            logger.info(f"   Temps écoulé: {elapsed_time:.1f}s")
+            logger.info(f"   Temps restant: {remaining_time:.1f}s")
+            logger.info(f"   Temps alloué cette itération: {iteration_time:.1f}s")
+            
             status = solver.solve(model)
             status_str = self._get_status_string(status)
-            logger.info(f"✓ Solveur terminé - Status: {status_str}")
+            
+            # Mettre à jour le temps cumulé
+            total_solver_time += solver.wall_time
+            logger.info(f"✓ Solveur terminé - Status: {status_str} (temps: {solver.wall_time:.2f}s, cumulé: {total_solver_time:.2f}s)")
             
             result = {
                 'status': status_str,
@@ -652,26 +696,30 @@ class SchedulerEngine:
                 for op in valid_operations:
                     op_id = op.get('id')
                     if op_id in start_vars:
-                        start_time = solver.value(start_vars[op_id])
-                        end_time = solver.value(end_vars[op_id])
+                        op_start_minutes = solver.value(start_vars[op_id])
+                        op_end_minutes = solver.value(end_vars[op_id])
                         
                         scheduled_op = {
                             'operation_id': op_id,
                             'order_id': op.get('order_id'),
                             'article_id': op.get('_article_id'),
                             'machine_id': op.get('machine_id'),
-                            'start_minutes': start_time,
-                            'end_minutes': end_time,
-                            'duration_minutes': end_time - start_time,
-                            'start_datetime': self._minutes_to_datetime(start_time).isoformat(),
-                            'end_datetime': self._minutes_to_datetime(end_time).isoformat(),
+                            'start_minutes': op_start_minutes,
+                            'end_minutes': op_end_minutes,
+                            'duration_minutes': op_end_minutes - op_start_minutes,
+                            'start_datetime': self._minutes_to_datetime(op_start_minutes).isoformat(),
+                            'end_datetime': self._minutes_to_datetime(op_end_minutes).isoformat(),
                             'date_besoin': op.get('_date_besoin')
                         }
                         scheduled_ops.append(scheduled_op)
                 
                 # POST-TRAITEMENT MATIÈRE: Vérifier les ruptures et replanifier si nécessaire
-                if not ignore_material and self.material_manager and current_iteration < max_iterations:
+                # Continuer tant qu'il reste du temps dans le budget global
+                time_remaining_for_replan = max_solver_time_seconds - (time.time() - start_time)
+                
+                if not ignore_material and self.material_manager and time_remaining_for_replan > 2:
                     logger.info(f"\n📦 POST-TRAITEMENT MATIÈRE (itération {current_iteration}):")
+                    logger.info(f"   Temps restant pour replanification: {time_remaining_for_replan:.1f}s")
                     
                     # Trier par date de début pour simuler dans l'ordre
                     ops_by_start = sorted(scheduled_ops, key=lambda x: x['start_minutes'])
@@ -720,9 +768,10 @@ class SchedulerEngine:
                                 blocked_orders.add(order_id)
                                 logger.warning(f"   ⛔ {op_id}: NON PLANIFIABLE - pas de réception future")
                     
-                    # Si des opérations doivent être reportées, relancer la planification
-                    if new_constraints:
+                    # Si des opérations doivent être reportées ET qu'il reste du temps, relancer
+                    if new_constraints and time_remaining_for_replan > 3:
                         logger.info(f"\n🔄 REPLANIFICATION NÉCESSAIRE: {len(new_constraints)} opérations à reporter")
+                        logger.info(f"   Temps restant: {time_remaining_for_replan:.1f}s - Lancement itération {current_iteration + 1}")
                         
                         # Fusionner les contraintes
                         updated_constraints = dict(material_date_constraints)
@@ -734,15 +783,36 @@ class SchedulerEngine:
                         new_options = dict(options)
                         new_options['_material_date_constraints'] = updated_constraints
                         new_options['_iteration'] = current_iteration + 1
+                        new_options['_start_time'] = start_time
+                        new_options['_total_solver_time'] = total_solver_time
                         
                         return await self.schedule(
                             orders, operations, machines, rules_engine, material_checker, new_options
                         )
+                    elif new_constraints:
+                        # Pas assez de temps pour replanifier - signaler les ruptures
+                        logger.warning(f"\n⚠️ TEMPS ÉPUISÉ: {len(new_constraints)} opérations avec rupture non reportées")
+                        for op_id, new_date in new_constraints.items():
+                            truly_unschedulable.append({
+                                'operation_id': op_id,
+                                'order_id': next((o['order_id'] for o in scheduled_ops if o['operation_id'] == op_id), None),
+                                'blocking_components': [],
+                                'reason': f"Temps épuisé - devrait être reporté au {new_date.strftime('%d/%m %H:%M')}"
+                            })
                     
                     # Ajouter les opérations vraiment non planifiables au résultat
                     if truly_unschedulable:
                         result['unscheduled_operations'] = truly_unschedulable
                         result['unscheduled_count'] = len(truly_unschedulable)
+                        logger.warning(f"   Total: {len(truly_unschedulable)} opérations non planifiables")
+                    else:
+                        logger.info(f"   ✅ ORDONNANCEMENT OPTIMAL SANS RUPTURE en {current_iteration} itération(s)")
+                
+                # Ajouter les métriques de temps au résultat
+                result['total_solver_time'] = total_solver_time
+                final_elapsed = time.time() - start_time
+                result['total_elapsed_time'] = final_elapsed
+                logger.info(f"   ⏱️ Métriques temps: start_time={start_time}, now={time.time()}, elapsed={final_elapsed:.2f}s")
                 
                 # Vérifier l'absence de chevauchement (post-validation)
                 overlap_errors = self._verify_no_overlap(scheduled_ops)
