@@ -14,6 +14,7 @@ export default function ProjectedStockScenario() {
   const [loading, setLoading] = useState(true);
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [filterShortage, setFilterShortage] = useState(false);
+  const [articleFilter, setArticleFilter] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -67,9 +68,13 @@ export default function ProjectedStockScenario() {
   const { scenario_name, scenario_status, projected_stock, summary, scheduling_start } = data;
 
   // Filtrer les articles
-  const filteredArticles = filterShortage 
-    ? projected_stock.filter(a => a.has_shortage)
-    : projected_stock;
+  const filteredArticles = projected_stock.filter(a => {
+    // Filtre rupture
+    if (filterShortage && !a.has_shortage) return false;
+    // Filtre texte
+    if (articleFilter && !a.article_id.toLowerCase().includes(articleFilter.toLowerCase())) return false;
+    return true;
+  });
 
   // Article sélectionné
   const selectedArticleData = projected_stock.find(a => a.article_id === selectedArticle);
@@ -154,20 +159,48 @@ export default function ProjectedStockScenario() {
       <div className="grid grid-cols-3 gap-6">
         {/* Liste des articles */}
         <div className="col-span-1 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Articles</h2>
-            <button
-              onClick={() => setFilterShortage(!filterShortage)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors`}
-              style={{
-                backgroundColor: filterShortage ? 'var(--status-error)' : 'var(--bg-elevated)',
-                color: filterShortage ? 'white' : 'var(--text-secondary)',
-                border: `1px solid ${filterShortage ? 'transparent' : 'var(--border-default)'}`
-              }}
-            >
-              <Filter size={14} />
-              Ruptures
-            </button>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Articles</h2>
+              <button
+                onClick={() => setFilterShortage(!filterShortage)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors`}
+                style={{
+                  backgroundColor: filterShortage ? 'var(--status-error)' : 'var(--bg-elevated)',
+                  color: filterShortage ? 'white' : 'var(--text-secondary)',
+                  border: `1px solid ${filterShortage ? 'transparent' : 'var(--border-default)'}`
+                }}
+                data-testid="filter-shortage-btn"
+              >
+                <Filter size={14} />
+                Ruptures
+              </button>
+            </div>
+            {/* Filtre par article */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Filtrer par article..."
+                value={articleFilter}
+                onChange={(e) => setArticleFilter(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm"
+                style={{ 
+                  backgroundColor: 'var(--bg-sunken)', 
+                  border: '1px solid var(--border-default)',
+                  color: 'var(--text-primary)'
+                }}
+                data-testid="article-filter-input"
+              />
+              {articleFilter && (
+                <button
+                  onClick={() => setArticleFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs px-2 py-1 rounded"
+                  style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
           <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2">
             {filteredArticles.map(article => (

@@ -292,6 +292,7 @@ class SchedulerEngine:
         ignore_calendars = options.get('ignore_calendars', False)
         auto_assign_machines = options.get('auto_assign_machines', True)
         max_solver_time_seconds = options.get('max_solver_time_seconds', 60)
+        optimization_gap = options.get('optimization_gap', 0.05)  # Gap d'optimalité (5% par défaut)
         
         # Paramètres internes pour la replanification itérative
         material_date_constraints = options.get('_material_date_constraints', {})
@@ -633,22 +634,33 @@ class SchedulerEngine:
                     operations_by_order[order_id].append(op)
             
             sequence_constraints_count = 0
-            logger.info("\n📌 CONTRAINTES DE SÉQUENCE (gammes):")
+            transfer_time_applied = 0
+            logger.info("\n📌 CONTRAINTES DE SÉQUENCE (gammes) + TEMPS DE TRANSFERT:")
             for order_id, order_ops in operations_by_order.items():
                 # Trier par numéro d'opération dans la gamme
                 sorted_ops = sorted(order_ops, key=lambda x: x.get('operation_id', 0))
                 for i in range(len(sorted_ops) - 1):
-                    op1_id = sorted_ops[i].get('id')
-                    op2_id = sorted_ops[i + 1].get('id')
+                    op1 = sorted_ops[i]
+                    op2 = sorted_ops[i + 1]
+                    op1_id = op1.get('id')
+                    op2_id = op2.get('id')
+                    
+                    # Récupérer le temps de transfert de l'opération 1 (temps pour aller vers op2)
+                    transfer_time = op1.get('transfer_time_minutes', 0)
+                    
                     if op1_id in end_vars and op2_id in start_vars:
-                        model.add(start_vars[op2_id] >= end_vars[op1_id])
+                        # Contrainte: op2 commence après fin de op1 + temps de transfert
+                        model.add(start_vars[op2_id] >= end_vars[op1_id] + transfer_time)
                         sequence_constraints_count += 1
+                        if transfer_time > 0:
+                            transfer_time_applied += 1
+                            logger.info(f"      🚚 {op1_id} -> {op2_id}: +{transfer_time} min de transfert")
                 
                 if len(sorted_ops) > 1:
                     ops_seq = [f"{o.get('id')}(op{o.get('operation_id')})" for o in sorted_ops]
                     logger.info(f"   ✓ OF {order_id}: {' -> '.join(ops_seq)}")
             
-            logger.info(f"\n   Total: {sequence_constraints_count} contraintes de séquence")
+            logger.info(f"\n   Total: {sequence_constraints_count} contraintes de séquence, {transfer_time_applied} avec temps de transfert")
             
             # Objectif: minimiser le makespan (temps total)
             if end_vars:
@@ -662,12 +674,15 @@ class SchedulerEngine:
             # Utiliser le temps d'itération calculé (budget temps restant réparti)
             solver.parameters.max_time_in_seconds = iteration_time
             solver.parameters.num_search_workers = 4
+            # Gap d'optimalité : arrêter si la solution est à moins de X% de l'optimum théorique
+            solver.parameters.relative_gap_limit = optimization_gap
             
             logger.info(f"\n🔄 ITÉRATION {current_iteration} - Lancement du solveur OR-Tools CP-SAT")
             logger.info(f"   Budget temps total: {max_solver_time_seconds}s")
             logger.info(f"   Temps écoulé: {elapsed_time:.1f}s")
             logger.info(f"   Temps restant: {remaining_time:.1f}s")
             logger.info(f"   Temps alloué cette itération: {iteration_time:.1f}s")
+            logger.info(f"   Gap d'optimalité: {optimization_gap*100:.1f}%")
             
             status = solver.solve(model)
             status_str = self._get_status_string(status)

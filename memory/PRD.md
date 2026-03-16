@@ -75,6 +75,7 @@ Itération 2:
 #### 8.4 Temps de Déplacement (P1) ✅
 - Champ `transfer_time_minutes` dans le modèle Operation
 - Contrainte : `start(op2) >= end(op1) + transfer_time(op1)`
+- **Bug corrigé 16/03** : La contrainte était manquante dans le moteur, maintenant appliquée systématiquement
 
 **Contrat de données operations.csv** :
 ```csv
@@ -86,6 +87,21 @@ OF1_10,OF1,10,T001,C001,50,5,pending,30
 - Badge rouge dans le Gantt si `unscheduled_count > 0`
 - Liste avec raisons détaillées
 - Seules les opérations VRAIMENT non planifiables (pas de réception future) sont listées
+
+#### 8.6 Gap d'Optimalité (P1) ✅
+- Paramètre `optimization_gap` (défaut 5%) envoyé au solveur OR-Tools
+- Arrête la recherche si la solution est à moins de X% de l'optimum théorique
+- Paramètre `solver.parameters.relative_gap_limit` utilisé
+
+#### 8.7 Filtrage par Article (Stock Projeté) ✅
+- Champ de recherche textuel sur la page `/projected-stock/:scenarioId`
+- Filtre en temps réel sur la liste d'articles
+- Combinable avec le filtre "Ruptures uniquement"
+
+#### 8.8 Suppression Page Stock Statique ✅
+- Ancienne page `/projected-stock` supprimée (données statiques inutiles)
+- Navigation mise à jour
+- Accès au stock projeté uniquement via le contexte d'un scénario
 
 ## APIs Principales
 
@@ -114,9 +130,6 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 
 ## Backlog
 
-### P2 - En cours
-- [ ] Améliorer les infobulles du Gantt avec stock projeté à t
-
 ### P3 - À Faire
 - [ ] Export CSV du planning
 - [ ] Horizon ferme (geler planning court terme)
@@ -132,3 +145,12 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | Budget 120s, 2 itérations nécessaires | ✅ Converge en 0.02s |
 | OF2_10 en rupture ART5 | ✅ Reporté au 20/03 (date réception) |
 | Transfer time 30min | ✅ OF1_10 finit → +30min → OF1_20 commence |
+| Gap d'optimalité 5% | ✅ Paramètre passé au solveur |
+
+### Corrections du 16 mars 2026
+| Bug | Correction |
+|-----|------------|
+| Transfer time non appliqué | Contrainte ajoutée dans la boucle de séquence gamme |
+| Gap optimalité ignoré | Paramètre `relative_gap_limit` ajouté au solveur |
+| Page stock statique | Supprimée, navigation mise à jour |
+| Pas de filtre article | Champ de recherche ajouté |
