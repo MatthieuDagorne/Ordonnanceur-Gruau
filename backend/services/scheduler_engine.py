@@ -879,14 +879,37 @@ class SchedulerEngine:
                     # Trier par date de début pour simuler dans l'ordre
                     ops_by_start = sorted(scheduled_ops, key=lambda x: x['start_minutes'])
                     
-                    # Réinitialiser les consommations planifiées
+                    # Réinitialiser les consommations planifiées ET les productions
                     self.material_manager.planned_consumptions = {}
+                    self.material_manager.clear_planned_productions()
                     
-                    # Tracker les nouvelles contraintes et les OFs avec première op bloquée
+                    # ÉTAPE 1: Enregistrer les PRODUCTIONS (articles fabriqués) 
+                    # pour qu'ils soient disponibles pour les opérations suivantes
+                    for op in ops_by_start:
+                        if op.get('is_last_operation'):
+                            order_id = op.get('order_id')
+                            order = orders_by_id.get(order_id, {})
+                            article_fab = order.get('article_id')
+                            qty = order.get('quantity', 0)
+                            if article_fab and qty > 0:
+                                # L'article entre en stock à la fin de l'opération + temps de transfert
+                                transfer_time = op.get('transfer_time_minutes', 0)
+                                stock_entry_minutes = op['end_minutes'] + transfer_time
+                                stock_entry_date = self._minutes_to_datetime(stock_entry_minutes)
+                                
+                                self.material_manager.add_planned_production(
+                                    order_id=order_id,
+                                    article_id=article_fab,
+                                    quantity=qty,
+                                    end_date=stock_entry_date
+                                )
+                    
+                    # ÉTAPE 2: Tracker les nouvelles contraintes et les OFs avec première op bloquée
                     new_constraints = {}
                     first_op_blocked_orders = set()  # OFs dont la PREMIÈRE opération est bloquée
                     truly_unschedulable = []
                     
+                    # ÉTAPE 3: Vérifier les matières pour chaque opération
                     for op in ops_by_start:
                         op_id = op['operation_id']
                         order_id = op.get('order_id')
@@ -996,6 +1019,7 @@ class SchedulerEngine:
                 
                 # DIAGNOSTIC INTÉGRÉ: Ajouter les informations détaillées au résultat
                 # 1. Productions planifiées (entrées en stock des articles fabriqués)
+                # IMPORTANT: L'article entre en stock à la fin de la dernière opération + temps de transfert final
                 productions = []
                 for op in scheduled_ops:
                     if op.get('is_last_operation'):
@@ -1004,13 +1028,22 @@ class SchedulerEngine:
                         article_fab = order.get('article_id')
                         qty = order.get('quantity', 0)
                         if article_fab and qty > 0:
+                            # Ajouter le temps de transfert final pour l'entrée en stock
+                            transfer_time = op.get('transfer_time_minutes', 0)
+                            stock_entry_minutes = op['end_minutes'] + transfer_time
+                            stock_entry_datetime = self._minutes_to_datetime(stock_entry_minutes)
+                            
                             productions.append({
                                 'order_id': order_id,
                                 'article_id': article_fab,
                                 'quantity': qty,
-                                'end_datetime': op['end_datetime'],
-                                'end_minutes': op['end_minutes']
+                                'end_datetime': stock_entry_datetime.isoformat(),
+                                'end_minutes': stock_entry_minutes,
+                                'operation_end_datetime': op['end_datetime'],
+                                'transfer_time_minutes': transfer_time,
+                                'type': 'PRODUCTION'
                             })
+                            logger.info(f"   �icing PRODUCTION: {order_id} -> {article_fab} x{qty} disponible à {stock_entry_datetime.strftime('%d/%m %H:%M')} (fin op: {op['end_datetime'][:16]} + {transfer_time}min transfert)")
                 result['productions'] = productions
                 
                 # 2. Propagation de priorité (pour diagnostic)
