@@ -264,16 +264,21 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 
 **Symptôme** : Délai de plusieurs heures entre la fin de production d'un composant (OF1) et son utilisation (OF2), au lieu du simple temps de transfert.
 
-**Cause racine** : Dans `scheduler_engine.py`, lors de la fusion des contraintes matière pour la replanification (ligne 1461), l'ancienne logique ne mettait à jour la contrainte que si `new_date > old_date`. Cela ignorait les cas où un producteur est avancé (termine plus tôt), laissant une contrainte obsolète.
+**Causes racines et corrections** :
 
-**Correction** : La contrainte est maintenant **toujours remplacée** par la nouvelle valeur (date de production réelle) :
-```python
-# AVANT (bug)
-if op_id not in updated_constraints or new_date > updated_constraints[op_id]:
-    updated_constraints[op_id] = new_date
+1. **Contrainte matière obsolète** (Ligne 1461) :
+   - L'ancienne logique ne mettait à jour la contrainte que si `new_date > old_date`
+   - Correction : Toujours remplacer la contrainte par la nouvelle valeur
 
-# APRÈS (corrigé)
-updated_constraints[op_id] = new_date  # Toujours remplacer
-```
+2. **Pré-validation imprécise** (Lignes 809-820) :
+   - Les contraintes `_material_earliest_date` étaient basées sur des estimations grossières (+8h)
+   - Correction : Seules les contraintes des itérations précédentes (basées sur les vraies dates du solver) sont utilisées
 
-**Résultat** : Le délai entre producteur et consommateur est maintenant de **0 minutes** (composant disponible exactement quand nécessaire après le temps de transfert).
+3. **Deadline producteur non propagée** (Lignes 1088-1130) :
+   - Le producteur (OF1) n'avait pas de contrainte de deadline dérivée du consommateur
+   - Correction : `deadline_producteur = deadline_consommateur - durée_consommateur`
+
+**Résultat** : 
+- Délai entre producteur et consommateur = **0 minutes** (flux tiré optimal)
+- JIT planifie au plus tard quand possible (1073 min plus tard qu'ASAP)
+- Le producteur est automatiquement avancé pour les deadlines serrées
