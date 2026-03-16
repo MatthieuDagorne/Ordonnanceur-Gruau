@@ -2386,6 +2386,27 @@ async def get_gantt_data(scenario_id: str):
         from services.material_manager import MaterialManager
         material_manager = MaterialManager(stocks, operation_materials, planned_receipts)
         
+        # IMPORTANT: Ajouter les productions planifiées des OFs au MaterialManager
+        # Cela permet de calculer le stock projeté en tenant compte des articles fabriqués
+        productions = schedule_data.get('productions', [])
+        for prod in productions:
+            order_id = prod.get('order_id')
+            article_id = prod.get('article_id')
+            quantity = prod.get('quantity', 0)
+            end_datetime_str = prod.get('end_datetime')
+            
+            if article_id and end_datetime_str:
+                try:
+                    end_datetime = datetime.fromisoformat(end_datetime_str.replace('Z', '+00:00'))
+                    material_manager.add_planned_production(
+                        order_id=order_id,
+                        article_id=article_id,
+                        quantity=quantity,
+                        end_date=end_datetime
+                    )
+                except Exception as e:
+                    logger.warning(f"Erreur ajout production {order_id}: {e}")
+        
         # Trier les opérations par date de début pour simuler les consommations dans l'ordre
         sorted_operations = sorted(operations, key=lambda x: x.get('start_datetime', ''))
         
