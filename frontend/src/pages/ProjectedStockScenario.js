@@ -269,6 +269,12 @@ export default function ProjectedStockScenario() {
                   <div className="text-center p-2 rounded" style={{ backgroundColor: 'var(--bg-sunken)' }}>
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Réceptions</p>
                     <p className="text-lg font-bold font-mono" style={{ color: 'var(--status-success)' }}>+{selectedArticleData.total_receipts}</p>
+                    {(selectedArticleData.total_receipts_production > 0 || selectedArticleData.total_receipts_supplier > 0) && (
+                      <div className="flex justify-center gap-2 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {selectedArticleData.total_receipts_supplier > 0 && <span>Fourn: {selectedArticleData.total_receipts_supplier}</span>}
+                        {selectedArticleData.total_receipts_production > 0 && <span style={{ color: '#059669' }}>Fab: {selectedArticleData.total_receipts_production}</span>}
+                      </div>
+                    )}
                   </div>
                   <div className="text-center p-2 rounded" style={{ backgroundColor: 'var(--bg-sunken)' }}>
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Consommations</p>
@@ -306,49 +312,66 @@ export default function ProjectedStockScenario() {
                   </div>
                   
                   {/* Événements */}
-                  {selectedArticleData.timeline.map((evt, idx) => (
-                    <div 
-                      key={idx}
-                      className="flex items-center gap-4 p-3 rounded-lg transition-colors"
-                      style={{ 
-                        backgroundColor: evt.stock_after < 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-sunken)',
-                        border: evt.stock_after < 0 ? '1px solid var(--status-error)' : 'none'
-                      }}
-                    >
+                  {selectedArticleData.timeline.map((evt, idx) => {
+                    const isReceipt = evt.type === 'RECEIPT' || evt.type === 'PRODUCTION_RECEIPT';
+                    const isProduction = evt.type === 'PRODUCTION_RECEIPT';
+                    const eventLabel = isProduction 
+                      ? evt.reference  // "Fabrication OF xxx"
+                      : evt.type === 'RECEIPT' 
+                        ? 'Réception fournisseur' 
+                        : evt.reference;
+                    
+                    return (
                       <div 
-                        className="w-10 h-10 rounded-full flex items-center justify-center"
+                        key={idx}
+                        className="flex items-center gap-4 p-3 rounded-lg transition-colors"
                         style={{ 
-                          backgroundColor: evt.type === 'RECEIPT' ? 'var(--status-success)' : 'var(--status-error)',
-                          color: 'white'
+                          backgroundColor: evt.stock_after < 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-sunken)',
+                          border: evt.stock_after < 0 ? '1px solid var(--status-error)' : 'none'
                         }}
                       >
-                        {evt.type === 'RECEIPT' ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {evt.type === 'RECEIPT' ? 'Réception fournisseur' : evt.reference}
-                          </p>
-                          {!evt.is_scheduled && (
-                            <span className="px-2 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--status-warning)', color: 'white' }}>
-                              Non planifié
-                            </span>
-                          )}
+                        <div 
+                          className="w-10 h-10 rounded-full flex items-center justify-center"
+                          style={{ 
+                            backgroundColor: isReceipt 
+                              ? (isProduction ? '#059669' : 'var(--status-success)')  // Vert foncé pour production
+                              : 'var(--status-error)',
+                            color: 'white'
+                          }}
+                        >
+                          {isReceipt ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
                         </div>
-                        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {evt.datetime ? evt.datetime.replace('T', ' ').substring(0, 16) : 'Date non définie'}
-                        </p>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                              {eventLabel}
+                            </p>
+                            {isProduction && (
+                              <span className="px-2 py-0.5 rounded text-xs" style={{ backgroundColor: '#059669', color: 'white' }}>
+                                Fabrication
+                              </span>
+                            )}
+                            {!evt.is_scheduled && (
+                              <span className="px-2 py-0.5 rounded text-xs" style={{ backgroundColor: 'var(--status-warning)', color: 'white' }}>
+                                Non planifié
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {evt.datetime ? evt.datetime.replace('T', ' ').substring(0, 16) : 'Date non définie'}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold font-mono" style={{ color: isReceipt ? 'var(--status-success)' : 'var(--status-error)' }}>
+                            {evt.quantity_change > 0 ? '+' : ''}{evt.quantity_change}
+                          </p>
+                          <p className="text-xs" style={{ color: evt.stock_after < 0 ? 'var(--status-error)' : 'var(--text-muted)' }}>
+                            Stock: {evt.stock_after}
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-bold font-mono" style={{ color: evt.type === 'RECEIPT' ? 'var(--status-success)' : 'var(--status-error)' }}>
-                          {evt.quantity_change > 0 ? '+' : ''}{evt.quantity_change}
-                        </p>
-                        <p className="text-xs" style={{ color: evt.stock_after < 0 ? 'var(--status-error)' : 'var(--text-muted)' }}>
-                          Stock: {evt.stock_after}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

@@ -1014,7 +1014,29 @@ async def get_projected_stock_by_scenario(scenario_id: str, article_id: Optional
                 }
             })
         
-        # 2. Ajouter les consommations des opérations planifiées
+        # 2. Ajouter les productions (entrées en stock des articles fabriqués)
+        # Ces productions sont générées par le moteur d'ordonnancement
+        productions = schedule_data.get('productions', [])
+        for prod in productions:
+            art_id = prod.get('article_id')
+            if article_id and art_id != article_id:
+                continue
+            articles_set.add(art_id)
+            all_events.append({
+                'type': 'PRODUCTION_RECEIPT',
+                'article_id': art_id,
+                'quantity': prod.get('quantity', 0),  # Positif car entrée en stock
+                'datetime': prod.get('end_datetime'),  # Fin de dernière op + transfert
+                'reference': f"Fabrication OF {prod.get('order_id')}",
+                'details': {
+                    'source': 'production',
+                    'order_id': prod.get('order_id'),
+                    'operation_end_datetime': prod.get('operation_end_datetime'),
+                    'transfer_time_minutes': prod.get('transfer_time_minutes', 0)
+                }
+            })
+        
+        # 4. Ajouter les consommations des opérations planifiées
         for mat in operation_materials:
             art_id = mat.get('article_composant_id')
             if article_id and art_id != article_id:
@@ -1093,13 +1115,17 @@ async def get_projected_stock_by_scenario(scenario_id: str, article_id: Optional
                 min_stock = min(min_stock, current_stock)
             
             # Calculer les totaux
-            total_receipts = sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'RECEIPT')
+            total_receipts_supplier = sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'RECEIPT')
+            total_receipts_production = sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'PRODUCTION_RECEIPT')
+            total_receipts = total_receipts_supplier + total_receipts_production
             total_consumptions = abs(sum(e.get('quantity', 0) for e in article_events if e.get('type') == 'CONSUMPTION'))
             
             projected_stock.append({
                 'article_id': art_id,
                 'initial_stock': initial_stock,
                 'total_receipts': total_receipts,
+                'total_receipts_supplier': total_receipts_supplier,
+                'total_receipts_production': total_receipts_production,
                 'total_consumptions': total_consumptions,
                 'final_stock': current_stock,
                 'min_stock': min_stock,

@@ -1,0 +1,66 @@
+{
+  "summary": "P0 Bug Fix verified: Production receipts (PRODUCTION_RECEIPT) now correctly include transfer time in their datetime. The /api/projected-stock/{scenario_id} endpoint returns productions with end_datetime = operation_end + transfer_time. Frontend /projected-stock/{scenarioId} displays PRODUCTION_RECEIPT events with dark green 'Fabrication' badge and properly distinguishes 'Fourn' (supplier) from 'Fab' (production) in summaries.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_projected_stock.py",
+    "/app/test_reports/pytest/pytest_projected_stock.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_projected_stock.py"],
+  "success_rate": {
+    "backend": "100% (10/10 tests passed)",
+    "frontend": "100% (All UI verifications passed)"
+  },
+  "seed_data_creation": "Used existing scenario 281f2ed1-b444-4c7b-bc94-34cdd7e2f84f with 3 production receipts (ART1, ART2, ART3)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "P0 bug fix for production receipt datetime (including transfer time) fully verified. Backend and frontend working correctly.",
+  "features_verified": {
+    "p0_production_receipt_datetime": {
+      "api_endpoint": "GET /api/projected-stock/{scenario_id}",
+      "productions_field": "schedule_data.productions contains end_datetime = operation_end + transfer_time",
+      "event_type": "PRODUCTION_RECEIPT events in timeline with correct datetime",
+      "status": "VERIFIED"
+    },
+    "frontend_fabrication_badge": {
+      "component": "ProjectedStockScenario.js",
+      "badge_text": "'Fabrication' badge for PRODUCTION_RECEIPT events",
+      "badge_color": "#059669 (dark green)",
+      "status": "VERIFIED"
+    },
+    "receipt_type_distinction": {
+      "supplier_label": "'Fourn: X' for supplier receipts",
+      "production_label": "'Fab: X' for production receipts (green text #059669)",
+      "total_receipts": "total_receipts = total_receipts_supplier + total_receipts_production",
+      "status": "VERIFIED"
+    },
+    "timeline_chronological": {
+      "event_order": "All events sorted by datetime",
+      "event_types": ["RECEIPT (supplier)", "PRODUCTION_RECEIPT (fabrication)", "CONSUMPTION"],
+      "status": "VERIFIED"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/projected-stock/{scenario_id}", "status": "PASS", "notes": "Returns projected stock with PRODUCTION_RECEIPT events including transfer time"}
+  ],
+  "test_data": {
+    "scenario_id": "281f2ed1-b444-4c7b-bc94-34cdd7e2f84f",
+    "scenario_name": "1",
+    "scenario_status": "OPTIMAL",
+    "articles_with_production_receipt": [
+      {"article_id": "ART1", "production_qty": 5, "from_order": "OF1"},
+      {"article_id": "ART2", "production_qty": 4, "from_order": "OF2"},
+      {"article_id": "ART3", "production_qty": 2, "from_order": "OF3"}
+    ],
+    "articles_with_supplier_receipt": ["ART10", "ART4", "ART5", "ART6"]
+  }
+}
