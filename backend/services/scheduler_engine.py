@@ -538,6 +538,72 @@ class SchedulerEngine:
                     o['_propagated_priority'] = o.get('priority', 0)
                     o['_is_urgent'] = o.get('priority', 0) == 1
             
+            # PROPAGATION BASÉE SUR LES DATES DE BESOIN
+            # Si un OF a une date de besoin et dépend d'un autre OF pour la matière,
+            # l'OF producteur doit être planifié en priorité pour permettre au consommateur de respecter sa deadline
+            logger.info("\n📆 ANALYSE DES DÉPENDANCES MATIÈRE POUR DATES DE BESOIN:")
+            
+            # Construire la liste des besoins matière par OF
+            material_dependencies = {}  # {consumer_of: [{article, producer_of, due_date}]}
+            
+            for order in orders:
+                order_id = order.get('id')
+                due_date_str = order.get('due_date')
+                if not due_date_str:
+                    continue
+                
+                try:
+                    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+                except:
+                    continue
+                
+                # Trouver les opérations de cet OF et leurs besoins matière
+                order_ops = [op for op in operations if op.get('order_id') == order_id]
+                
+                for op in order_ops:
+                    op_id = op.get('id')
+                    materials = self.material_manager.get_operation_materials(op_id)
+                    
+                    for mat in materials:
+                        article_needed = mat.article_composant_id
+                        
+                        # Vérifier si cet article est fabriqué par un autre OF
+                        if article_needed in article_producers:
+                            for producer_of in article_producers[article_needed]:
+                                if producer_of != order_id:
+                                    if order_id not in material_dependencies:
+                                        material_dependencies[order_id] = []
+                                    material_dependencies[order_id].append({
+                                        'article': article_needed,
+                                        'producer_of': producer_of,
+                                        'due_date': due_date,
+                                        'operation_id': op_id
+                                    })
+                                    logger.info(f"   📦 {order_id} (besoin: {due_date.strftime('%d/%m %H:%M')}) dépend de {producer_of} pour {article_needed}")
+            
+            # Marquer les OFs producteurs comme "critiques" pour la planification
+            # Ils devront être planifiés en priorité pour respecter les deadlines des consommateurs
+            critical_producers = {}  # {producer_of: earliest_deadline}
+            
+            for consumer_of, deps in material_dependencies.items():
+                for dep in deps:
+                    producer_of = dep['producer_of']
+                    due_date = dep['due_date']
+                    
+                    if producer_of not in critical_producers or due_date < critical_producers[producer_of]:
+                        critical_producers[producer_of] = due_date
+            
+            # Mettre à jour les ordres avec les infos de criticité
+            for order in orders:
+                order_id = order.get('id')
+                if order_id in critical_producers:
+                    order['_critical_for_deadline'] = critical_producers[order_id].isoformat()
+                    order['_is_critical_producer'] = True
+                    logger.info(f"   🔴 {order_id} marqué CRITIQUE (doit finir avant {critical_producers[order_id].strftime('%d/%m %H:%M')} pour un OF consommateur)")
+                else:
+                    order['_critical_for_deadline'] = None
+                    order['_is_critical_producer'] = False
+            
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
             if auto_assign_machines and not ignore_rules:
                 logger.info("\n🤖 Auto-assignation des machines activée")
@@ -961,15 +1027,53 @@ class SchedulerEngine:
             # Récupérer la stratégie de planification
             scheduling_strategy = options.get('scheduling_strategy', 'ASAP')
             
+            # Index des ordres pour accéder aux infos
+            orders_by_id = {o.get('id'): o for o in orders}
+            
             # STRATÉGIE ASAP (Au plus tôt) - Comportement par défaut
-            # Objectif: minimiser le makespan (temps total de fin)
+            # Objectif: minimiser le makespan + prioriser les producteurs critiques
             if scheduling_strategy == 'ASAP':
-                if end_vars:
+                # Identifier les opérations des producteurs critiques
+                critical_producer_ops = []
+                for op in valid_operations:
+                    order_id = op.get('order_id')
+                    order = orders_by_id.get(order_id, {})
+                    if order.get('_is_critical_producer'):
+                        op_id = op.get('id')
+                        if op_id in end_vars:
+                            critical_producer_ops.append(op_id)
+                
+                if critical_producer_ops:
+                    logger.info(f"\n   🎯 PRIORISATION DES PRODUCTEURS CRITIQUES:")
+                    logger.info(f"   {len(critical_producer_ops)} opérations de producteurs critiques")
+                    
+                    # Objectif multi-critères:
+                    # 1. Minimiser la somme des fins des producteurs critiques (les terminer tôt)
+                    # 2. Minimiser le makespan global
+                    CRITICAL_PRIORITY_WEIGHT = 1000
+                    
+                    # Somme des fins des producteurs critiques
+                    sum_critical_ends = model.new_int_var(0, horizon * len(critical_producer_ops), 'sum_critical_ends')
+                    model.add(sum_critical_ends == sum(end_vars[op_id] for op_id in critical_producer_ops))
+                    
+                    # Makespan global
                     makespan = model.new_int_var(0, horizon, 'makespan')
                     model.add_max_equality(makespan, list(end_vars.values()))
-                    model.minimize(makespan)
-                    logger.info("   ✓ Stratégie: ASAP (Au plus tôt)")
-                    logger.info("   ✓ Objectif: minimiser makespan")
+                    
+                    # Objectif combiné: minimiser (WEIGHT * sum_critical_ends + makespan)
+                    combined_objective = model.new_int_var(0, CRITICAL_PRIORITY_WEIGHT * horizon * len(critical_producer_ops) + horizon, 'combined_objective')
+                    model.add(combined_objective == CRITICAL_PRIORITY_WEIGHT * sum_critical_ends + makespan)
+                    model.minimize(combined_objective)
+                    
+                    logger.info(f"   ✓ Objectif: minimiser {CRITICAL_PRIORITY_WEIGHT}×fins_critiques + makespan")
+                else:
+                    # Pas de producteurs critiques, minimiser simplement le makespan
+                    if end_vars:
+                        makespan = model.new_int_var(0, horizon, 'makespan')
+                        model.add_max_equality(makespan, list(end_vars.values()))
+                        model.minimize(makespan)
+                
+                logger.info("   ✓ Stratégie: ASAP (Au plus tôt)")
             
             # STRATÉGIE JIT (Juste-à-temps / Au plus tard)
             # Objectif: maximiser les temps de début tout en respectant les dates de besoin
