@@ -2413,11 +2413,13 @@ async def get_gantt_data(scenario_id: str):
             is_late = op.get('is_late', False)
             lateness_minutes = op.get('lateness_minutes', 0)
             
-            # Sinon, calculer à partir des dates (fallback)
-            if not is_late:
-                due_date = op.get('date_besoin')
+            # Récupérer la date de besoin
+            due_date = op.get('date_besoin') or order.get('due_date')
+            
+            # Sinon, calculer is_late à partir des dates (fallback)
+            if not is_late and due_date:
                 end_dt = op.get('end_datetime')
-                if due_date and end_dt:
+                if end_dt:
                     try:
                         due = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
                         end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
