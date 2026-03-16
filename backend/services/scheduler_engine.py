@@ -800,13 +800,13 @@ class SchedulerEngine:
                 duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
                 
                 # CONTRAINTE MATIÈRE: Date minimum de début
-                # 1. D'abord vérifier les contraintes des itérations précédentes
-                # 2. Sinon utiliser la date de disponibilité matière de la pré-validation
+                # Utiliser les contraintes calculées dans les itérations précédentes
+                # OU la pré-validation de la première itération
                 min_start = 0
                 min_date_source = None
                 
                 if op_id in material_date_constraints:
-                    # Contrainte des itérations précédentes
+                    # Contrainte des itérations précédentes (date de production réelle)
                     min_date = material_date_constraints[op_id]
                     min_start = self._datetime_to_minutes(min_date)
                     min_start = max(0, min_start)
@@ -1454,11 +1454,16 @@ class SchedulerEngine:
                         logger.info(f"\n🔄 REPLANIFICATION NÉCESSAIRE: {len(new_constraints)} opérations à reporter")
                         logger.info(f"   Temps restant: {time_remaining_for_replan:.1f}s - Lancement itération {current_iteration + 1}")
                         
-                        # Fusionner les contraintes
+                        # CORRECTION BUG: Toujours remplacer les contraintes par les nouvelles
+                        # car les nouvelles reflètent la date de production RÉELLE calculée par le solver.
+                        # L'ancienne logique (new_date > old_date) ignorait les cas où un producteur
+                        # est avancé, ce qui laissait une contrainte obsolète et créait des délais artificiels.
                         updated_constraints = dict(material_date_constraints)
                         for op_id, new_date in new_constraints.items():
-                            if op_id not in updated_constraints or new_date > updated_constraints[op_id]:
-                                updated_constraints[op_id] = new_date
+                            old_date = updated_constraints.get(op_id)
+                            if old_date and new_date != old_date:
+                                logger.info(f"   🔄 {op_id}: contrainte matière mise à jour {old_date.strftime('%d/%m %H:%M')} -> {new_date.strftime('%d/%m %H:%M')}")
+                            updated_constraints[op_id] = new_date  # Toujours remplacer
                         
                         # Relancer la planification avec les nouvelles contraintes
                         new_options = dict(options)

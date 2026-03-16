@@ -1,0 +1,130 @@
+{
+  "summary": "Tested bug fix for material constraints not being updated during iterative replanning in JIT mode. Bug was in scheduler_engine.py lines 1461-1466 where old logic only updated constraints when new_date > old_date, ignoring cases where producer is advanced. Fix always replaces constraints with actual production date. All 11 backend tests passed, Gantt displays correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Gantt filter section",
+        "issues": ["Order and article filter dropdowns missing data-testid attributes (filter-order-select, filter-article-select)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_material_constraint_bugfix.py",
+    "/app/test_reports/pytest/pytest_material_bugfix.xml"
+  ],
+  "action_items": [
+    "Add data-testid attributes to Gantt filter dropdowns for better test automation"
+  ],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_material_constraint_bugfix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 tests passed)",
+    "frontend": "100% (Gantt displays correctly, scheduling options work)"
+  },
+  "seed_data_creation": "Created test scenarios: TEST_MATERIAL_BUGFIX, TEST_NO_INFINITE_LOOP, TEST_TRANSFER_TIME, TEST_JIT_MATERIAL, TEST_PRODUCTIONS",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Material constraint bug fix verified. Test scenario TEST_TRANSFER_TIME shows 0 minute gap between producer finish (OF1_20+transfer) and consumer start (OF2_10), confirming bug is fixed. JIT mode working correctly.",
+  "features_verified": {
+    "1_material_constraints_update": {
+      "description": "Les contraintes matière sont correctement mises à jour lors des replanifications itératives",
+      "tests": [
+        "scheduling API returns 200 with OPTIMAL status",
+        "material_iteration field shows replanning occurred",
+        "updated_constraints always replaces old constraints (line 1466)"
+      ],
+      "status": "VERIFIED",
+      "evidence": "Scheduler completed in 2 iterations, constraint updated message in logs"
+    },
+    "2_no_infinite_loop": {
+      "description": "Pas de boucle de replanification infinie",
+      "tests": [
+        "material_iteration < 10",
+        "total_elapsed_time < 120s"
+      ],
+      "status": "VERIFIED",
+      "evidence": "material_iteration=2, total_elapsed_time=0.02s"
+    },
+    "3_transfer_time_delay": {
+      "description": "Le délai entre la fin de production d'un composant et son utilisation correspond au temps de transfert",
+      "tests": [
+        "OF1_20 ends at minute 936",
+        "OF1_20 transfer_time is 20 minutes",
+        "ART1 enters stock at minute 956",
+        "OF2_10 starts at minute 956",
+        "Gap = 0 minutes (perfect timing)"
+      ],
+      "status": "VERIFIED",
+      "evidence": "Gap is 0 minutes between production entry and consumption start"
+    },
+    "4_scheduling_api": {
+      "description": "L'API /api/scheduling/calculate retourne les opérations planifiées correctement",
+      "tests": [
+        "POST /api/scheduling/calculate returns 200",
+        "Response contains scenario_id, status, result",
+        "Operations array has 4 operations",
+        "Productions array shows OF1 produces ART1"
+      ],
+      "status": "VERIFIED"
+    },
+    "5_gantt_display": {
+      "description": "Le Gantt affiche les opérations sans délai anormal",
+      "tests": [
+        "Gantt page loads for TEST_TRANSFER_TIME scenario",
+        "Shows 4 operations, 4 machines",
+        "Status: OPTIMAL",
+        "French date format 'Mardi 17 mars 2026'",
+        "Operations display correctly on timeline"
+      ],
+      "status": "VERIFIED",
+      "evidence": "Screenshot shows Gantt with proper operation layout"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "POST /api/scheduling/calculate", "status": "PASS", "response_time": "< 2s"},
+    {"endpoint": "GET /api/scenarios", "status": "PASS"},
+    {"endpoint": "GET /api/scenarios/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/operations", "status": "PASS"},
+    {"endpoint": "GET /api/manufacturing-orders", "status": "PASS"},
+    {"endpoint": "GET /api/operation-materials", "status": "PASS"},
+    {"endpoint": "GET /api/stocks", "status": "PASS"},
+    {"endpoint": "GET /api/gantt/data/{id}", "status": "PASS"}
+  ],
+  "bug_analysis": {
+    "bug_description": "Abnormal delay between dependent operations (producer/consumer) in JIT mode due to obsolete material constraints not being updated during iterative replanning",
+    "root_cause": "Old logic at line 1466 only updated constraint when new_date > old_date. This ignored cases where a producer is advanced (finishes earlier), leaving an obsolete constraint that created artificial delays",
+    "fix_applied": "Changed line 1466 to always replace: updated_constraints[op_id] = new_date instead of only when new_date > old_date",
+    "verification": "Gap between producer finish (OF1_20 end + transfer) and consumer start (OF2_10) is now 0 minutes instead of several hours",
+    "location": "/app/backend/services/scheduler_engine.py lines 1461-1466"
+  },
+  "test_data": {
+    "producer_consumer_scenario": {
+      "OF1": {
+        "produces": "ART1",
+        "quantity": 5,
+        "last_operation": "OF1_20",
+        "end_minutes": 936,
+        "transfer_time": 20,
+        "stock_entry_minutes": 956
+      },
+      "OF2": {
+        "consumes": "ART1 (1 unit at OF2_10)",
+        "first_operation": "OF2_10",
+        "start_minutes": 956
+      },
+      "gap_analysis": {
+        "expected_gap": "0 minutes (component available exactly when needed)",
+        "actual_gap": "0 minutes",
+        "status": "FIXED"
+      }
+    }
+  }
+}
