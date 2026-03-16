@@ -573,9 +573,27 @@ class SchedulerEngine:
                     
                     for mat in materials:
                         article_needed = mat.article_composant_id
+                        qty_needed = mat.quantity
                         
                         # Vérifier si cet article est fabriqué par un autre OF
                         if article_needed in article_producers:
+                            # IMPORTANT: Ne propager la priorité que si le stock projeté est INSUFFISANT
+                            # Le stock projeté au moment du démarrage de l'opération consommatrice
+                            # doit être vérifié SANS compter les productions de cet OF
+                            
+                            # Estimer la date de démarrage de l'opération consommatrice
+                            # Pour simplifier, on utilise le scheduling_start + un délai estimé
+                            estimated_start = self.scheduling_start
+                            
+                            # Calculer le stock projeté à cette date (hors productions non encore planifiées)
+                            projected_stock = self.material_manager.get_projected_stock(article_needed, estimated_start)
+                            
+                            # Si le stock projeté est suffisant, pas besoin de propager la priorité
+                            if projected_stock >= qty_needed:
+                                logger.info(f"   ✓ {order_id}/{op_id}: stock projeté de {article_needed} suffisant ({projected_stock} >= {qty_needed}) - pas de propagation")
+                                continue
+                            
+                            # Stock insuffisant - propager la priorité vers le producteur
                             for producer_of in article_producers[article_needed]:
                                 if producer_of != order_id:
                                     if order_id not in material_dependencies:
@@ -584,9 +602,11 @@ class SchedulerEngine:
                                         'article': article_needed,
                                         'producer_of': producer_of,
                                         'due_date': due_date,
-                                        'operation_id': op_id
+                                        'operation_id': op_id,
+                                        'qty_needed': qty_needed,
+                                        'projected_stock': projected_stock
                                     })
-                                    logger.info(f"   📦 {order_id} (besoin: {due_date.strftime('%d/%m %H:%M')}) dépend de {producer_of} pour {article_needed}")
+                                    logger.info(f"   📦 {order_id} (besoin: {due_date.strftime('%d/%m %H:%M')}) dépend de {producer_of} pour {article_needed} (stock={projected_stock} < besoin={qty_needed})")
             
             # Marquer les OFs producteurs comme "critiques" pour la planification
             # Ils devront être planifiés en priorité pour respecter les deadlines des consommateurs
