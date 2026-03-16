@@ -1,0 +1,93 @@
+{
+  "summary": "Tested JIT (Au plus tard) mode with late orders functionality. All 6 features verified working correctly: (1) JIT returns OPTIMAL instead of INFEASIBLE, (2) late_orders array with lateness_hours, (3) gantt/data returns is_late/lateness_minutes, (4) Gantt red bars for late ops, (5) Diagnostic 'Retards' tab, (6) Alert banner for late orders.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_jit_late_orders.py",
+    "/app/test_reports/pytest/pytest_jit_late_orders.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_jit_late_orders.py"],
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (All UI verifications passed)"
+  },
+  "seed_data_creation": "Used existing JIT scenario ba7a4e09-fa28-4d2f-b408-01667497ae76 (Test JIT avec retards)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "JIT late orders functionality fully tested. Key scenario: ba7a4e09-fa28-4d2f-b408-01667497ae76 with 2 late orders (OF1: 196h, OF2: 69.6h) and 1 on-time order (OF3).",
+  "features_verified": {
+    "jit_returns_optimal": {
+      "description": "JIT mode returns OPTIMAL status instead of INFEASIBLE when due dates cannot be met",
+      "implementation": "scheduler_engine.py lines 793-900 - soft constraints with lateness variables",
+      "test_scenario": "ba7a4e09-fa28-4d2f-b408-01667497ae76",
+      "test_result": "Status is OPTIMAL with late_orders detected",
+      "status": "VERIFIED"
+    },
+    "late_orders_detection": {
+      "description": "Late orders are detected and stored in schedule_data.late_orders with lateness_hours",
+      "late_orders_found": [
+        {"order_id": "OF1", "lateness_hours": 196.0, "due_date": "2026-03-17T10:00:00", "actual_completion": "2026-03-25T14:02:00"},
+        {"order_id": "OF2", "lateness_hours": 69.6, "due_date": "2026-03-18T11:35:00", "actual_completion": "2026-03-21T09:11:00"}
+      ],
+      "on_time_orders": ["OF3"],
+      "status": "VERIFIED"
+    },
+    "gantt_data_is_late": {
+      "description": "/api/gantt/data/{id} returns is_late=true and lateness_minutes for late operations",
+      "late_operations": ["OF1_10", "OF1_20", "OF2_10", "OF2_20"],
+      "on_time_operations": ["OF3_10", "OF3_20"],
+      "status": "VERIFIED"
+    },
+    "gantt_red_bars": {
+      "description": "Gantt displays red bars (#EF4444) for late operations",
+      "implementation": "GanttInteractive.js line 761 - backgroundColor: task.is_late ? '#EF4444'",
+      "legend": "Shows 'En retard' with red indicator",
+      "status": "VERIFIED"
+    },
+    "diagnostic_retards_tab": {
+      "description": "Diagnostic page has 'Retards' tab with detailed late order information",
+      "tab_id": "tab-late",
+      "displays": ["Order ID", "Due date", "Actual completion", "Lateness hours", "Cause probable"],
+      "status": "VERIFIED"
+    },
+    "diagnostic_alert": {
+      "description": "Diagnostic page shows alert banner when orders are late",
+      "alert_text": "2 ordres en retard",
+      "alert_description": "En mode 'Au plus tard', certains ordres ne peuvent pas respecter leur date de besoin...",
+      "status": "VERIFIED"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/scenarios/{id}", "status": "PASS", "notes": "Returns schedule_data.late_orders with lateness_hours"},
+    {"endpoint": "GET /api/gantt/data/{id}", "status": "PASS", "notes": "Returns is_late and lateness_minutes per operation"}
+  ],
+  "ui_pages_tested": [
+    {"page": "/gantt/{scenarioId}", "features": ["Red bars for late ops", "Legend 'En retard'", "Tooltip shows 'EN RETARD' badge"], "status": "PASS"},
+    {"page": "/diagnostic/{scenarioId}", "features": ["Retards tab", "Alert banner", "Late order details"], "status": "PASS"}
+  ],
+  "test_data": {
+    "jit_scenario": {
+      "id": "ba7a4e09-fa28-4d2f-b408-01667497ae76",
+      "name": "Test JIT avec retards",
+      "status": "OPTIMAL",
+      "scheduling_strategy": "JIT",
+      "operations_count": 6,
+      "late_orders_count": 2,
+      "on_time_orders_count": 1
+    }
+  },
+  "implementation_notes": {
+    "soft_constraints": "JIT mode uses soft constraints with lateness variables (LATENESS_PENALTY = 10000) to minimize delays instead of making scenario INFEASIBLE",
+    "lateness_calculation": "lateness_minutes = actual_completion - due_date (including transfer time)",
+    "order_propagation": "All operations of a late order are marked is_late=true consistently"
+  }
+}

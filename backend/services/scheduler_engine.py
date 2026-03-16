@@ -792,6 +792,7 @@ class SchedulerEngine:
             
             # STRATÉGIE JIT (Juste-à-temps / Au plus tard)
             # Objectif: maximiser les temps de début tout en respectant les dates de besoin
+            # Si la date de besoin ne peut pas être respectée, l'ordre est planifié en retard
             elif scheduling_strategy == 'JIT':
                 logger.info("   ✓ Stratégie: JIT (Au plus tard)")
                 
@@ -821,7 +822,9 @@ class SchedulerEngine:
                     if order_id not in last_ops_per_order or seq_num > last_ops_per_order[order_id]['sequence_number']:
                         last_ops_per_order[order_id] = {'op_id': op_id, 'sequence_number': seq_num, 'transfer_time': op.get('transfer_time_minutes', 0)}
                 
-                # Pour chaque dernière opération, ajouter une contrainte de date de besoin
+                # Variables de retard pour chaque OF (contraintes souples)
+                lateness_vars = {}  # Stocke la variable de retard par ordre
+                due_date_targets = {}  # Stocke la date cible par ordre
                 jit_constraints_added = 0
                 ops_without_due_date = []
                 
@@ -836,13 +839,27 @@ class SchedulerEngine:
                             due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
                             due_date_minutes = self._datetime_to_minutes(due_date)
                             
-                            # Contrainte: fin de la dernière op + temps de transfert <= date de besoin
-                            # Donc: fin de la dernière op <= date de besoin - temps de transfert
-                            max_end = due_date_minutes - transfer_time
-                            if max_end > 0:
-                                model.add(end_vars[op_id] <= max_end)
-                                jit_constraints_added += 1
-                                logger.info(f"      📅 {op_id} (dernière op OF {order_id}): fin <= {due_date.strftime('%d/%m %H:%M')} - {transfer_time}min transfert")
+                            # Date cible = date de besoin - temps de transfert final
+                            target_end = due_date_minutes - transfer_time
+                            due_date_targets[order_id] = {
+                                'due_date': due_date,
+                                'due_date_minutes': due_date_minutes,
+                                'target_end': target_end,
+                                'transfer_time': transfer_time,
+                                'op_id': op_id
+                            }
+                            
+                            # Contrainte SOUPLE: créer une variable de retard
+                            # lateness = max(0, end_time - target_end)
+                            # On crée une variable lateness >= 0
+                            lateness = model.new_int_var(0, horizon, f'lateness_{order_id}')
+                            lateness_vars[order_id] = lateness
+                            
+                            # lateness >= end_time - target_end (si end > target, lateness capte le dépassement)
+                            model.add(lateness >= end_vars[op_id] - target_end)
+                            
+                            jit_constraints_added += 1
+                            logger.info(f"      📅 {op_id} (dernière op OF {order_id}): cible fin <= {due_date.strftime('%d/%m %H:%M')} - {transfer_time}min transfert (contrainte souple)")
                         except Exception:
                             logger.warning(f"      ⚠️ {op_id}: date de besoin invalide '{due_date_str}'")
                     else:
@@ -851,15 +868,38 @@ class SchedulerEngine:
                 if ops_without_due_date:
                     logger.info(f"      ℹ️ {len(ops_without_due_date)} ordres sans date de besoin (planification ASAP)")
                 
-                logger.info(f"   ✓ {jit_constraints_added} contraintes de date de besoin ajoutées")
+                logger.info(f"   ✓ {jit_constraints_added} contraintes de date de besoin ajoutées (souples)")
                 
-                # Objectif JIT: Maximiser la somme des temps de début
-                # Cela repousse les opérations le plus tard possible
+                # Objectif JIT multi-critères:
+                # 1. Minimiser les retards (priorité haute - pénalité forte)
+                # 2. Maximiser les temps de début (planifier au plus tard)
                 if start_vars:
+                    # Pénalité de retard très élevée pour prioriser le respect des dates
+                    LATENESS_PENALTY = 10000
+                    
+                    # Calculer la somme des débuts (à maximiser = planifier tard)
                     sum_starts = model.new_int_var(0, horizon * len(start_vars), 'sum_starts')
                     model.add(sum_starts == sum(start_vars.values()))
-                    model.maximize(sum_starts)
-                    logger.info("   ✓ Objectif: maximiser somme des débuts (planifier au plus tard)")
+                    
+                    # Calculer la somme des retards (à minimiser)
+                    if lateness_vars:
+                        sum_lateness = model.new_int_var(0, horizon * len(lateness_vars), 'sum_lateness')
+                        model.add(sum_lateness == sum(lateness_vars.values()))
+                        
+                        # Objectif: maximiser (sum_starts - PENALTY * sum_lateness)
+                        # Équivalent à: maximiser sum_starts ET minimiser sum_lateness
+                        objective = model.new_int_var(-horizon * len(lateness_vars) * LATENESS_PENALTY, 
+                                                       horizon * len(start_vars), 'jit_objective')
+                        model.add(objective == sum_starts - LATENESS_PENALTY * sum_lateness)
+                        model.maximize(objective)
+                        logger.info(f"   ✓ Objectif: maximiser débuts - {LATENESS_PENALTY} × retards")
+                    else:
+                        # Pas de dates de besoin -> juste maximiser les débuts
+                        model.maximize(sum_starts)
+                        logger.info("   ✓ Objectif: maximiser somme des débuts (planifier au plus tard)")
+                
+                # Stocker les infos de due_date pour le post-traitement
+                jit_due_date_info = due_date_targets
             
             # PHASE 5: RÉSOLUTION
             solver = cp_model.CpSolver()
@@ -942,9 +982,59 @@ class SchedulerEngine:
                             'original_priority': op.get('_original_priority', 0),
                             'order_quantity': op.get('_order_quantity', 0),
                             'transfer_time_minutes': transfer_time,
-                            'is_last_operation': op_id in last_op_of_order
+                            'is_last_operation': op_id in last_op_of_order,
+                            'is_late': False,  # Sera mis à jour après analyse
+                            'lateness_minutes': 0  # Durée du retard en minutes
                         }
                         scheduled_ops.append(scheduled_op)
+                
+                # POST-TRAITEMENT JIT: Détecter les ordres en retard
+                late_orders = []
+                if scheduling_strategy == 'JIT' and 'jit_due_date_info' in dir():
+                    logger.info(f"\n⏰ ANALYSE DES RETARDS (stratégie JIT):")
+                    
+                    # Index des opérations planifiées par ID
+                    scheduled_ops_by_id = {op['operation_id']: op for op in scheduled_ops}
+                    
+                    for order_id, due_info in jit_due_date_info.items():
+                        op_id = due_info['op_id']
+                        target_end = due_info['target_end']
+                        due_date = due_info['due_date']
+                        due_date_minutes = due_info['due_date_minutes']
+                        transfer_time = due_info['transfer_time']
+                        
+                        if op_id in scheduled_ops_by_id:
+                            scheduled_op = scheduled_ops_by_id[op_id]
+                            actual_end = scheduled_op['end_minutes']
+                            # Fin réelle avec transfert = fin opération + temps de transfert
+                            actual_completion = actual_end + transfer_time
+                            
+                            if actual_completion > due_date_minutes:
+                                lateness = actual_completion - due_date_minutes
+                                late_orders.append({
+                                    'order_id': order_id,
+                                    'operation_id': op_id,
+                                    'due_date': due_date.isoformat(),
+                                    'actual_completion': self._minutes_to_datetime(actual_completion).isoformat(),
+                                    'lateness_minutes': lateness,
+                                    'lateness_hours': round(lateness / 60, 1)
+                                })
+                                
+                                # Marquer toutes les opérations de cet ordre comme en retard
+                                for op in scheduled_ops:
+                                    if op['order_id'] == order_id:
+                                        op['is_late'] = True
+                                        op['lateness_minutes'] = lateness
+                                
+                                logger.info(f"   🔴 OF {order_id}: EN RETARD de {lateness} min ({round(lateness/60, 1)}h)")
+                                logger.info(f"      Besoin: {due_date.strftime('%d/%m %H:%M')}, Fin réelle: {self._minutes_to_datetime(actual_completion).strftime('%d/%m %H:%M')}")
+                            else:
+                                logger.info(f"   ✅ OF {order_id}: À l'heure (fin: {self._minutes_to_datetime(actual_completion).strftime('%d/%m %H:%M')} <= besoin: {due_date.strftime('%d/%m %H:%M')})")
+                    
+                    if late_orders:
+                        logger.info(f"   ⚠️ Total: {len(late_orders)} ordre(s) en retard")
+                    else:
+                        logger.info(f"   ✅ Tous les ordres respectent leurs dates de besoin")
                 
                 # POST-TRAITEMENT MATIÈRE: Vérifier les ruptures et replanifier si nécessaire
                 # Continuer tant qu'il reste du temps dans le budget global
@@ -1130,6 +1220,9 @@ class SchedulerEngine:
                 # 3. OFs urgents (originaux + propagés)
                 urgent_of_ids = [o.get('id') for o in orders if o.get('_is_urgent', False)]
                 result['urgent_orders'] = urgent_of_ids
+                
+                # 4. Ordres en retard (stratégie JIT)
+                result['late_orders'] = late_orders if 'late_orders' in dir() else []
             
             # Log solver result
             self.diagnostics.log_solver_result(

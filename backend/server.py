@@ -2407,17 +2407,21 @@ async def get_gantt_data(scenario_id: str):
             centre_id = machine.get('centre_de_charge_id') or machine.get('work_center_id')
             centre = centres_dict.get(centre_id, {})
             
-            # Calculer si en retard
-            is_late = False
-            due_date = op.get('date_besoin')
-            end_dt = op.get('end_datetime')
-            if due_date and end_dt:
-                try:
-                    due = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
-                    end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
-                    is_late = end > due
-                except:
-                    pass
+            # Calculer si en retard - Utiliser la valeur stockée si disponible
+            is_late = op.get('is_late', False)
+            lateness_minutes = op.get('lateness_minutes', 0)
+            
+            # Sinon, calculer à partir des dates (fallback)
+            if not is_late:
+                due_date = op.get('date_besoin')
+                end_dt = op.get('end_datetime')
+                if due_date and end_dt:
+                    try:
+                        due = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                        end = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
+                        is_late = end > due
+                    except:
+                        pass
             
             # Calculer le stock projeté à l'horodatage exact de l'opération
             op_id = op.get('operation_id')
@@ -2480,8 +2484,9 @@ async def get_gantt_data(scenario_id: str):
                 'start_minutes': op.get('start_minutes', 0),
                 'end_minutes': op.get('end_minutes', 0),
                 'duration_minutes': op.get('duration_minutes', 0),
-                'due_date': due_date,
+                'due_date': due_date if due_date else order.get('due_date'),
                 'is_late': is_late,
+                'lateness_minutes': lateness_minutes,
                 'color': machine_colors.get(machine_id, '#6B7280'),
                 'materials': materials_info,
                 'materials_ok': materials_ok,

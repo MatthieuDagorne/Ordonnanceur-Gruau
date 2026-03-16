@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, CheckCircle, Clock, Package, Zap, ArrowRight, Info, FastForward, Rewind, Settings } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, CheckCircle, Clock, Package, Zap, ArrowRight, Info, FastForward, Rewind, Settings, AlertCircle } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -55,12 +55,14 @@ export default function ScenarioDiagnostic() {
   const diagnostics = scheduleData.diagnostics || {};
   const schedulingStrategy = scheduleData.scheduling_strategy || 'ASAP';
   const schedulingStart = scheduleData.scheduling_start;
+  const lateOrders = scheduleData.late_orders || [];
 
   const tabs = [
     { id: 'params', label: 'Paramètres', icon: Settings, count: null },
     { id: 'priority', label: 'Priorités', icon: Zap, count: priorityPropagation.length },
     { id: 'material', label: 'Matière', icon: Package, count: materialDelayed.length },
     { id: 'productions', label: 'Productions', icon: CheckCircle, count: productions.length },
+    { id: 'late', label: 'Retards', icon: AlertCircle, count: lateOrders.length, color: lateOrders.length > 0 ? '#EF4444' : null },
     { id: 'issues', label: 'Alertes', icon: AlertTriangle, count: unscheduledOps.length },
   ];
 
@@ -108,6 +110,16 @@ export default function ScenarioDiagnostic() {
           </div>
         </div>
         
+        <div className="p-4 rounded-xl" style={{ backgroundColor: lateOrders.length > 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-elevated)' }}>
+          <div className="flex items-center gap-2 mb-2">
+            <AlertCircle size={16} className="text-red-500" />
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>En Retard</span>
+          </div>
+          <div className="text-2xl font-bold" style={{ color: lateOrders.length > 0 ? '#EF4444' : 'var(--text-primary)' }}>
+            {lateOrders.length}
+          </div>
+        </div>
+        
         <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-elevated)' }}>
           <div className="flex items-center gap-2 mb-2">
             <Package size={16} className="text-green-500" />
@@ -117,17 +129,25 @@ export default function ScenarioDiagnostic() {
             {productions.length}
           </div>
         </div>
-        
-        <div className="p-4 rounded-xl" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle size={16} className="text-red-500" />
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Non Planifiées</span>
-          </div>
-          <div className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            {unscheduledOps.length}
+      </div>
+      
+      {/* Alerte si retards en mode JIT */}
+      {schedulingStrategy === 'JIT' && lateOrders.length > 0 && (
+        <div className="p-4 rounded-xl border-2" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: '#EF4444' }}>
+          <div className="flex items-start gap-3">
+            <AlertCircle size={24} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-red-500 mb-1">
+                {lateOrders.length} ordre{lateOrders.length > 1 ? 's' : ''} en retard
+              </h3>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                En mode "Au plus tard", certains ordres ne peuvent pas respecter leur date de besoin en raison des contraintes matière ou machine.
+                Ces ordres sont planifiés au plus tôt possible mais seront livrés en retard.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2 border-b" style={{ borderColor: 'var(--border-default)' }}>
@@ -409,6 +429,71 @@ export default function ScenarioDiagnostic() {
                 Aucune production enregistrée
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'late' && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+              <AlertCircle className="text-red-500" size={20} />
+              Ordres en Retard
+            </h3>
+            
+            {schedulingStrategy !== 'JIT' && (
+              <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  L'analyse des retards n'est disponible qu'en mode de planification "Au plus tard (JIT)".
+                  Le scénario actuel utilise la stratégie "{schedulingStrategy === 'ASAP' ? 'Au plus tôt' : schedulingStrategy}".
+                </p>
+              </div>
+            )}
+            
+            {schedulingStrategy === 'JIT' && lateOrders.length > 0 ? (
+              <div className="space-y-3">
+                {lateOrders.map((order, idx) => (
+                  <div 
+                    key={idx}
+                    className="p-4 rounded-lg border-l-4"
+                    style={{ 
+                      backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                      borderColor: '#ef4444'
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>
+                        OF {order.order_id}
+                      </span>
+                      <span className="text-sm px-3 py-1 rounded-full font-medium" style={{ backgroundColor: '#ef4444', color: 'white' }}>
+                        {order.lateness_hours}h de retard
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Date de besoin:</span>
+                        <div className="font-mono font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {order.due_date ? new Date(order.due_date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                        </div>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Fin réelle planifiée:</span>
+                        <div className="font-mono font-medium" style={{ color: '#ef4444' }}>
+                          {order.actual_completion ? new Date(order.actual_completion).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 p-2 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-muted)' }}>
+                      <strong>Cause probable:</strong> Contraintes matière ou machine empêchant de planifier l'ordre plus tôt.
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : schedulingStrategy === 'JIT' ? (
+              <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+                <CheckCircle size={48} className="mx-auto mb-4 text-green-500" />
+                <p className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>Tous les ordres sont à l'heure</p>
+                <p>Aucun retard détecté par rapport aux dates de besoin</p>
+              </div>
+            ) : null}
           </div>
         )}
 
