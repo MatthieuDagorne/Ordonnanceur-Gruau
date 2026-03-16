@@ -114,8 +114,9 @@ OF1_10,OF1,10,T001,C001,50,5,pending,30
 - Quand la dernière opération d'un OF termine, la quantité produite entre en stock
 - `article_id` de l'ordre = article fabriqué
 - `quantity` de l'ordre = quantité entrée en stock
-- Date entrée = fin de la dernière opération
+- **Date entrée = fin de la dernière opération + temps de transfert final** (Bug P0 corrigé le 16/03)
 - **Le stock fabriqué peut servir à d'autres opérations**
+- **Affichage dans Stock Projeté** : Type `PRODUCTION_RECEIPT` avec badge "Fabrication" vert foncé
 
 #### 9.3 Gestion des Priorités (P1) ✅
 - `priority=1` → OF urgent, `priority=0` → OF normal
@@ -199,3 +200,5 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | Page stock statique | Supprimée, navigation mise à jour |
 | Pas de filtre article | Champ de recherche ajouté |
 | Page Diagnostic statique | Supprimée, intégrée au scénario |
+| **Entrée en stock sans temps de transfert** | **Date de production = fin_dernière_op + transfer_time** |
+| **Productions non visibles dans Stock Projeté** | **Événements PRODUCTION_RECEIPT ajoutés à la timeline** |
