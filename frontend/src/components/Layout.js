@@ -32,7 +32,6 @@ const navigation = [
   { name: 'Matrice Compat.', path: '/matrix', icon: Grid3X3 },
   { name: 'Ordres Fab.', path: '/orders', icon: ClipboardList },
   { name: 'Ordonnancement', path: '/scheduling', icon: BarChart3 },
-  { name: 'Diagnostic', path: '/diagnostic', icon: Bug },
   { name: 'Scénarios', path: '/scenarios', icon: FolderKanban },
 ];
 

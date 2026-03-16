@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers, TrendingDown } from 'lucide-react';
+import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers, TrendingDown, Zap, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -334,6 +334,15 @@ export default function GanttInteractive() {
             Exporter
           </button>
           <Link
+            to={`/diagnostic/${scenarioId}`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
+            style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            data-testid="diagnostic-btn"
+          >
+            <FileText size={16} />
+            Diagnostic
+          </Link>
+          <Link
             to={`/projected-stock/${scenarioId}`}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
             style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
@@ -605,20 +614,24 @@ export default function GanttInteractive() {
                         style={{
                           left: left,
                           width: width,
-                          backgroundColor: task.is_late ? '#EF4444' : hasMaterialIssue ? '#F59E0B' : task.color,
-                          border: task.is_late ? '2px solid #B91C1C' : hasMaterialIssue ? '2px solid #D97706' : 'none'
+                          backgroundColor: task.is_urgent ? '#eab308' : task.is_late ? '#EF4444' : hasMaterialIssue ? '#F59E0B' : task.color,
+                          border: task.is_urgent ? '2px solid #ca8a04' : task.is_late ? '2px solid #B91C1C' : hasMaterialIssue ? '2px solid #D97706' : 'none'
                         }}
                         onMouseEnter={() => setHoveredTask(task)}
                         onMouseLeave={() => setHoveredTask(null)}
                         data-testid={`task-${task.id}`}
                       >
-                        <div className="px-1 py-0.5 text-white text-xs font-medium truncate h-full flex items-center">
+                        <div className="px-1 py-0.5 text-white text-xs font-medium truncate h-full flex items-center gap-1">
+                          {task.is_urgent && width > 40 && <Zap size={10} />}
                           {width > 60 ? task.operation_id : ''}
                         </div>
-                        {task.is_late && (
+                        {task.is_urgent && (
+                          <Zap size={12} className="absolute top-0.5 right-0.5 text-white" />
+                        )}
+                        {task.is_late && !task.is_urgent && (
                           <AlertCircle size={12} className="absolute top-0.5 right-0.5 text-white" />
                         )}
-                        {hasMaterialIssue && !task.is_late && (
+                        {hasMaterialIssue && !task.is_late && !task.is_urgent && (
                           <Package size={12} className="absolute top-0.5 right-0.5 text-white" />
                         )}
                       </div>
@@ -646,11 +659,17 @@ export default function GanttInteractive() {
         >
           <div className="space-y-3 text-sm">
             {/* Header */}
-            <div className="flex items-center gap-2 pb-2" style={{ borderBottom: '1px solid var(--border-default)' }}>
+            <div className="flex items-center gap-2 pb-2 flex-wrap" style={{ borderBottom: '1px solid var(--border-default)' }}>
               <div className="w-3 h-3 rounded" style={{ backgroundColor: hoveredTask.color }} />
               <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
                 {hoveredTask.operation_id}
               </span>
+              {hoveredTask.is_urgent && (
+                <span className="px-1.5 py-0.5 rounded text-xs font-medium flex items-center gap-1" style={{ backgroundColor: 'rgba(234, 179, 8, 0.2)', color: '#eab308' }}>
+                  <Zap size={10} />
+                  URGENT
+                </span>
+              )}
               {hoveredTask.is_late && (
                 <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: 'var(--status-error-bg)', color: 'var(--status-error)' }}>
                   EN RETARD
@@ -671,6 +690,13 @@ export default function GanttInteractive() {
               <span style={{ color: 'var(--text-muted)' }}>Article:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.article_id || '-'}</span>
               
+              {hoveredTask.order_quantity > 0 && (
+                <>
+                  <span style={{ color: 'var(--text-muted)' }}>Qté fabriquée:</span>
+                  <span className="font-mono font-bold" style={{ color: 'var(--accent-primary)' }}>{hoveredTask.order_quantity}</span>
+                </>
+              )}
+              
               <span style={{ color: 'var(--text-muted)' }}>Centre:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.centre_de_charge_nom || '-'}</span>
               
@@ -682,6 +708,13 @@ export default function GanttInteractive() {
               
               <span style={{ color: 'var(--text-muted)' }}>Durée:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.duration_minutes} min</span>
+              
+              {hoveredTask.transfer_time_minutes > 0 && (
+                <>
+                  <span style={{ color: 'var(--text-muted)' }}>Transfert:</span>
+                  <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>+{hoveredTask.transfer_time_minutes} min</span>
+                </>
+              )}
               
               {hoveredTask.due_date && (
                 <>
@@ -741,6 +774,10 @@ export default function GanttInteractive() {
             <span style={{ color: 'var(--text-muted)' }}>+{filteredMachines.length - 8} autres</span>
           )}
           <div className="flex items-center gap-4 ml-4 pl-4" style={{ borderLeft: '1px solid var(--border-default)' }}>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded" style={{ backgroundColor: '#eab308', border: '2px solid #ca8a04' }} />
+              <span style={{ color: 'var(--text-secondary)' }}>Urgent</span>
+            </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded bg-red-500 border-2 border-red-700" />
               <span style={{ color: 'var(--text-secondary)' }}>En retard</span>

@@ -13,7 +13,7 @@ import ManufacturingOrders from '@/pages/ManufacturingOrders';
 import Scheduling from '@/pages/Scheduling';
 import GanttInteractive from '@/pages/GanttInteractive';
 import ScenariosComparison from '@/pages/ScenariosComparison';
-import DiagnosticAssignment from '@/pages/DiagnosticAssignment';
+import ScenarioDiagnostic from '@/pages/ScenarioDiagnostic';
 import ProjectedStockScenario from '@/pages/ProjectedStockScenario';
 import APSDashboard from '@/pages/APSDashboard';
 import MatrixView from '@/pages/MatrixView';
@@ -35,7 +35,7 @@ function App() {
               <Route path="rules" element={<BusinessRules />} />
               <Route path="orders" element={<ManufacturingOrders />} />
               <Route path="scheduling" element={<Scheduling />} />
-              <Route path="diagnostic" element={<DiagnosticAssignment />} />
+              <Route path="diagnostic/:scenarioId" element={<ScenarioDiagnostic />} />
               <Route path="projected-stock/:scenarioId" element={<ProjectedStockScenario />} />
               <Route path="aps" element={<APSDashboard />} />
               <Route path="matrix" element={<MatrixView />} />

@@ -368,6 +368,69 @@ class SchedulerEngine:
             logger.info(f"   Réceptions planifiées: {len(planned_receipts)}")
             logger.info(f"   Besoins opérations: {len(operation_materials)}")
             
+            # PHASE 1.4: PROPAGATION DE PRIORITÉ
+            # Identifier les OFs urgents et propager la priorité aux OFs fournisseurs
+            priority_propagation_log = []
+            orders_priority = {o.get('id'): o.get('priority', 0) for o in orders}
+            propagated_priority = dict(orders_priority)  # Copie pour modification
+            
+            # Construire la map article -> OF qui le fabrique
+            article_producers = {}
+            for o in orders:
+                article_id = o.get('article_id')
+                if article_id:
+                    if article_id not in article_producers:
+                        article_producers[article_id] = []
+                    article_producers[article_id].append(o.get('id'))
+            
+            # Identifier les OFs urgents (priority=1)
+            urgent_orders = [o for o in orders if o.get('priority', 0) == 1]
+            
+            if urgent_orders:
+                logger.info(f"\n🚨 PROPAGATION DE PRIORITÉ:")
+                logger.info(f"   OFs urgents initiaux: {[o.get('id') for o in urgent_orders]}")
+                
+                for urgent_order in urgent_orders:
+                    urgent_id = urgent_order.get('id')
+                    # Trouver les opérations de cet OF
+                    urgent_ops = [op for op in operations if op.get('order_id') == urgent_id]
+                    
+                    for op in urgent_ops:
+                        op_id = op.get('id')
+                        # Récupérer les besoins matière
+                        materials = self.material_manager.get_operation_materials(op_id)
+                        
+                        for mat in materials:
+                            article_needed = mat.article_composant_id
+                            # Vérifier si cet article est fabriqué par un autre OF
+                            if article_needed in article_producers:
+                                for producer_of in article_producers[article_needed]:
+                                    if producer_of != urgent_id and propagated_priority.get(producer_of, 0) == 0:
+                                        # Propager la priorité
+                                        propagated_priority[producer_of] = 1
+                                        
+                                        # Log détaillé pour le diagnostic
+                                        log_entry = {
+                                            'source_order': urgent_id,
+                                            'source_priority': 1,
+                                            'target_order': producer_of,
+                                            'article_needed': article_needed,
+                                            'reason': f"OF {urgent_id} (urgent, priority=1) consomme {article_needed}. "
+                                                      f"Stock peut être insuffisant. OF {producer_of} fabrique {article_needed}. "
+                                                      f"OF {producer_of} rendu urgent pour garantir disponibilité."
+                                        }
+                                        priority_propagation_log.append(log_entry)
+                                        logger.info(f"   🔺 OF {producer_of} rendu URGENT (fabrique {article_needed} pour OF {urgent_id})")
+                
+                # Mettre à jour les ordres avec la priorité propagée
+                for o in orders:
+                    o['_propagated_priority'] = propagated_priority.get(o.get('id'), 0)
+                    o['_is_urgent'] = propagated_priority.get(o.get('id'), 0) == 1
+            else:
+                for o in orders:
+                    o['_propagated_priority'] = o.get('priority', 0)
+                    o['_is_urgent'] = o.get('priority', 0) == 1
+            
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
             if auto_assign_machines and not ignore_rules:
                 logger.info("\n🤖 Auto-assignation des machines activée")
@@ -431,12 +494,19 @@ class SchedulerEngine:
                             blocking_reason = f'Matière insuffisante: {material_status.blocking_components}'
                 
                 if is_valid:
-                    # Enrichir avec date_besoin pour le tri
+                    # Enrichir avec date_besoin pour le tri et informations d'urgence
+                    is_urgent = order.get('_is_urgent', False) if order else False
+                    propagated_priority = order.get('_propagated_priority', 0) if order else 0
+                    order_quantity = order.get('quantity', 0) if order else 0
+                    
                     op_enriched = {
                         **op,
                         '_date_besoin': order.get('due_date') if order else None,
-                        '_priority': order.get('priority', 0) if order else 0,
+                        '_priority': propagated_priority,  # Utiliser la priorité propagée
+                        '_original_priority': order.get('priority', 0) if order else 0,
+                        '_is_urgent': is_urgent,
                         '_article_id': (order.get('article_id') or order.get('article')) if order else None,
+                        '_order_quantity': order_quantity,
                         '_material_earliest_date': earliest_material_date,
                         '_material_status': material_status
                     }
@@ -723,12 +793,30 @@ class SchedulerEngine:
             if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 logger.info(f"\n📊 SOLUTION TROUVÉE (itération {current_iteration}):")
                 
+                # Regrouper les opérations par OF pour identifier la dernière de chaque gamme
+                ops_by_order = {}
+                for op in valid_operations:
+                    order_id = op.get('order_id')
+                    if order_id not in ops_by_order:
+                        ops_by_order[order_id] = []
+                    ops_by_order[order_id].append(op)
+                
+                # Identifier la dernière opération de chaque OF
+                last_op_of_order = {}
+                for order_id, order_ops in ops_by_order.items():
+                    sorted_ops = sorted(order_ops, key=lambda x: x.get('operation_id', 0))
+                    if sorted_ops:
+                        last_op_of_order[sorted_ops[-1].get('id')] = order_id
+                
                 scheduled_ops = []
                 for op in valid_operations:
                     op_id = op.get('id')
                     if op_id in start_vars:
                         op_start_minutes = solver.value(start_vars[op_id])
                         op_end_minutes = solver.value(end_vars[op_id])
+                        
+                        # Temps de transfert vers l'opération suivante
+                        transfer_time = op.get('transfer_time_minutes', 0)
                         
                         scheduled_op = {
                             'operation_id': op_id,
@@ -740,7 +828,14 @@ class SchedulerEngine:
                             'duration_minutes': op_end_minutes - op_start_minutes,
                             'start_datetime': self._minutes_to_datetime(op_start_minutes).isoformat(),
                             'end_datetime': self._minutes_to_datetime(op_end_minutes).isoformat(),
-                            'date_besoin': op.get('_date_besoin')
+                            'date_besoin': op.get('_date_besoin'),
+                            # Nouvelles infos pour UI
+                            'is_urgent': op.get('_is_urgent', False),
+                            'priority': op.get('_priority', 0),
+                            'original_priority': op.get('_original_priority', 0),
+                            'order_quantity': op.get('_order_quantity', 0),
+                            'transfer_time_minutes': transfer_time,
+                            'is_last_operation': op_id in last_op_of_order
                         }
                         scheduled_ops.append(scheduled_op)
                 
@@ -869,6 +964,32 @@ class SchedulerEngine:
                     logger.info(f"      {op['start_datetime']} - {op['end_datetime']}: {op['operation_id']} (OF: {op['order_id']})")
                 
                 result['operations'] = scheduled_ops
+                
+                # DIAGNOSTIC INTÉGRÉ: Ajouter les informations détaillées au résultat
+                # 1. Productions planifiées (entrées en stock des articles fabriqués)
+                productions = []
+                for op in scheduled_ops:
+                    if op.get('is_last_operation'):
+                        order_id = op.get('order_id')
+                        order = orders_by_id.get(order_id, {})
+                        article_fab = order.get('article_id')
+                        qty = order.get('quantity', 0)
+                        if article_fab and qty > 0:
+                            productions.append({
+                                'order_id': order_id,
+                                'article_id': article_fab,
+                                'quantity': qty,
+                                'end_datetime': op['end_datetime'],
+                                'end_minutes': op['end_minutes']
+                            })
+                result['productions'] = productions
+                
+                # 2. Propagation de priorité (pour diagnostic)
+                result['priority_propagation'] = priority_propagation_log if 'priority_propagation_log' in dir() else []
+                
+                # 3. OFs urgents (originaux + propagés)
+                urgent_of_ids = [o.get('id') for o in orders if o.get('_is_urgent', False)]
+                result['urgent_orders'] = urgent_of_ids
             
             # Log solver result
             self.diagnostics.log_solver_result(

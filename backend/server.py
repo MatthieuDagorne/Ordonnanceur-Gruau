@@ -573,6 +573,25 @@ async def get_manufacturing_orders():
     orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
     return orders
 
+
+@api_router.put("/manufacturing-orders/{order_id}")
+async def update_manufacturing_order(order_id: str, order: ManufacturingOrder):
+    """Met à jour un ordre de fabrication."""
+    existing = await db.manufacturing_orders.find_one({"id": order_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Ordre de fabrication non trouvé")
+    
+    order_dict = order.model_dump()
+    order_dict['id'] = order_id  # S'assurer que l'ID reste le même
+    
+    await db.manufacturing_orders.update_one(
+        {"id": order_id},
+        {"$set": order_dict}
+    )
+    
+    return order_dict
+
+
 @api_router.get("/operations")
 async def get_operations():
     """Retourne toutes les opérations avec terminologie française."""
@@ -2372,7 +2391,12 @@ async def get_gantt_data(scenario_id: str):
                 'color': machine_colors.get(machine_id, '#6B7280'),
                 'materials': materials_info,
                 'materials_ok': materials_ok,
-                'materials_count': len(materials_info)
+                'materials_count': len(materials_info),
+                # Nouvelles propriétés pour urgence et production
+                'is_urgent': op.get('is_urgent', False),
+                'priority': op.get('priority', 0),
+                'order_quantity': op.get('order_quantity', order.get('quantity', 0)),
+                'transfer_time_minutes': op.get('transfer_time_minutes', 0)
             })
         
         # Grouper par machine

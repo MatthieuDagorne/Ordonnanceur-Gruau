@@ -40,8 +40,17 @@ class StockMovement:
     date: datetime
     article_id: str
     quantity: float  # Positif = entrée, négatif = sortie
-    movement_type: str  # 'INITIAL', 'RECEIPT', 'CONSUMPTION'
-    reference: str  # ID de l'opération ou de la réception
+    movement_type: str  # 'INITIAL', 'RECEIPT', 'CONSUMPTION', 'PRODUCTION'
+    reference: str  # ID de l'opération ou de la réception ou de l'OF
+
+
+@dataclass
+class PlannedProduction:
+    """Production planifiée (entrée en stock d'un article fabriqué)."""
+    order_id: str
+    article_id: str
+    quantity: float
+    end_date: datetime  # Date de fin de la dernière opération
 
 
 @dataclass
@@ -118,6 +127,9 @@ class MaterialManager:
         # Trier les réceptions par date
         self.planned_receipts.sort(key=lambda r: r.planned_date)
         
+        # Productions planifiées (articles fabriqués par les OFs)
+        self.planned_productions: List[PlannedProduction] = []
+        
         # Mouvements de stock (pour la projection)
         self.movements: List[StockMovement] = []
         
@@ -156,11 +168,31 @@ class MaterialManager:
         """Retourne les besoins matière d'une opération."""
         return self.operation_materials.get(operation_id, [])
     
+    def add_planned_production(self, order_id: str, article_id: str, quantity: float, end_date: datetime):
+        """
+        Ajoute une production planifiée (entrée en stock d'un article fabriqué).
+        Appelé quand la dernière opération d'un OF est planifiée.
+        """
+        production = PlannedProduction(
+            order_id=order_id,
+            article_id=article_id,
+            quantity=quantity,
+            end_date=end_date
+        )
+        self.planned_productions.append(production)
+        # Trier par date
+        self.planned_productions.sort(key=lambda p: p.end_date)
+        logger.info(f"   �icing PRODUCTION AJOUTÉE: {order_id} produit {article_id} x{quantity} le {end_date.strftime('%d/%m %H:%M')}")
+    
+    def clear_planned_productions(self):
+        """Réinitialise les productions planifiées (pour nouvelle itération)."""
+        self.planned_productions = []
+    
     def get_projected_stock(self, article_id: str, at_date: datetime) -> float:
         """
         Calcule le stock projeté d'un article à une date donnée.
         
-        Stock projeté = Stock initial + Réceptions avant date - Consommations planifiées avant date
+        Stock projeté = Stock initial + Réceptions avant date + Productions avant date - Consommations planifiées
         """
         # Stock initial
         stock = self.initial_stocks.get(article_id, 0)
@@ -169,6 +201,11 @@ class MaterialManager:
         for receipt in self.planned_receipts:
             if receipt.article_id == article_id and receipt.planned_date <= at_date:
                 stock += receipt.quantity
+        
+        # Ajouter les productions planifiées avant la date (articles fabriqués)
+        for production in self.planned_productions:
+            if production.article_id == article_id and production.end_date <= at_date:
+                stock += production.quantity
         
         # Soustraire les consommations déjà planifiées
         stock -= self.planned_consumptions.get(article_id, 0)
@@ -183,6 +220,7 @@ class MaterialManager:
     ) -> Tuple[bool, Optional[datetime]]:
         """
         Trouve la première date où le stock sera suffisant.
+        Tient compte des réceptions ET des productions planifiées.
         
         Returns:
             (is_available_now, earliest_date)
@@ -192,13 +230,26 @@ class MaterialManager:
         if current_stock >= required_quantity:
             return True, from_date
         
-        # Chercher dans les réceptions futures
-        projected_stock = current_stock
+        # Combiner réceptions et productions, triées par date
+        future_entries = []
+        
         for receipt in self.planned_receipts:
             if receipt.article_id == article_id and receipt.planned_date > from_date:
-                projected_stock += receipt.quantity
-                if projected_stock >= required_quantity:
-                    return False, receipt.planned_date
+                future_entries.append(('RECEIPT', receipt.planned_date, receipt.quantity))
+        
+        for production in self.planned_productions:
+            if production.article_id == article_id and production.end_date > from_date:
+                future_entries.append(('PRODUCTION', production.end_date, production.quantity))
+        
+        # Trier par date
+        future_entries.sort(key=lambda x: x[1])
+        
+        # Chercher quand le stock sera suffisant
+        projected_stock = current_stock
+        for entry_type, entry_date, entry_qty in future_entries:
+            projected_stock += entry_qty
+            if projected_stock >= required_quantity:
+                return False, entry_date
         
         # Jamais disponible
         return False, None

@@ -103,6 +103,39 @@ OF1_10,OF1,10,T001,C001,50,5,pending,30
 - Navigation mise à jour
 - Accès au stock projeté uniquement via le contexte d'un scénario
 
+### Phase 9 - Gestion Avancée des Priorités et Productions (16 mars 2026) ✅
+
+#### 9.1 Temps de Déplacement Clarifié ✅
+- Temps de transfert attaché à la fin de l'opération précédente
+- Affiché dans l'infobulle du Gantt (ex: "Transfert: +30 min")
+- Ne bloque pas l'opération suivante si elle est reportée pour matière
+
+#### 9.2 Entrée en Stock des Articles Fabriqués ✅
+- Quand la dernière opération d'un OF termine, la quantité produite entre en stock
+- `article_id` de l'ordre = article fabriqué
+- `quantity` de l'ordre = quantité entrée en stock
+- Date entrée = fin de la dernière opération
+- **Le stock fabriqué peut servir à d'autres opérations**
+
+#### 9.3 Gestion des Priorités (P1) ✅
+- `priority=1` → OF urgent, `priority=0` → OF normal
+- Toutes les opérations d'un OF urgent deviennent urgentes
+- **Propagation de priorité** (1 niveau) : Si OF urgent consomme un article fabriqué par OF non-urgent, ce dernier devient urgent
+
+#### 9.4 Affichage Urgent dans le Gantt ✅
+- Badge jaune ⚡ sur les opérations urgentes
+- Légende mise à jour avec "Urgent"
+- Infobulle enrichie : quantité fabriquée + temps de transfert
+
+#### 9.5 Diagnostic Intégré au Scénario ✅
+- Ancienne page statique `/diagnostic` supprimée
+- Nouvelle page `/diagnostic/:scenarioId` avec 4 onglets :
+  - **Priorités** : OFs urgents, log de propagation détaillé
+  - **Matière** : Opérations reportées avec composants bloquants
+  - **Productions** : Tableau des entrées en stock (OF, article, qté, date)
+  - **Alertes** : Opérations non planifiables
+- Accès via bouton "Diagnostic" dans le Gantt
+
 ## APIs Principales
 
 ### Ordonnancement
@@ -135,6 +168,7 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 - [ ] Horizon ferme (geler planning court terme)
 - [ ] Dashboard temps réel WebSockets
 - [ ] Replanification dynamique (événements panne machine)
+- [ ] Propagation de priorité récursive (multi-niveaux)
 
 ## Tests Validés
 
@@ -147,6 +181,16 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | Transfer time 30min | ✅ OF1_10 finit → +30min → OF1_20 commence |
 | Gap d'optimalité 5% | ✅ Paramètre passé au solveur |
 
+### Phase 9 - Urgences, Productions, Diagnostic (16 mars 2026)
+| Fonctionnalité | Résultat |
+|----------------|----------|
+| Badge Urgent dans Gantt | ✅ Opérations jaunes avec icône ⚡ |
+| Quantité fabriquée dans infobulle | ✅ "Qté fabriquée: 5" |
+| Temps de transfert dans infobulle | ✅ "Transfert: +30 min" |
+| Productions dans résultat | ✅ Liste des entrées en stock |
+| Page Diagnostic intégrée | ✅ 4 onglets: Priorités, Matière, Productions, Alertes |
+| Propagation priorité (1 niveau) | ✅ OF non-urgent devient urgent si fournit OF urgent |
+
 ### Corrections du 16 mars 2026
 | Bug | Correction |
 |-----|------------|
@@ -154,3 +198,4 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 | Gap optimalité ignoré | Paramètre `relative_gap_limit` ajouté au solveur |
 | Page stock statique | Supprimée, navigation mise à jour |
 | Pas de filtre article | Champ de recherche ajouté |
+| Page Diagnostic statique | Supprimée, intégrée au scénario |
