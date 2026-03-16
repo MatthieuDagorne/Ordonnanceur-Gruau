@@ -349,14 +349,21 @@ class SchedulerEngine:
     def _datetime_to_minutes(self, dt: datetime) -> int:
         """Convertit un datetime en minutes depuis le début de l'horizon."""
         if not self.scheduling_start:
-            self.scheduling_start = datetime.now()
+            self.scheduling_start = datetime.now(PARIS_TZ)
+        
+        # S'assurer que les deux datetimes ont la même timezone
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=PARIS_TZ)
+        if self.scheduling_start.tzinfo is None:
+            self.scheduling_start = self.scheduling_start.replace(tzinfo=PARIS_TZ)
+            
         delta = dt - self.scheduling_start
         return max(0, int(delta.total_seconds() / 60))
     
     def _minutes_to_datetime(self, minutes: int) -> datetime:
         """Convertit des minutes en datetime."""
         if not self.scheduling_start:
-            self.scheduling_start = datetime.now()
+            self.scheduling_start = datetime.now(PARIS_TZ)
         return self.scheduling_start + timedelta(minutes=minutes)
     
     async def schedule(self, orders, operations, machines, rules_engine, material_checker, options=None):
@@ -416,9 +423,9 @@ class SchedulerEngine:
         iteration_time = min(remaining_time * 0.8, remaining_time - 2) if remaining_time > 5 else remaining_time
         
         # Point de départ pour l'horizon de planification en timezone Europe/Paris
-        # IMPORTANT: Arrondir à la minute supérieure pour éviter les problèmes de microsecondes
+        # IMPORTANT: Garder la timezone pour compatibilité avec les dates de besoin
         now_paris = datetime.now(PARIS_TZ)
-        self.scheduling_start = now_paris.replace(second=0, microsecond=0, tzinfo=None) + timedelta(minutes=1)
+        self.scheduling_start = now_paris.replace(second=0, microsecond=0) + timedelta(minutes=1)
         
         logger.info(f"\n🕐 TIMEZONE: Europe/Paris")
         logger.info(f"   Heure de planification: {self.scheduling_start.strftime('%d/%m/%Y %H:%M')}")
@@ -800,8 +807,10 @@ class SchedulerEngine:
                 duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
                 
                 # CONTRAINTE MATIÈRE: Date minimum de début
-                # Utiliser les contraintes calculées dans les itérations précédentes
-                # OU la pré-validation de la première itération
+                # IMPORTANT: N'utiliser que les contraintes des itérations précédentes
+                # qui sont basées sur les vraies dates de production calculées par le solver.
+                # La pré-validation (_material_earliest_date) est trop imprécise et peut bloquer
+                # inutilement des opérations.
                 min_start = 0
                 min_date_source = None
                 
@@ -811,12 +820,6 @@ class SchedulerEngine:
                     min_start = self._datetime_to_minutes(min_date)
                     min_start = max(0, min_start)
                     min_date_source = f"itération précédente ({min_date.strftime('%d/%m %H:%M')})"
-                elif op.get('_material_earliest_date') and op.get('_material_earliest_date') > self.scheduling_start:
-                    # Contrainte de la pré-validation (première itération)
-                    min_date = op.get('_material_earliest_date')
-                    min_start = self._datetime_to_minutes(min_date)
-                    min_start = max(0, min_start)
-                    min_date_source = f"pré-validation ({min_date.strftime('%d/%m %H:%M')})"
                 
                 if min_date_source:
                     logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min - {min_date_source}")
@@ -1084,6 +1087,47 @@ class SchedulerEngine:
                 # Index des ordres pour accéder aux dates de besoin
                 orders_by_id = {o.get('id'): o for o in orders}
                 
+                # ÉTAPE 1: Identifier les producteurs critiques et leur deadline dérivée
+                # Un producteur critique doit finir avant la deadline de son consommateur
+                # pour que le consommateur puisse utiliser le composant à temps
+                producer_derived_deadlines = {}  # {producer_of: derived_deadline}
+                
+                # D'abord, calculer la durée totale de chaque OF consommateur
+                # (somme des durées de toutes ses opérations)
+                consumer_total_durations = {}  # {order_id: total_minutes}
+                for op in valid_operations:
+                    order_id = op.get('order_id')
+                    duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
+                    if order_id not in consumer_total_durations:
+                        consumer_total_durations[order_id] = 0
+                    consumer_total_durations[order_id] += duration
+                
+                for consumer_of, deps in material_dependencies.items():
+                    consumer_order = orders_by_id.get(consumer_of, {})
+                    consumer_due_date_str = consumer_order.get('due_date')
+                    
+                    if consumer_due_date_str:
+                        try:
+                            consumer_due_date = datetime.fromisoformat(consumer_due_date_str.replace('Z', '+00:00'))
+                            
+                            # Durée totale du consommateur
+                            consumer_duration = consumer_total_durations.get(consumer_of, 0)
+                            
+                            for dep in deps:
+                                producer_of = dep['producer_of']
+                                
+                                # Le producteur doit finir AVANT que le consommateur ne commence
+                                # Deadline dérivée = deadline_consommateur - durée_consommateur
+                                # Cela garantit que le composant est disponible quand le consommateur en a besoin
+                                derived_deadline = consumer_due_date - timedelta(minutes=consumer_duration)
+                                
+                                # On garde la deadline la plus contraignante
+                                if producer_of not in producer_derived_deadlines or derived_deadline < producer_derived_deadlines[producer_of]:
+                                    producer_derived_deadlines[producer_of] = derived_deadline
+                                    logger.info(f"   🎯 {producer_of}: deadline dérivée = {consumer_of} due {consumer_due_date.strftime('%d/%m %H:%M')} - {consumer_duration}min (durée OF) = {derived_deadline.strftime('%d/%m %H:%M')}")
+                        except Exception:
+                            pass
+                
                 # Identifier la dernière opération de chaque OF 
                 # On utilise sequence_number si disponible, sinon on parse le suffixe de l'ID (ex: OF1_20 -> 20)
                 last_ops_per_order = {}
@@ -1113,40 +1157,57 @@ class SchedulerEngine:
                 jit_constraints_added = 0
                 ops_without_due_date = []
                 
+                # ÉTAPE 2: Créer les contraintes de deadline (souples) pour les consommateurs ET les producteurs
                 for order_id, last_op_info in last_ops_per_order.items():
                     op_id = last_op_info['op_id']
                     order = orders_by_id.get(order_id, {})
-                    due_date_str = order.get('due_date')
                     transfer_time = last_op_info['transfer_time']
                     
-                    if due_date_str and op_id in end_vars:
+                    # Déterminer la date cible : deadline propre OU deadline dérivée (pour les producteurs critiques)
+                    due_date_str = order.get('due_date')
+                    derived_deadline = producer_derived_deadlines.get(order_id)
+                    
+                    # Choisir la deadline la plus contraignante
+                    effective_deadline = None
+                    deadline_source = None
+                    
+                    if due_date_str:
                         try:
-                            due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
-                            due_date_minutes = self._datetime_to_minutes(due_date)
-                            
-                            # Date cible = date de besoin - temps de transfert final
-                            target_end = due_date_minutes - transfer_time
-                            due_date_targets[order_id] = {
-                                'due_date': due_date,
-                                'due_date_minutes': due_date_minutes,
-                                'target_end': target_end,
-                                'transfer_time': transfer_time,
-                                'op_id': op_id
-                            }
-                            
-                            # Contrainte SOUPLE: créer une variable de retard
-                            # lateness = max(0, end_time - target_end)
-                            # On crée une variable lateness >= 0
-                            lateness = model.new_int_var(0, horizon, f'lateness_{order_id}')
-                            lateness_vars[order_id] = lateness
-                            
-                            # lateness >= end_time - target_end (si end > target, lateness capte le dépassement)
-                            model.add(lateness >= end_vars[op_id] - target_end)
-                            
-                            jit_constraints_added += 1
-                            logger.info(f"      📅 {op_id} (dernière op OF {order_id}): cible fin <= {due_date.strftime('%d/%m %H:%M')} - {transfer_time}min transfert (contrainte souple)")
+                            own_deadline = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+                            effective_deadline = own_deadline
+                            deadline_source = "propre"
                         except Exception:
-                            logger.warning(f"      ⚠️ {op_id}: date de besoin invalide '{due_date_str}'")
+                            pass
+                    
+                    if derived_deadline:
+                        if effective_deadline is None or derived_deadline < effective_deadline:
+                            effective_deadline = derived_deadline
+                            deadline_source = "dérivée (producteur critique)"
+                    
+                    if effective_deadline and op_id in end_vars:
+                        due_date_minutes = self._datetime_to_minutes(effective_deadline)
+                        
+                        # Date cible = date de besoin - temps de transfert final
+                        target_end = due_date_minutes - transfer_time
+                        due_date_targets[order_id] = {
+                            'due_date': effective_deadline,
+                            'due_date_minutes': due_date_minutes,
+                            'target_end': target_end,
+                            'transfer_time': transfer_time,
+                            'op_id': op_id,
+                            'source': deadline_source
+                        }
+                        
+                        # Contrainte SOUPLE: créer une variable de retard
+                        # lateness = max(0, end_time - target_end)
+                        lateness = model.new_int_var(0, horizon, f'lateness_{order_id}')
+                        lateness_vars[order_id] = lateness
+                        
+                        # lateness >= end_time - target_end (si end > target, lateness capte le dépassement)
+                        model.add(lateness >= end_vars[op_id] - target_end)
+                        
+                        jit_constraints_added += 1
+                        logger.info(f"      📅 {op_id} (OF {order_id}): cible fin <= {effective_deadline.strftime('%d/%m %H:%M')} - {transfer_time}min transfert ({deadline_source})")
                     else:
                         ops_without_due_date.append(order_id)
                 

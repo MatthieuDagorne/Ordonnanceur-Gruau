@@ -142,7 +142,12 @@ class MachineAssigner:
         if not due_dt:
             return (0, False, float('inf'))
         
-        now = datetime.now()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        # S'assurer que due_dt a une timezone
+        if due_dt.tzinfo is None:
+            due_dt = due_dt.replace(tzinfo=timezone.utc)
         
         # Calculer la différence en minutes
         delta = due_dt - now

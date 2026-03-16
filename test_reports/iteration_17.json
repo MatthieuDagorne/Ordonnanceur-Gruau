@@ -1,0 +1,137 @@
+{
+  "summary": "Tested JIT producer advancement bug fix. All 20 backend tests passed. Bug fix verified: (1) Gap between producer finish (OF1_20) and consumer start (OF2_10) is 0 minutes - flux tiré optimal, (2) In JIT mode producer is correctly advanced for tight deadlines, (3) JIT schedules as late as possible (1073 min vs ASAP 0 min), (4) Derived deadlines correctly calculated from consumer deadlines.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_jit_producer_advancement.py",
+    "/app/backend/tests/test_material_constraint_bugfix.py",
+    "/app/test_reports/pytest/pytest_jit_producer_advancement.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_jit_producer_advancement.py",
+    "/app/backend/tests/test_material_constraint_bugfix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 tests passed)",
+    "frontend": "N/A (backend testing only)"
+  },
+  "seed_data_creation": "Created test scenarios: TEST_JIT_FLUX_TIRE_ZERO_DELAY, TEST_JIT_TIGHT_DEADLINE, TEST_JIT_COMFORTABLE_ASAP, TEST_JIT_COMFORTABLE_JIT, TEST_DERIVED_DEADLINE, TEST_SIMPLIFIED_CONSTRAINTS",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "JIT producer advancement bug fix verified. Simplified material constraints (lines 809-820) now only use iteration constraints. Derived deadlines (lines 1088-1130) correctly subtract consumer duration from consumer deadline to get producer deadline.",
+  "features_verified": {
+    "1_flux_tire_optimal_zero_delay": {
+      "description": "Le délai entre la fin de production d'OF1 et le début d'OF2 est 0 (flux tiré optimal)",
+      "tests": [
+        "OF1_20 end: 245 min",
+        "COMP_A enters stock at: 245 min (OF1_20 end + 0 transfer)",
+        "OF2_10 start: 245 min",
+        "Gap: 0 minutes"
+      ],
+      "status": "VERIFIED",
+      "evidence": "test_zero_delay_between_producer_and_consumer PASSED"
+    },
+    "2_jit_tight_deadline_producer_advanced": {
+      "description": "En mode JIT avec deadline serrée, OF1 est avancé pour permettre à OF2 de respecter sa deadline",
+      "tests": [
+        "JIT mode returns OPTIMAL status",
+        "OF1_20 end: 1318 min",
+        "OF2_10 start: 1318 min",
+        "Gap: 0 min (producer correctly advanced)"
+      ],
+      "status": "VERIFIED",
+      "evidence": "test_producer_advanced_for_tight_deadline PASSED"
+    },
+    "3_jit_comfortable_deadline_late_planning": {
+      "description": "En mode JIT avec deadline confortable, le planning est planifié au plus tard",
+      "tests": [
+        "ASAP OF1_10 start: 0 min",
+        "JIT OF1_10 start: 1073 min",
+        "JIT schedules 1073 min later than ASAP (as late as possible)"
+      ],
+      "status": "VERIFIED",
+      "evidence": "test_jit_schedules_as_late_as_possible PASSED"
+    },
+    "4_derived_deadlines_critical_producers": {
+      "description": "Les deadlines des producteurs critiques sont correctement dérivées des consommateurs",
+      "tests": [
+        "OF2 due date: 2026-03-17T17:00:00+00:00",
+        "OF2 duration: 90 min",
+        "Producer deadline = consumer_due_date - consumer_duration",
+        "OF1_20 finishes at 1318 min, before OF2_10 starts at 1318 min"
+      ],
+      "status": "VERIFIED",
+      "evidence": "test_derived_deadlines_in_jit_mode PASSED"
+    },
+    "5_simplified_material_constraints": {
+      "description": "Les contraintes de pré-validation simplifiées (lignes 809-820)",
+      "tests": [
+        "Only iteration constraints used (not _material_earliest_date)",
+        "Scheduler converges in 2 iterations",
+        "No imprecise pre-validation blocking optimization"
+      ],
+      "status": "VERIFIED",
+      "evidence": "test_only_iteration_constraints_used PASSED"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "POST /api/scheduling/calculate (ASAP)", "status": "PASS"},
+    {"endpoint": "POST /api/scheduling/calculate (JIT)", "status": "PASS"},
+    {"endpoint": "GET /api/scenarios", "status": "PASS"},
+    {"endpoint": "GET /api/manufacturing-orders", "status": "PASS"},
+    {"endpoint": "GET /api/operations", "status": "PASS"},
+    {"endpoint": "GET /api/operation-materials", "status": "PASS"},
+    {"endpoint": "GET /api/stocks", "status": "PASS"},
+    {"endpoint": "GET /api/gantt/data/{id}", "status": "PASS"}
+  ],
+  "bug_analysis": {
+    "bug_description": "Le producteur (OF1) n'était pas avancé pour permettre au consommateur (OF2) de respecter sa deadline",
+    "root_cause": "Les contraintes de pré-validation (_material_earliest_date) trop imprécises empêchaient le solver d'optimiser. Ces contraintes étaient basées sur des estimations plutôt que sur les dates de production réelles calculées par le solver.",
+    "fix_applied": "1) Lignes 809-820: Seules les contraintes des itérations précédentes sont utilisées (basées sur les vraies dates de production), pas la pré-validation imprécise. 2) Lignes 1088-1130: Les deadlines des producteurs critiques sont calculées en soustrayant la durée du consommateur de sa deadline.",
+    "verification": "Gap entre fin OF1_20 et début OF2_10 est maintenant 0 minutes. JIT fonctionne correctement avec flux tiré optimal.",
+    "locations": [
+      "/app/backend/services/scheduler_engine.py lines 809-820 (simplified material constraints)",
+      "/app/backend/services/scheduler_engine.py lines 1088-1130 (derived deadlines for critical producers)"
+    ]
+  },
+  "test_data": {
+    "scenario": {
+      "OF1": {
+        "produces": "COMP_A",
+        "quantity": 10,
+        "operations": ["OF1_10 (120min)", "OF1_20 (60min)"],
+        "transfer_time": "20min on OF1_10"
+      },
+      "OF2": {
+        "consumes": "COMP_A (10 units at OF2_10)",
+        "operations": ["OF2_10 (90min)"],
+        "due_date": "2026-03-17T17:00:00+00:00"
+      },
+      "stock_COMP_A": 0,
+      "material_dependency": "OF2_10 waits for OF1 to produce COMP_A"
+    },
+    "results": {
+      "ASAP_mode": {
+        "OF1_10_start": 0,
+        "OF1_20_end": 245,
+        "OF2_10_start": 245,
+        "gap": 0
+      },
+      "JIT_mode": {
+        "OF1_10_start": 1073,
+        "OF1_20_end": 1318,
+        "OF2_10_start": 1318,
+        "gap": 0
+      }
+    }
+  }
+}

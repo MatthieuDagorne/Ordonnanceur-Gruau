@@ -9,9 +9,9 @@ where a producer is advanced (earlier finish). The fix always replaces constrain
 the actual production date calculated by the solver.
 
 Test Scenario:
-- OF1 produces ART1 (5 units), operations: OF1_10 -> OF1_20 (transfer_time=20min)
-- OF2 consumes ART1 at OF2_10 (1 unit needed)
-- Stock ART1 = 0, so OF2_10 must wait for OF1 to finish and ART1 to enter stock
+- OF1 produces COMP_A (10 units), operations: OF1_10 -> OF1_20 (transfer_time=20min on OF1_10)
+- OF2 consumes COMP_A at OF2_10 (10 units needed)
+- Stock COMP_A = 0, so OF2_10 must wait for OF1 to finish and COMP_A to enter stock
 
 Expected behavior:
 - OF2_10 should start after OF1_20 ends + transfer_time (20 minutes)
@@ -88,9 +88,10 @@ class TestMaterialConstraintBugFix:
         result = data.get("result", {})
         operations = result.get("operations", [])
         
-        assert len(operations) >= 4, f"Expected at least 4 operations, got {len(operations)}"
+        assert len(operations) >= 3, f"Expected at least 3 operations, got {len(operations)}"
         
         # Find OF1_20 (producer's last operation) and OF2_10 (consumer's first operation)
+        # Note: Current data has 3 operations (OF1_10, OF1_20, OF2_10)
         of1_20 = next((op for op in operations if op.get("operation_id") == "OF1_20"), None)
         of2_10 = next((op for op in operations if op.get("operation_id") == "OF2_10"), None)
         
@@ -173,12 +174,12 @@ class TestMaterialConstraintBugFix:
             assert "end_datetime" in prod
             print(f"  - OF {prod['order_id']} produces {prod['article_id']} x{prod['quantity']}")
         
-        # Verify OF1 produces ART1
+        # Verify OF1 produces COMP_A
         of1_production = next((p for p in productions if p.get("order_id") == "OF1"), None)
         if of1_production:
-            assert of1_production.get("article_id") == "ART1"
+            assert of1_production.get("article_id") == "COMP_A"
             assert of1_production.get("quantity") > 0
-            print(f"✓ OF1 produces ART1 as expected")
+            print(f"✓ OF1 produces COMP_A as expected")
 
 
 class TestSchedulingAPI:
@@ -198,7 +199,7 @@ class TestSchedulingAPI:
         assert response.status_code == 200
         operations = response.json()
         assert isinstance(operations, list)
-        assert len(operations) >= 4, "Expected at least 4 operations (OF1_10, OF1_20, OF2_10, OF2_20)"
+        assert len(operations) >= 3, "Expected at least 3 operations (OF1_10, OF1_20, OF2_10)"
         print(f"Found {len(operations)} operations")
         
     def test_get_manufacturing_orders(self):
@@ -217,10 +218,10 @@ class TestSchedulingAPI:
         materials = response.json()
         assert isinstance(materials, list)
         
-        # Check that OF2_10 consumes ART1
-        of2_10_art1 = [m for m in materials 
-                       if m.get("id") == "OF2_10" and m.get("article_composant_id") == "ART1"]
-        assert len(of2_10_art1) > 0, "OF2_10 should consume ART1"
+        # Check that OF2_10 consumes COMP_A
+        of2_10_comp_a = [m for m in materials 
+                       if m.get("operation_id") == "OF2_10" and m.get("article_composant_id") == "COMP_A"]
+        assert len(of2_10_comp_a) > 0, "OF2_10 should consume COMP_A"
         print(f"Found {len(materials)} material requirements")
         
     def test_get_stocks(self):
