@@ -1,11 +1,18 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers, TrendingDown, Zap, FileText } from 'lucide-react';
+import { ArrowLeft, Download, ZoomIn, ZoomOut, AlertCircle, Clock, Package, Filter, Check, X, Layers, TrendingDown, Zap, FileText, Calendar, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Formater une date en format complet français
+const formatFullDate = (date) => {
+  const days = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+  const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  return `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+};
 
 export default function GanttInteractive() {
   const { scenarioId } = useParams();
@@ -18,6 +25,13 @@ export default function GanttInteractive() {
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [selectedCentres, setSelectedCentres] = useState([]);
   const containerRef = useRef(null);
+  
+  // Nouveaux filtres
+  const [filterOrderId, setFilterOrderId] = useState('');
+  const [filterArticleId, setFilterArticleId] = useState('');
+  const [dateRangeStart, setDateRangeStart] = useState(null);
+  const [dateRangeEnd, setDateRangeEnd] = useState(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -113,12 +127,93 @@ export default function GanttInteractive() {
     }
   };
 
-  // Filtrer les machines par centres de charge sélectionnés
+  // Extraire les listes uniques d'ordres et d'articles pour les filtres
+  const { uniqueOrders, uniqueArticles, scenarioDateRange } = useMemo(() => {
+    if (!ganttData?.machines) return { uniqueOrders: [], uniqueArticles: [], scenarioDateRange: { min: null, max: null } };
+    
+    const orders = new Set();
+    const articles = new Set();
+    let minDate = null;
+    let maxDate = null;
+    
+    ganttData.machines.forEach(machine => {
+      machine.tasks?.forEach(task => {
+        if (task.order_id) orders.add(task.order_id);
+        if (task.article_id) articles.add(task.article_id);
+        
+        // Calculer les dates min/max
+        if (task.start_datetime) {
+          const startDate = new Date(task.start_datetime);
+          if (!minDate || startDate < minDate) minDate = startDate;
+        }
+        if (task.end_datetime) {
+          const endDate = new Date(task.end_datetime);
+          if (!maxDate || endDate > maxDate) maxDate = endDate;
+        }
+      });
+    });
+    
+    return {
+      uniqueOrders: Array.from(orders).sort(),
+      uniqueArticles: Array.from(articles).sort(),
+      scenarioDateRange: { min: minDate, max: maxDate }
+    };
+  }, [ganttData?.machines]);
+
+  // Filtrer les machines avec tous les critères (centre, order_id, article_id, plage de dates)
   const filteredMachines = useMemo(() => {
     if (!ganttData?.machines) return [];
-    if (selectedCentres.length === 0) return ganttData.machines;
-    return ganttData.machines.filter(m => selectedCentres.includes(m.centre_de_charge_id));
-  }, [ganttData?.machines, selectedCentres]);
+    
+    return ganttData.machines.map(machine => {
+      // Filtrer d'abord par centre de charge
+      if (selectedCentres.length > 0 && !selectedCentres.includes(machine.centre_de_charge_id)) {
+        return { ...machine, tasks: [] };
+      }
+      
+      // Filtrer les tâches par order_id, article_id et plage de dates
+      const filteredTasks = machine.tasks?.filter(task => {
+        // Filtre par order_id
+        if (filterOrderId && task.order_id !== filterOrderId) return false;
+        
+        // Filtre par article_id
+        if (filterArticleId && task.article_id !== filterArticleId) return false;
+        
+        // Filtre par plage de dates
+        if (dateRangeStart || dateRangeEnd) {
+          const taskStart = task.start_datetime ? new Date(task.start_datetime) : null;
+          const taskEnd = task.end_datetime ? new Date(task.end_datetime) : null;
+          
+          if (dateRangeStart && taskEnd) {
+            const rangeStart = new Date(dateRangeStart);
+            rangeStart.setHours(0, 0, 0, 0);
+            if (taskEnd < rangeStart) return false;
+          }
+          
+          if (dateRangeEnd && taskStart) {
+            const rangeEnd = new Date(dateRangeEnd);
+            rangeEnd.setHours(23, 59, 59, 999);
+            if (taskStart > rangeEnd) return false;
+          }
+        }
+        
+        return true;
+      }) || [];
+      
+      return { ...machine, tasks: filteredTasks };
+    }).filter(m => m.tasks.length > 0 || selectedCentres.length === 0);
+  }, [ganttData?.machines, selectedCentres, filterOrderId, filterArticleId, dateRangeStart, dateRangeEnd]);
+
+  // Réinitialiser les filtres
+  const resetFilters = () => {
+    setFilterOrderId('');
+    setFilterArticleId('');
+    setDateRangeStart(null);
+    setDateRangeEnd(null);
+    setSelectedCentres([]);
+  };
+
+  // Vérifier si des filtres sont actifs
+  const hasActiveFilters = filterOrderId || filterArticleId || dateRangeStart || dateRangeEnd || selectedCentres.length > 0;
 
   // Fonction pour calculer les zones de fermeture pour une machine spécifique
   // Les positions sont relatives au début visible du Gantt (pas au scheduling_start)
@@ -331,7 +426,7 @@ export default function GanttInteractive() {
     return markers;
   }, [scheduling_start, time_range?.min_minutes, time_range?.total_minutes, zoom]);
 
-  // Calculer les séparateurs de jour (lignes verticales à minuit)
+  // Calculer les séparateurs de jour (lignes verticales à minuit) avec format complet
   const daySeparators = useMemo(() => {
     if (!scheduling_start || !time_range?.total_minutes) return [];
     
@@ -340,25 +435,38 @@ export default function GanttInteractive() {
     const minMinutes = time_range.min_minutes || 0;
     const maxMinutes = time_range.total_minutes || 480;
     
-    // Trouver le premier minuit après le début
+    // Trouver le premier jour (début de journée)
     const firstDate = new Date(startDate.getTime() + minMinutes * 60000);
-    let midnight = new Date(firstDate);
-    midnight.setHours(0, 0, 0, 0);
-    midnight.setDate(midnight.getDate() + 1);
+    let dayStart = new Date(firstDate);
+    dayStart.setHours(0, 0, 0, 0);
+    
+    // Ajouter le premier jour s'il commence pendant les heures de travail
+    const firstDayMinutes = Math.round((dayStart.getTime() - startDate.getTime()) / 60000);
+    if (firstDayMinutes >= minMinutes - 24*60) {
+      separators.push({
+        minutes: Math.max(0, firstDayMinutes - minMinutes),
+        label: formatFullDate(dayStart),
+        date: new Date(dayStart)
+      });
+    }
+    
+    // Parcourir les jours suivants
+    dayStart.setDate(dayStart.getDate() + 1);
     
     while (true) {
-      const minutesSinceStart = Math.round((midnight.getTime() - startDate.getTime()) / 60000);
+      const minutesSinceStart = Math.round((dayStart.getTime() - startDate.getTime()) / 60000);
       const relativeMinutes = minutesSinceStart - minMinutes;
       
       if (relativeMinutes > maxMinutes) break;
       if (relativeMinutes >= 0) {
         separators.push({
           minutes: relativeMinutes,
-          label: formatShortDate(midnight)
+          label: formatFullDate(dayStart),
+          date: new Date(dayStart)
         });
       }
       
-      midnight = new Date(midnight.getTime() + 24 * 60 * 60000);
+      dayStart = new Date(dayStart.getTime() + 24 * 60 * 60000);
     }
     
     return separators;
@@ -457,52 +565,190 @@ export default function GanttInteractive() {
         </div>
       </div>
 
-      {/* Filtre par Centre de Charge */}
-      {centres_de_charge && centres_de_charge.length > 0 && (
-        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Filter size={16} style={{ color: 'var(--text-muted)' }} />
-              <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-                Filtrer par Centre de Charge :
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {centres_de_charge.map(centre => (
-                <button
-                  key={centre.id}
-                  onClick={() => toggleCentre(centre.id)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
-                  style={{
-                    backgroundColor: selectedCentres.includes(centre.id) ? 'var(--brand-primary)' : 'var(--bg-sunken)',
-                    color: selectedCentres.includes(centre.id) ? 'white' : 'var(--text-secondary)',
-                    border: `1px solid ${selectedCentres.includes(centre.id) ? 'transparent' : 'var(--border-default)'}`
-                  }}
-                  data-testid={`filter-centre-${centre.id}`}
-                >
-                  {selectedCentres.includes(centre.id) && <Check size={14} />}
-                  {centre.nom || centre.id}
-                </button>
-              ))}
-              {selectedCentres.length > 0 && (
-                <button
-                  onClick={() => setSelectedCentres([])}
-                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm transition-colors"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  <X size={14} />
-                  Réinitialiser
-                </button>
-              )}
-            </div>
-            {selectedCentres.length > 0 && (
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                ({filteredMachines.length} / {ganttData.machines.length} machines)
+      {/* Panneau de filtres avancés */}
+      <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <div className="flex items-center justify-between mb-3">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-2 text-sm font-medium"
+            style={{ color: 'var(--text-secondary)' }}
+            data-testid="toggle-filters-btn"
+          >
+            <Filter size={16} />
+            Filtres avancés
+            {hasActiveFilters && (
+              <span className="px-2 py-0.5 rounded-full text-xs" style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}>
+                Actifs
               </span>
             )}
-          </div>
+          </button>
+          {hasActiveFilters && (
+            <button
+              onClick={resetFilters}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
+              style={{ color: 'var(--status-error)' }}
+              data-testid="reset-filters-btn"
+            >
+              <X size={14} />
+              Réinitialiser tout
+            </button>
+          )}
         </div>
-      )}
+        
+        {showFilters && (
+          <div className="space-y-4 pt-3 border-t" style={{ borderColor: 'var(--border-default)' }}>
+            {/* Ligne 1: Filtres par OF et Article */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* Filtre par Ordre de Fabrication */}
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Ordre de Fabrication
+                </label>
+                <select
+                  value={filterOrderId}
+                  onChange={(e) => setFilterOrderId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ 
+                    backgroundColor: 'var(--bg-sunken)', 
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-default)'
+                  }}
+                  data-testid="filter-order-select"
+                >
+                  <option value="">Tous les ordres</option>
+                  {uniqueOrders.map(orderId => (
+                    <option key={orderId} value={orderId}>{orderId}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Filtre par Article */}
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                  Article
+                </label>
+                <select
+                  value={filterArticleId}
+                  onChange={(e) => setFilterArticleId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm"
+                  style={{ 
+                    backgroundColor: 'var(--bg-sunken)', 
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-default)'
+                  }}
+                  data-testid="filter-article-select"
+                >
+                  <option value="">Tous les articles</option>
+                  {uniqueArticles.map(articleId => (
+                    <option key={articleId} value={articleId}>{articleId}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
+            {/* Ligne 2: Plage de dates */}
+            <div>
+              <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
+                Plage de dates
+                {scenarioDateRange.min && scenarioDateRange.max && (
+                  <span className="ml-2 font-normal" style={{ color: 'var(--text-muted)' }}>
+                    (Scénario: {scenarioDateRange.min.toLocaleDateString('fr-FR')} - {scenarioDateRange.max.toLocaleDateString('fr-FR')})
+                  </span>
+                )}
+              </label>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Du</span>
+                  <input
+                    type="date"
+                    value={dateRangeStart || ''}
+                    onChange={(e) => setDateRangeStart(e.target.value || null)}
+                    className="px-3 py-2 rounded-lg text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg-sunken)', 
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-default)'
+                    }}
+                    data-testid="date-range-start"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Au</span>
+                  <input
+                    type="date"
+                    value={dateRangeEnd || ''}
+                    onChange={(e) => setDateRangeEnd(e.target.value || null)}
+                    className="px-3 py-2 rounded-lg text-sm"
+                    style={{ 
+                      backgroundColor: 'var(--bg-sunken)', 
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-default)'
+                    }}
+                    data-testid="date-range-end"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            {/* Ligne 3: Centres de charge */}
+            {centres_de_charge && centres_de_charge.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Centres de Charge
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {centres_de_charge.map(centre => (
+                    <button
+                      key={centre.id}
+                      onClick={() => toggleCentre(centre.id)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
+                      style={{
+                        backgroundColor: selectedCentres.includes(centre.id) ? 'var(--brand-primary)' : 'var(--bg-sunken)',
+                        color: selectedCentres.includes(centre.id) ? 'white' : 'var(--text-secondary)',
+                        border: `1px solid ${selectedCentres.includes(centre.id) ? 'transparent' : 'var(--border-default)'}`
+                      }}
+                      data-testid={`filter-centre-${centre.id}`}
+                    >
+                      {selectedCentres.includes(centre.id) && <Check size={14} />}
+                      {centre.nom || centre.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Résumé des filtres actifs */}
+        {hasActiveFilters && (
+          <div className="mt-3 pt-3 border-t flex items-center gap-2 flex-wrap" style={{ borderColor: 'var(--border-default)' }}>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Filtres actifs:</span>
+            {filterOrderId && (
+              <span className="px-2 py-1 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                OF: {filterOrderId}
+              </span>
+            )}
+            {filterArticleId && (
+              <span className="px-2 py-1 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                Article: {filterArticleId}
+              </span>
+            )}
+            {(dateRangeStart || dateRangeEnd) && (
+              <span className="px-2 py-1 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                Dates: {dateRangeStart || '...'} → {dateRangeEnd || '...'}
+              </span>
+            )}
+            {selectedCentres.length > 0 && (
+              <span className="px-2 py-1 rounded text-xs" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                {selectedCentres.length} centre(s)
+              </span>
+            )}
+            <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+              ({filteredMachines.reduce((acc, m) => acc + m.tasks.length, 0)} opérations affichées)
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-5 gap-4">
@@ -616,26 +862,29 @@ export default function GanttInteractive() {
                 Machine
               </div>
               <div className="relative flex-1" style={{ backgroundColor: 'var(--bg-sunken)' }}>
-                {/* Séparateurs de jour (lignes à minuit) */}
+                {/* Séparateurs de jour avec date complète */}
                 {daySeparators.map((sep, idx) => (
                   <div
                     key={`sep-${idx}`}
                     className="absolute top-0 bottom-0"
                     style={{ 
                       left: sep.minutes * pixelsPerMinute,
-                      borderLeft: '2px solid var(--accent-primary)',
+                      borderLeft: '3px solid var(--accent-primary)',
                       zIndex: 10
                     }}
                   >
-                    <span 
-                      className="absolute top-0 left-1 text-xs font-bold px-1 rounded"
+                    <div 
+                      className="absolute top-0 left-2 py-1 px-2 rounded-lg shadow-sm"
                       style={{ 
-                        color: 'var(--accent-primary)',
-                        backgroundColor: 'var(--bg-elevated)'
+                        backgroundColor: 'var(--accent-primary)',
+                        color: 'white',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        whiteSpace: 'nowrap'
                       }}
                     >
                       {sep.label}
-                    </span>
+                    </div>
                   </div>
                 ))}
                 

@@ -1,0 +1,127 @@
+{
+  "summary": "Tested all 7 APS corrections: (1) Page 'Matrice Compat.' removed from navigation and route, (2) Gantt filters for order_id and article_id working, (3) Full French date format 'Mercredi 18 mars 2026' displayed in Gantt timeline, (4) Date range selectors (Du/Au) present and functional, (5) Machine unavailabilities page and constraint system implemented, (6) Europe/Paris timezone used for scheduling_start, (7) JIT mode with flux tiré for minimizing encours available.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_corrections_v1.py",
+    "/app/test_reports/pytest/pytest_corrections_v1.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_corrections_v1.py"],
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (All 7 features verified)"
+  },
+  "seed_data_creation": "Used existing scenario: a8295933-c58d-4177-bbdb-76d3ce654012 (Test corrections v1, JIT, OPTIMAL)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 7 corrections from APS application verified. Scenario a8295933-c58d-4177-bbdb-76d3ce654012 can be used for regression testing.",
+  "features_verified": {
+    "1_matrix_page_removed": {
+      "description": "Page 'Matrice Compat.' supprimée",
+      "tests": [
+        "Navigation sidebar does NOT contain 'Matrice' link",
+        "/matrix route shows blank page (route removed from React Router)",
+        "/api/matrix endpoint returns 404"
+      ],
+      "status": "VERIFIED"
+    },
+    "2_gantt_filters_order_article": {
+      "description": "Filtres Gantt par order_id et article_id",
+      "tests": [
+        "Order filter dropdown (data-testid='filter-order-select') displays OF1, OF2, OF3",
+        "Article filter dropdown (data-testid='filter-article-select') available",
+        "Filtering by OF1 shows '2 opérations affichées' and filters gantt view",
+        "Reset filters button works"
+      ],
+      "status": "VERIFIED"
+    },
+    "3_full_date_format": {
+      "description": "Format date complet 'Lundi 16 mars 2026'",
+      "tests": [
+        "Gantt timeline header shows 'Mercredi 18 mars 2026' format",
+        "formatFullDate() function in GanttInteractive.js uses French day/month names"
+      ],
+      "status": "VERIFIED"
+    },
+    "4_date_range_selector": {
+      "description": "Sélecteur plage de dates Du/Au",
+      "tests": [
+        "Date range start input (data-testid='date-range-start') present",
+        "Date range end input (data-testid='date-range-end') present",
+        "Labels 'Du' and 'Au' displayed"
+      ],
+      "status": "VERIFIED"
+    },
+    "5_unavailabilities_machines": {
+      "description": "Indisponibilités machines (reporter si machine indispo)",
+      "tests": [
+        "Indisponibilités page accessible from navigation",
+        "CRUD operations on unavailability records work",
+        "UnavailabilityManager class handles constraints in scheduler_engine.py",
+        "Existing unavailability: TP5000_2 16-19/03/2026 'Maintenance préventive annuelle'"
+      ],
+      "status": "VERIFIED"
+    },
+    "6_timezone_europe_paris": {
+      "description": "Fuseau horaire Europe/Paris",
+      "tests": [
+        "PARIS_TZ = ZoneInfo('Europe/Paris') in scheduler_engine.py line 15",
+        "datetime.now(PARIS_TZ) used for scheduling_start",
+        "scheduling_start in scenario data shows correct format"
+      ],
+      "status": "VERIFIED"
+    },
+    "7_jit_mode_flux_tire": {
+      "description": "Mode JIT amélioré avec flux tiré (minimiser encours)",
+      "tests": [
+        "Scheduling page shows 'Au plus tard (Juste-à-temps)' option",
+        "JIT advantage text: 'Limite les encours, réduit les entrées en stock anticipées'",
+        "JIT scenario returns OPTIMAL status",
+        "encours_vars for wait time minimization in scheduler_engine.py"
+      ],
+      "status": "VERIFIED"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/scenarios/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/gantt/data/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/unavailability", "status": "PASS"},
+    {"endpoint": "POST /api/unavailability", "status": "PASS"},
+    {"endpoint": "DELETE /api/unavailability/{id}", "status": "PASS"},
+    {"endpoint": "GET /api/matrix", "status": "404 (expected, route removed)"}
+  ],
+  "ui_pages_tested": [
+    {"page": "/", "features": ["Navigation without 'Matrice Compat.' link"], "status": "PASS"},
+    {"page": "/gantt/{scenarioId}", "features": ["Order/Article filters", "Date range Du/Au", "Full French date format"], "status": "PASS"},
+    {"page": "/unavailability", "features": ["Machine unavailabilities list", "Add/Edit/Delete"], "status": "PASS"},
+    {"page": "/scheduling", "features": ["JIT strategy option", "Encours minimization note"], "status": "PASS"},
+    {"page": "/matrix", "features": ["Route removed - shows blank page"], "status": "PASS"}
+  ],
+  "test_data": {
+    "jit_scenario": {
+      "id": "a8295933-c58d-4177-bbdb-76d3ce654012",
+      "name": "Test corrections v1",
+      "status": "OPTIMAL",
+      "scheduling_strategy": "JIT",
+      "operations_count": 6,
+      "scheduling_start": "2026-03-16T15:26:00"
+    }
+  },
+  "implementation_notes": {
+    "matrix_removal": "Route removed from App.js, link removed from Layout.js",
+    "gantt_filters": "filterOrderId, filterArticleId state variables with useMemo for filtering",
+    "date_format": "formatFullDate() uses French day/month arrays for 'Lundi 16 mars 2026' format",
+    "unavailability": "UnavailabilityManager class creates constraints to avoid scheduling during unavailable periods",
+    "timezone": "PARIS_TZ = ZoneInfo('Europe/Paris') for consistent scheduling times",
+    "jit_flux_tire": "encours_vars minimize wait time between operations of same OF"
+  }
+}

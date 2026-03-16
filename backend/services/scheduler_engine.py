@@ -4,11 +4,15 @@ import math
 import time
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from services.diagnostics import SchedulingDiagnostics
 from services.machine_assigner import MachineAssigner
 from services.material_manager import MaterialManager
 
 logger = logging.getLogger(__name__)
+
+# Fuseau horaire Europe/Paris
+PARIS_TZ = ZoneInfo('Europe/Paris')
 
 
 class CalendarManager:
@@ -218,6 +222,91 @@ class CalendarManager:
         return forbidden_slots
 
 
+class UnavailabilityManager:
+    """
+    Gestionnaire des indisponibilités machines.
+    
+    Permet de:
+    - Charger les périodes d'indisponibilité par machine
+    - Créer des contraintes pour éviter la planification pendant ces périodes
+    """
+    
+    def __init__(self, unavailabilities: List[Dict], scheduling_start: datetime):
+        self.scheduling_start = scheduling_start
+        
+        # Index des indisponibilités par machine
+        self.machine_unavailabilities: Dict[str, List[Dict]] = {}
+        
+        for unavail in unavailabilities:
+            machine_id = unavail.get('machine_id')
+            if not machine_id:
+                continue
+            
+            if machine_id not in self.machine_unavailabilities:
+                self.machine_unavailabilities[machine_id] = []
+            
+            # Parser les dates
+            start_str = unavail.get('start_date')
+            end_str = unavail.get('end_date')
+            
+            try:
+                # Support différents formats de date
+                if start_str:
+                    if 'T' in start_str:
+                        start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                    else:
+                        start_dt = datetime.strptime(start_str, '%Y-%m-%d')
+                        start_dt = start_dt.replace(hour=0, minute=0)
+                else:
+                    continue
+                
+                if end_str:
+                    if 'T' in end_str:
+                        end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                    else:
+                        end_dt = datetime.strptime(end_str, '%Y-%m-%d')
+                        end_dt = end_dt.replace(hour=23, minute=59)
+                else:
+                    continue
+                
+                # Convertir en minutes depuis scheduling_start
+                start_minutes = max(0, int((start_dt - scheduling_start).total_seconds() / 60))
+                end_minutes = max(0, int((end_dt - scheduling_start).total_seconds() / 60))
+                
+                if end_minutes > start_minutes:
+                    self.machine_unavailabilities[machine_id].append({
+                        'start_minutes': start_minutes,
+                        'end_minutes': end_minutes,
+                        'start_datetime': start_dt,
+                        'end_datetime': end_dt,
+                        'reason': unavail.get('reason', 'Indisponibilité')
+                    })
+            except Exception as e:
+                logger.warning(f"Erreur parsing indisponibilité: {e}")
+        
+        # Log des indisponibilités chargées
+        if self.machine_unavailabilities:
+            logger.info("\n" + "="*60)
+            logger.info("INDISPONIBILITÉS MACHINES")
+            logger.info("="*60)
+            for machine_id, periods in self.machine_unavailabilities.items():
+                for p in periods:
+                    logger.info(f"  Machine {machine_id}: {p['start_datetime'].strftime('%d/%m %H:%M')} → {p['end_datetime'].strftime('%d/%m %H:%M')} ({p['reason']})")
+            logger.info("="*60 + "\n")
+    
+    def get_unavailabilities_for_machine(self, machine_id: str) -> List[Dict]:
+        """Retourne les périodes d'indisponibilité pour une machine."""
+        return self.machine_unavailabilities.get(machine_id, [])
+    
+    def is_machine_available(self, machine_id: str, start_minute: int, end_minute: int) -> bool:
+        """Vérifie si une machine est disponible pendant une plage horaire."""
+        for unavail in self.get_unavailabilities_for_machine(machine_id):
+            # Vérifier le chevauchement
+            if start_minute < unavail['end_minutes'] and end_minute > unavail['start_minutes']:
+                return False
+        return True
+
+
 class SchedulerEngine:
     """
     Moteur d'ordonnancement basé sur OR-Tools CP-SAT.
@@ -326,11 +415,13 @@ class SchedulerEngine:
         # On garde une marge pour les itérations suivantes potentielles
         iteration_time = min(remaining_time * 0.8, remaining_time - 2) if remaining_time > 5 else remaining_time
         
-        # Point de départ pour l'horizon de planification
+        # Point de départ pour l'horizon de planification en timezone Europe/Paris
         # IMPORTANT: Arrondir à la minute supérieure pour éviter les problèmes de microsecondes
-        # qui pourraient permettre des opérations juste avant les heures d'ouverture
-        now = datetime.now()
-        self.scheduling_start = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        now_paris = datetime.now(PARIS_TZ)
+        self.scheduling_start = now_paris.replace(second=0, microsecond=0, tzinfo=None) + timedelta(minutes=1)
+        
+        logger.info(f"\n🕐 TIMEZONE: Europe/Paris")
+        logger.info(f"   Heure de planification: {self.scheduling_start.strftime('%d/%m/%Y %H:%M')}")
         
         # Initialiser le diagnostic
         self.diagnostics = SchedulingDiagnostics(self.db)
@@ -364,6 +455,10 @@ class SchedulerEngine:
             self.calendar_manager = None
             if not ignore_calendars:
                 self.calendar_manager = CalendarManager(calendars, centres_de_charge, machines)
+            
+            # Initialiser le gestionnaire d'indisponibilités machines
+            unavailabilities = options.get('unavailabilities', [])
+            self.unavailability_manager = UnavailabilityManager(unavailabilities, self.scheduling_start)
             
             await self.diagnostics.run_pre_validation(orders, operations, machines, rules, stocks)
             
@@ -722,6 +817,43 @@ class SchedulerEngine:
             else:
                 logger.info("\n📌 CONTRAINTES DE CALENDRIER: Désactivées")
             
+            # CONTRAINTES D'INDISPONIBILITÉ MACHINES
+            unavailability_constraints_count = 0
+            if self.unavailability_manager.machine_unavailabilities:
+                logger.info("\n📌 CONTRAINTES D'INDISPONIBILITÉ MACHINES:")
+                
+                for machine_id, machine_intervals in machine_to_intervals.items():
+                    unavails = self.unavailability_manager.get_unavailabilities_for_machine(machine_id)
+                    
+                    if not unavails:
+                        continue
+                    
+                    logger.info(f"   Machine {machine_id}: {len(unavails)} période(s) d'indisponibilité")
+                    
+                    for interval_data in machine_intervals:
+                        op_id = interval_data['op_id']
+                        if op_id not in start_vars or op_id not in end_vars:
+                            continue
+                        
+                        start_var = start_vars[op_id]
+                        end_var = end_vars[op_id]
+                        
+                        for unavail in unavails:
+                            unavail_start = unavail['start_minutes']
+                            unavail_end = unavail['end_minutes']
+                            
+                            # L'opération doit être SOIT avant SOIT après l'indisponibilité
+                            b = model.new_bool_var(f'unavail_{op_id}_{unavail_start}')
+                            
+                            # Si b=True: L'opération se termine AVANT l'indisponibilité
+                            model.add(end_var <= unavail_start).only_enforce_if(b)
+                            # Si b=False: L'opération commence APRÈS l'indisponibilité
+                            model.add(start_var >= unavail_end).only_enforce_if(b.Not())
+                            
+                            unavailability_constraints_count += 1
+                            logger.info(f"      🚫 {op_id}: éviter [{unavail['start_datetime'].strftime('%d/%m %H:%M')} - {unavail['end_datetime'].strftime('%d/%m %H:%M')}] ({unavail['reason']})")
+                
+                logger.info(f"\n   Total: {unavailability_constraints_count} contraintes d'indisponibilité")
             
             # Contraintes de séquence (opérations d'un même OF)
             operations_by_order = {}
@@ -870,33 +1002,81 @@ class SchedulerEngine:
                 
                 logger.info(f"   ✓ {jit_constraints_added} contraintes de date de besoin ajoutées (souples)")
                 
+                # FLUX TIRÉ: Minimiser l'encours entre opérations d'un même OF
+                # Pour chaque paire d'opérations consécutives, on calcule le "temps d'attente"
+                # (temps entre la fin de op_n + transfert et le début de op_n+1)
+                encours_vars = []  # Variables représentant le temps d'attente entre ops
+                
+                logger.info("\n   📦 MINIMISATION ENCOURS (flux tiré):")
+                for order_id, order_ops in operations_by_order.items():
+                    if len(order_ops) < 2:
+                        continue
+                    
+                    sorted_ops = sorted(order_ops, key=lambda x: x.get('id', '').rsplit('_', 1)[-1] if '_' in x.get('id', '') else x.get('operation_id', 0))
+                    
+                    for i in range(len(sorted_ops) - 1):
+                        op1 = sorted_ops[i]
+                        op2 = sorted_ops[i + 1]
+                        op1_id = op1.get('id')
+                        op2_id = op2.get('id')
+                        transfer_time = op1.get('transfer_time_minutes', 0)
+                        
+                        if op1_id in end_vars and op2_id in start_vars:
+                            # Temps d'attente = start(op2) - (end(op1) + transfer_time)
+                            # On veut minimiser ce temps d'attente
+                            wait_time = model.new_int_var(0, horizon, f'wait_{op1_id}_{op2_id}')
+                            
+                            # wait_time >= start(op2) - end(op1) - transfer_time
+                            model.add(wait_time >= start_vars[op2_id] - end_vars[op1_id] - transfer_time)
+                            
+                            encours_vars.append(wait_time)
+                            logger.info(f"      {op1_id} -> {op2_id}: minimiser attente après transfert ({transfer_time}min)")
+                
+                logger.info(f"   ✓ {len(encours_vars)} variables d'encours créées")
+                
                 # Objectif JIT multi-critères:
                 # 1. Minimiser les retards (priorité haute - pénalité forte)
-                # 2. Maximiser les temps de début (planifier au plus tard)
+                # 2. Minimiser les encours entre opérations (flux tiré)
+                # 3. Maximiser les temps de début (planifier au plus tard)
                 if start_vars:
-                    # Pénalité de retard très élevée pour prioriser le respect des dates
-                    LATENESS_PENALTY = 10000
+                    # Pénalités
+                    LATENESS_PENALTY = 100000  # Très forte pour éviter les retards
+                    ENCOURS_PENALTY = 100      # Modérée pour réduire les encours
+                    START_BONUS = 1            # Faible pour planifier tard (objectif secondaire)
                     
                     # Calculer la somme des débuts (à maximiser = planifier tard)
                     sum_starts = model.new_int_var(0, horizon * len(start_vars), 'sum_starts')
                     model.add(sum_starts == sum(start_vars.values()))
+                    
+                    # Calculer la somme des encours (à minimiser)
+                    sum_encours = model.new_int_var(0, horizon * len(encours_vars) if encours_vars else 1, 'sum_encours')
+                    if encours_vars:
+                        model.add(sum_encours == sum(encours_vars))
+                    else:
+                        model.add(sum_encours == 0)
                     
                     # Calculer la somme des retards (à minimiser)
                     if lateness_vars:
                         sum_lateness = model.new_int_var(0, horizon * len(lateness_vars), 'sum_lateness')
                         model.add(sum_lateness == sum(lateness_vars.values()))
                         
-                        # Objectif: maximiser (sum_starts - PENALTY * sum_lateness)
-                        # Équivalent à: maximiser sum_starts ET minimiser sum_lateness
-                        objective = model.new_int_var(-horizon * len(lateness_vars) * LATENESS_PENALTY, 
-                                                       horizon * len(start_vars), 'jit_objective')
-                        model.add(objective == sum_starts - LATENESS_PENALTY * sum_lateness)
+                        # Objectif: maximiser (START_BONUS × sum_starts - ENCOURS_PENALTY × sum_encours - LATENESS_PENALTY × sum_lateness)
+                        max_value = horizon * len(start_vars) * START_BONUS
+                        min_value = -(horizon * len(lateness_vars) * LATENESS_PENALTY + horizon * len(encours_vars) * ENCOURS_PENALTY if encours_vars else horizon * len(lateness_vars) * LATENESS_PENALTY)
+                        
+                        objective = model.new_int_var(min_value, max_value, 'jit_objective')
+                        model.add(objective == START_BONUS * sum_starts - ENCOURS_PENALTY * sum_encours - LATENESS_PENALTY * sum_lateness)
                         model.maximize(objective)
-                        logger.info(f"   ✓ Objectif: maximiser débuts - {LATENESS_PENALTY} × retards")
+                        logger.info(f"   ✓ Objectif JIT: +{START_BONUS}×débuts - {ENCOURS_PENALTY}×encours - {LATENESS_PENALTY}×retards")
                     else:
-                        # Pas de dates de besoin -> juste maximiser les débuts
-                        model.maximize(sum_starts)
-                        logger.info("   ✓ Objectif: maximiser somme des débuts (planifier au plus tard)")
+                        # Pas de dates de besoin -> minimiser encours + maximiser débuts
+                        max_value = horizon * len(start_vars) * START_BONUS
+                        min_value = -(horizon * len(encours_vars) * ENCOURS_PENALTY if encours_vars else 0)
+                        
+                        objective = model.new_int_var(min_value, max_value, 'jit_objective')
+                        model.add(objective == START_BONUS * sum_starts - ENCOURS_PENALTY * sum_encours)
+                        model.maximize(objective)
+                        logger.info(f"   ✓ Objectif JIT: +{START_BONUS}×débuts - {ENCOURS_PENALTY}×encours")
                 
                 # Stocker les infos de due_date pour le post-traitement
                 jit_due_date_info = due_date_targets

@@ -16,7 +16,6 @@ import ScenariosComparison from '@/pages/ScenariosComparison';
 import ScenarioDiagnostic from '@/pages/ScenarioDiagnostic';
 import ProjectedStockScenario from '@/pages/ProjectedStockScenario';
 import APSDashboard from '@/pages/APSDashboard';
-import MatrixView from '@/pages/MatrixView';
 import '@/App.css';
 
 function App() {
@@ -38,7 +37,6 @@ function App() {
               <Route path="diagnostic/:scenarioId" element={<ScenarioDiagnostic />} />
               <Route path="projected-stock/:scenarioId" element={<ProjectedStockScenario />} />
               <Route path="aps" element={<APSDashboard />} />
-              <Route path="matrix" element={<MatrixView />} />
               <Route path="gantt/:scenarioId" element={<GanttInteractive />} />
               <Route path="scenarios" element={<ScenariosComparison />} />
             </Route>

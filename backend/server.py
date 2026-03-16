@@ -1978,6 +1978,7 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         articles = await db.articles.find({}, {"_id": 0}).to_list(1000)  # Pour les règles sur attributs
+        unavailabilities = await db.unavailability.find({}, {"_id": 0}).to_list(1000)  # Indisponibilités machines
         
         engine = SchedulerEngine(db)
         material_checker = MaterialChecker(stocks)
@@ -1993,7 +1994,8 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             'scheduling_strategy': request.scheduling_strategy,  # ASAP ou JIT
             'optimization_gap': request.optimization_gap,
             'allow_splitting': request.allow_splitting,
-            'respect_sequence': request.respect_sequence
+            'respect_sequence': request.respect_sequence,
+            'unavailabilities': unavailabilities  # Ajouter les indisponibilités
         }
         
         schedule_result = await engine.schedule(
