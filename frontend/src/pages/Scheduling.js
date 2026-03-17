@@ -63,6 +63,9 @@ export default function Scheduling() {
   
   // Options avancées
   const [respectSequence, setRespectSequence] = useState(true);
+  
+  // État de progression du calcul asynchrone
+  const [calculationProgress, setCalculationProgress] = useState(null);
 
   useEffect(() => {
     fetchStats();
@@ -89,10 +92,11 @@ export default function Scheduling() {
     }
 
     setCalculating(true);
+    setCalculationProgress(null);
 
     try {
-      // Lancer le calcul avec toutes les options
-      const response = await axios.post(`${API}/scheduling/calculate`, {
+      // Utiliser le mode ASYNCHRONE pour éviter les timeouts du proxy
+      const response = await axios.post(`${API}/scheduling/calculate/async`, {
         scenario_name: scenarioName,
         scheduling_strategy: schedulingStrategy,
         // Options d'ignorance
@@ -111,20 +115,44 @@ export default function Scheduling() {
         auto_assign_machines: true
       });
 
-      const result = response.data.result;
-      const scenarioId = response.data.scenario_id;
+      const jobId = response.data.job_id;
+      toast.info('Calcul démarré en arrière-plan...');
       
-      if (result?.status === 'OPTIMAL' || result?.status === 'FEASIBLE') {
-        toast.success(`Ordonnancement ${result.status}: ${result.operations?.length || 0} opérations planifiées`);
-        navigate(`/gantt/${scenarioId}`);
-      } else {
-        toast.warning(`Résultat: ${result?.status || 'Inconnu'}`);
-        navigate(`/scenarios`);
-      }
+      // Polling pour suivre la progression
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await axios.get(`${API}/scheduling/status/${jobId}`);
+          const jobStatus = statusResponse.data;
+          
+          setCalculationProgress({
+            status: jobStatus.status,
+            progress: jobStatus.progress,
+            message: jobStatus.message
+          });
+          
+          if (jobStatus.status === 'completed') {
+            clearInterval(pollInterval);
+            setCalculating(false);
+            setCalculationProgress(null);
+            toast.success(`Calcul terminé: ${jobStatus.result?.operations_count || 0} opérations planifiées`);
+            navigate(`/gantt/${jobStatus.scenario_id}`);
+          } else if (jobStatus.status === 'failed') {
+            clearInterval(pollInterval);
+            setCalculating(false);
+            setCalculationProgress(null);
+            toast.error(`Erreur: ${jobStatus.error}`);
+          }
+        } catch (pollError) {
+          console.error('Poll error:', pollError);
+        }
+      }, 2000); // Poll toutes les 2 secondes
+      
+      // Cleanup en cas de démontage du composant
+      return () => clearInterval(pollInterval);
+      
     } catch (error) {
       console.error('Calculation error:', error);
       toast.error(`Erreur de calcul: ${error.response?.data?.detail || error.message}`);
-    } finally {
       setCalculating(false);
     }
   };
@@ -494,7 +522,24 @@ export default function Scheduling() {
           )}
         </button>
         
-        {calculating && (
+        {calculating && calculationProgress && (
+          <div className="flex-1 max-w-md">
+            <div className="flex items-center justify-between text-sm mb-1">
+              <span className="text-slate-600">{calculationProgress.message}</span>
+              {calculationProgress.progress !== null && (
+                <span className="text-slate-500 font-mono">{calculationProgress.progress}%</span>
+              )}
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                style={{ width: `${calculationProgress.progress || 0}%` }}
+              />
+            </div>
+          </div>
+        )}
+        
+        {calculating && !calculationProgress && (
           <div className="text-sm text-slate-500">
             Durée max: {SOLVER_TIMES.find(t => t.value === maxSolverTime)?.label}
           </div>

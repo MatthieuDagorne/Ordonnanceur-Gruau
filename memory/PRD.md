@@ -418,3 +418,30 @@ elif not ignore_material and op.get('_material_earliest_date'):
 | Bouton "Tout supprimer" | ✅ |
 | article_id dans blocked_operations | ✅ |
 | Contrainte matière stricte | ✅ |
+
+### Phase 13 - Calcul Asynchrone Anti-Timeout (18 décembre 2025) ✅
+
+#### 13.1 Problème Résolu
+- **Erreur 502** : Le proxy Kubernetes coupe la connexion après ~60-120s
+- **Calculs longs** : Avec 7927 opérations, le calcul peut prendre plusieurs minutes
+
+#### 13.2 Solution Implémentée
+**Mode asynchrone avec polling:**
+1. `POST /api/scheduling/calculate/async` → Retourne immédiatement un `job_id`
+2. Le calcul s'exécute en background (BackgroundTasks FastAPI)
+3. `GET /api/scheduling/status/{job_id}` → Retourne statut, progression, résultat
+4. Frontend poll toutes les 2 secondes et affiche la barre de progression
+
+**Avantages:**
+- Plus de timeout 502
+- Progression visible en temps réel
+- Timeout de sécurité côté client (10 minutes)
+
+#### 13.3 Endpoints API
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/scheduling/calculate/async` | Lance un calcul en background |
+| `GET /api/scheduling/status/{job_id}` | Récupère statut/progression/résultat |
+| `GET /api/scheduling/jobs` | Liste tous les jobs (debug) |
+
+**Statuts possibles:** `pending`, `running`, `completed`, `failed`

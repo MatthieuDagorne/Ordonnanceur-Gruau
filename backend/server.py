@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import io
 import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from services.scheduler_engine import SchedulerEngine
 from services.material_checker import MaterialChecker
@@ -32,6 +34,12 @@ from models.business_rule import BusinessRule as BusinessRuleModel
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Storage pour les jobs de calcul asynchrones
+scheduling_jobs: Dict[str, Dict[str, Any]] = {}
+
+# Thread pool pour exécuter les calculs lourds
+executor = ThreadPoolExecutor(max_workers=2)
 
 
 def detect_csv_separator(contents: bytes) -> str:
@@ -2288,6 +2296,201 @@ async def export_schedule(scenario_id: str):
         media_type='text/csv',
         filename=f'schedule_{scenario_id}.csv'
     )
+
+
+# ==================== CALCUL ASYNCHRONE ====================
+# Permet de lancer des calculs longs sans timeout du proxy
+
+class AsyncJobStatus(BaseModel):
+    job_id: str
+    status: str  # "pending", "running", "completed", "failed"
+    progress: Optional[int] = None
+    message: Optional[str] = None
+    scenario_id: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+async def run_scheduling_job(job_id: str, request_dict: dict):
+    """Exécute le calcul d'ordonnancement en arrière-plan."""
+    global scheduling_jobs
+    
+    try:
+        scheduling_jobs[job_id]['status'] = 'running'
+        scheduling_jobs[job_id]['message'] = 'Chargement des données...'
+        
+        scenario_id = request_dict.get('scenario_id') or str(uuid.uuid4())
+        scheduling_jobs[job_id]['scenario_id'] = scenario_id
+        
+        # Créer le scénario avec status "calculating"
+        await db.scenarios.update_one(
+            {"id": scenario_id},
+            {
+                "$set": {"status": "calculating"},
+                "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}
+            },
+            upsert=True
+        )
+        
+        scheduling_jobs[job_id]['message'] = 'Chargement des ordres et opérations...'
+        
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
+        machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
+        rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
+        stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+        articles = await db.articles.find({}, {"_id": 0}).to_list(1000)
+        unavailabilities = await db.unavailability.find({}, {"_id": 0}).to_list(1000)
+        
+        scheduling_jobs[job_id]['message'] = f'Données chargées: {len(operations)} opérations'
+        scheduling_jobs[job_id]['progress'] = 10
+        
+        engine = SchedulerEngine(db)
+        material_checker = MaterialChecker(stocks)
+        rules_engine = RulesEngine(rules, articles)
+        
+        scheduling_jobs[job_id]['message'] = 'Calcul en cours...'
+        scheduling_jobs[job_id]['progress'] = 20
+        
+        options = {
+            'ignore_rules': request_dict.get('ignore_rules', False),
+            'ignore_material': request_dict.get('ignore_material', False),
+            'ignore_calendars': request_dict.get('ignore_calendars', False),
+            'ignore_priorities': request_dict.get('ignore_priorities', False),
+            'ignore_priority_propagation': request_dict.get('ignore_priority_propagation', False),
+            'ignore_material_propagation': request_dict.get('ignore_material_propagation', False),
+            'debug_mode': request_dict.get('debug_mode', True),
+            'auto_assign_machines': request_dict.get('auto_assign_machines', True),
+            'max_solver_time_seconds': request_dict.get('max_solver_time_seconds', 60),
+            'scheduling_strategy': request_dict.get('scheduling_strategy', 'ASAP'),
+            'optimization_gap': request_dict.get('optimization_gap', 0.05),
+            'allow_splitting': request_dict.get('allow_splitting', False),
+            'respect_sequence': request_dict.get('respect_sequence', True),
+            'unavailabilities': unavailabilities
+        }
+        
+        result = await engine.schedule(
+            orders=orders,
+            operations=operations,
+            machines=machines,
+            rules_engine=rules_engine,
+            material_checker=material_checker,
+            options=options
+        )
+        
+        scheduling_jobs[job_id]['progress'] = 90
+        scheduling_jobs[job_id]['message'] = 'Sauvegarde du scénario...'
+        
+        # Sauvegarder le scénario
+        scenario_name = request_dict.get('scenario_name') or f"Scénario {datetime.now().strftime('%H:%M:%S')}"
+        
+        await db.scenarios.update_one(
+            {"id": scenario_id},
+            {"$set": {
+                "name": scenario_name,
+                "status": "completed",
+                "schedule_data": result,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        
+        scheduling_jobs[job_id]['status'] = 'completed'
+        scheduling_jobs[job_id]['progress'] = 100
+        scheduling_jobs[job_id]['message'] = f"Calcul terminé: {len(result.get('operations', []))} opérations planifiées"
+        scheduling_jobs[job_id]['completed_at'] = datetime.now(timezone.utc).isoformat()
+        scheduling_jobs[job_id]['result'] = {
+            'scenario_id': scenario_id,
+            'status': result.get('status'),
+            'operations_count': len(result.get('operations', [])),
+            'solver_time': result.get('scheduling_stats', {}).get('actual_solver_time'),
+            'utilization': result.get('scheduling_stats', {}).get('global_utilization_percent')
+        }
+        
+    except Exception as e:
+        logger.error(f"Async scheduling error: {str(e)}", exc_info=True)
+        scheduling_jobs[job_id]['status'] = 'failed'
+        scheduling_jobs[job_id]['error'] = str(e)
+        scheduling_jobs[job_id]['completed_at'] = datetime.now(timezone.utc).isoformat()
+
+
+@api_router.post("/scheduling/calculate/async")
+async def calculate_schedule_async(request: ScheduleRequestWithOptions, background_tasks: BackgroundTasks):
+    """
+    Lance un calcul d'ordonnancement en arrière-plan.
+    
+    Retourne immédiatement un job_id que le client peut utiliser pour
+    suivre la progression et récupérer le résultat via /scheduling/status/{job_id}
+    
+    Avantage: Pas de timeout du proxy car la requête retourne immédiatement.
+    """
+    job_id = str(uuid.uuid4())
+    
+    scheduling_jobs[job_id] = {
+        'job_id': job_id,
+        'status': 'pending',
+        'progress': 0,
+        'message': 'En attente de démarrage...',
+        'started_at': datetime.now(timezone.utc).isoformat(),
+        'scenario_id': None,
+        'result': None,
+        'error': None,
+        'completed_at': None
+    }
+    
+    # Convertir le request en dict pour le passer au background task
+    request_dict = {
+        'scenario_id': request.scenario_id,
+        'scenario_name': request.scenario_name,
+        'scheduling_strategy': request.scheduling_strategy,
+        'ignore_rules': request.ignore_rules,
+        'ignore_material': request.ignore_material,
+        'ignore_calendars': request.ignore_calendars,
+        'ignore_priorities': request.ignore_priorities,
+        'ignore_priority_propagation': request.ignore_priority_propagation,
+        'ignore_material_propagation': request.ignore_material_propagation,
+        'max_solver_time_seconds': request.max_solver_time_seconds,
+        'optimization_gap': request.optimization_gap,
+        'debug_mode': request.debug_mode,
+        'auto_assign_machines': request.auto_assign_machines,
+        'allow_splitting': request.allow_splitting,
+        'respect_sequence': request.respect_sequence
+    }
+    
+    # Lancer le calcul en arrière-plan
+    background_tasks.add_task(run_scheduling_job, job_id, request_dict)
+    
+    return {
+        'job_id': job_id,
+        'status': 'pending',
+        'message': 'Calcul démarré en arrière-plan. Utilisez /api/scheduling/status/{job_id} pour suivre la progression.'
+    }
+
+
+@api_router.get("/scheduling/status/{job_id}", response_model=AsyncJobStatus)
+async def get_scheduling_status(job_id: str):
+    """
+    Récupère le statut d'un calcul d'ordonnancement asynchrone.
+    
+    Statuts possibles:
+    - pending: En attente de démarrage
+    - running: Calcul en cours
+    - completed: Calcul terminé avec succès
+    - failed: Échec du calcul
+    """
+    if job_id not in scheduling_jobs:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    return scheduling_jobs[job_id]
+
+
+@api_router.get("/scheduling/jobs")
+async def list_scheduling_jobs():
+    """Liste tous les jobs de calcul (pour le debug)."""
+    return list(scheduling_jobs.values())
+
+
 
 # Diagnostic endpoint - Tableau complet d'assignation
 @api_router.get("/diagnostic/assignment")
