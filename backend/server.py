@@ -2322,13 +2322,17 @@ async def run_scheduling_job(job_id: str, request_dict: dict):
         scheduling_jobs[job_id]['message'] = 'Chargement des données...'
         
         scenario_id = request_dict.get('scenario_id') or str(uuid.uuid4())
+        scenario_name = request_dict.get('scenario_name') or f"Scénario {datetime.now().strftime('%H:%M:%S')}"
         scheduling_jobs[job_id]['scenario_id'] = scenario_id
         
-        # Créer le scénario avec status "calculating"
+        # Créer le scénario avec status "calculating" ET le nom
         await db.scenarios.update_one(
             {"id": scenario_id},
             {
-                "$set": {"status": "calculating"},
+                "$set": {
+                    "name": scenario_name,
+                    "status": "calculating"
+                },
                 "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}
             },
             upsert=True

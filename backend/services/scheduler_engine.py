@@ -672,11 +672,68 @@ class SchedulerEngine:
                         order['_is_critical_producer'] = False
             
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
+            # PHASE 1.5: CRÉATION DE MACHINES VIRTUELLES pour les centres sans machines
+            # Identifier les centres de charge utilisés par les opérations mais sans machines
+            op_centres = {}
+            for op in operations:
+                centre = op.get('centre_de_charge_id')
+                if centre:
+                    if centre not in op_centres:
+                        op_centres[centre] = {'count': 0, 'total_duration': 0}
+                    op_centres[centre]['count'] += 1
+                    duration = (op.get('production_time_minutes', 0) or 0) + (op.get('setup_time_minutes', 0) or 0)
+                    op_centres[centre]['total_duration'] += duration
+            
+            machine_centres = set(m.get('centre_de_charge_id') for m in machines if m.get('centre_de_charge_id'))
+            missing_centres = set(op_centres.keys()) - machine_centres
+            
+            if missing_centres:
+                logger.info(f"\n🏭 CRÉATION DE MACHINES VIRTUELLES pour {len(missing_centres)} centres sans machines:")
+                
+                # Calculer le nombre de machines nécessaires basé sur la charge
+                horizon_days = 14
+                work_hours_per_day = 9  # 7h45 - 16h45
+                capacity_per_machine = horizon_days * work_hours_per_day * 60  # en minutes
+                
+                for centre_id in sorted(missing_centres):
+                    centre_data = op_centres.get(centre_id, {'count': 0, 'total_duration': 0})
+                    total_duration = centre_data['total_duration']
+                    
+                    # Calculer le nombre de machines nécessaires
+                    num_machines = max(1, int(total_duration / capacity_per_machine) + 1)
+                    # Limiter à un maximum raisonnable
+                    num_machines = min(num_machines, 10)
+                    
+                    for i in range(num_machines):
+                        machine_id = f'VIRTUAL_{centre_id}' if num_machines == 1 else f'VIRTUAL_{centre_id}_{i+1}'
+                        virtual_machine = {
+                            'id': machine_id,
+                            'nom': f'Machine virtuelle {centre_id}' + (f' #{i+1}' if num_machines > 1 else ''),
+                            'centre_de_charge_id': centre_id,
+                            'is_virtual': True
+                        }
+                        machines.append(virtual_machine)
+                    
+                    if num_machines > 1:
+                        logger.info(f"   ✓ Centre {centre_id}: {num_machines} machines virtuelles créées (charge={total_duration/60:.0f}h, capacité={capacity_per_machine*num_machines/60:.0f}h)")
+                    else:
+                        logger.info(f"   ✓ Machine virtuelle créée: VIRTUAL_{centre_id} (charge={total_duration/60:.0f}h)")
+                
+                # Log récapitulatif après ajout
+                machine_centres_after = set(m.get('centre_de_charge_id') for m in machines if m.get('centre_de_charge_id'))
+                logger.info(f"   Total machines après ajout: {len(machines)} - Centres couverts: {len(machine_centres_after)}")
+            
             if auto_assign_machines and not ignore_rules:
                 logger.info("\n🤖 Auto-assignation des machines activée")
+                # IMPORTANT: Recréer le MachineAssigner APRÈS l'ajout des machines virtuelles
+                # pour que l'index machines_by_centre soit à jour
                 assigner = MachineAssigner(machines, rules_engine)
                 assignment_result = assigner.assign_machines_to_operations(operations, orders)
                 self.diagnostics.report['machine_assignment'] = assignment_result
+                
+                # Log du résultat de l'assignation
+                assigned_count = sum(1 for op in operations if op.get('machine_id'))
+                logger.info(f"   Opérations avec machine assignée: {assigned_count}/{len(operations)}")
             
             # PHASE 2: ANALYSE DE FAISABILITÉ
             feasible_count, blocked_count = self.diagnostics.analyze_all_operations(
@@ -882,6 +939,12 @@ class SchedulerEngine:
                 # OR-Tools nécessite des entiers - arrondir la durée
                 duration = int(op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0))
                 
+                # CORRECTION: Durée minimum de 1 minute pour éviter les opérations de durée 0
+                # qui peuvent contourner les contraintes de calendrier et ne pas s'afficher sur le Gantt
+                if duration < 1:
+                    duration = 1
+                    logger.info(f"   ⚠️ Op {op_id}: durée forcée à 1 min (était 0)")
+                
                 # CONTRAINTE MATIÈRE: Date minimum de début
                 # IMPORTANT: N'utiliser que les contraintes des itérations précédentes
                 # qui sont basées sur les vraies dates de production calculées par le solver.
@@ -909,8 +972,22 @@ class SchedulerEngine:
                 if min_date_source:
                     logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min - {min_date_source}")
                 
+                # Vérifier que le domaine est valide (min_start < horizon - duration)
+                max_start = horizon - duration
+                if min_start > max_start:
+                    # L'opération ne peut pas tenir dans l'horizon avec la contrainte matière
+                    # On l'exclut et on l'ajoute aux opérations bloquées
+                    logger.warning(f"   ❌ {op_id}: Contrainte matière ({min_start}min) dépasse l'horizon ({max_start}min) - Opération exclue")
+                    blocked_operations.append({
+                        'operation_id': op_id,
+                        'order_id': op.get('order_id'),
+                        'article_id': op.get('_article_id'),
+                        'reason': f"Matière non disponible avant la fin de l'horizon ({min_date_source})"
+                    })
+                    continue  # Passer à l'opération suivante
+                
                 # Variable de début (avec contrainte matière si applicable)
-                start_var = model.new_int_var(min_start, horizon - duration, f'start_{op_id}')
+                start_var = model.new_int_var(min_start, max_start, f'start_{op_id}')
                 start_vars[op_id] = start_var
                 
                 # Variable de fin
@@ -1135,7 +1212,14 @@ class SchedulerEngine:
                     
                     # Récupérer le temps de transfert de l'opération 1 (temps pour aller vers op2)
                     # OR-Tools nécessite des entiers
-                    transfer_time = int(op1.get('transfer_time_minutes', 0))
+                    # LIMITE: Maximum 8 heures (480 min) de temps de transfert pour éviter les problèmes infaisables
+                    # Les temps > 8h sont probablement des délais d'attente, pas des transports physiques
+                    MAX_TRANSFER_TIME = 480  # 8 heures
+                    raw_transfer_time = int(op1.get('transfer_time_minutes', 0))
+                    transfer_time = min(raw_transfer_time, MAX_TRANSFER_TIME)
+                    
+                    if raw_transfer_time > MAX_TRANSFER_TIME:
+                        logger.debug(f"      ⚠️ {op1_id}: temps transfert réduit {raw_transfer_time} -> {MAX_TRANSFER_TIME} min")
                     
                     if op1_id in end_vars and op2_id in start_vars:
                         # Vérifier si op2 a une contrainte matière
