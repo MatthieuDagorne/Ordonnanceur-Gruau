@@ -12,6 +12,7 @@ export default function ScenariosComparison() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [comparison, setComparison] = useState(null);
   const [showComparison, setShowComparison] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -71,6 +72,19 @@ export default function ScenariosComparison() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    try {
+      const response = await axios.delete(`${API}/scenarios`);
+      toast.success(response.data.message || 'Tous les scénarios ont été supprimés');
+      setShowDeleteAllConfirm(false);
+      setScenarios([]);
+      setSelectedIds([]);
+    } catch (error) {
+      console.error('Error deleting all scenarios:', error);
+      toast.error('Erreur lors de la suppression');
+    }
+  };
+
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
       case 'optimal':
@@ -92,6 +106,38 @@ export default function ScenariosComparison() {
 
   return (
     <div className="space-y-6" data-testid="scenarios-page">
+      {/* Modal de confirmation suppression */}
+      {showDeleteAllConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="rounded-lg p-6 max-w-md w-full mx-4 shadow-xl" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle size={24} className="text-red-500" />
+              <h4 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Confirmer la suppression</h4>
+            </div>
+            <p style={{ color: 'var(--text-secondary)' }} className="mb-6">
+              Êtes-vous sûr de vouloir supprimer <strong>tous les {scenarios.length} scénarios</strong> ? 
+              Cette action est irréversible.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteAllConfirm(false)}
+                className="px-4 py-2 rounded-lg transition-colors"
+                style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+              >
+                Annuler
+              </button>
+              <button
+                data-testid="confirm-delete-all-btn"
+                onClick={handleDeleteAll}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Supprimer tout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -102,18 +148,30 @@ export default function ScenariosComparison() {
             Comparez plusieurs scénarios pour choisir le meilleur
           </p>
         </div>
-        {selectedIds.length >= 2 && (
-          <button
-            onClick={handleCompare}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
-            style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
-            data-testid="compare-btn"
-          >
-            <GitCompare size={16} />
-            Comparer ({selectedIds.length})
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {scenarios.length > 0 && (
+            <button
+              data-testid="delete-all-scenarios-btn"
+              onClick={() => setShowDeleteAllConfirm(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+            >
+              <Trash2 size={16} />
+              Tout supprimer ({scenarios.length})
+            </button>
+          )}
+          {selectedIds.length >= 2 && (
+            <button
+              onClick={handleCompare}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors"
+              style={{ backgroundColor: 'var(--brand-primary)', color: 'white' }}
+              data-testid="compare-btn"
+            >
+              <GitCompare size={16} />
+              Comparer ({selectedIds.length})
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Info Card */}

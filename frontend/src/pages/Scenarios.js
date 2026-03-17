@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Eye, Trash2 } from 'lucide-react';
+import { Eye, Trash2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -9,6 +9,7 @@ const API = `${BACKEND_URL}/api`;
 
 export default function Scenarios() {
   const [scenarios, setScenarios] = useState([]);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -21,6 +22,32 @@ export default function Scenarios() {
       setScenarios(response.data);
     } catch (error) {
       console.error('Error fetching scenarios:', error);
+      toast.error('Erreur lors du chargement des scénarios');
+    }
+  };
+
+  const deleteScenario = async (id, name) => {
+    if (!window.confirm(`Supprimer le scénario "${name}" ?`)) return;
+    
+    try {
+      await axios.delete(`${API}/scenarios/${id}`);
+      toast.success(`Scénario "${name}" supprimé`);
+      fetchScenarios();
+    } catch (error) {
+      console.error('Error deleting scenario:', error);
+      toast.error('Erreur lors de la suppression');
+    }
+  };
+
+  const deleteAllScenarios = async () => {
+    try {
+      const response = await axios.delete(`${API}/scenarios`);
+      toast.success(response.data.message || 'Tous les scénarios ont été supprimés');
+      setShowDeleteAllConfirm(false);
+      fetchScenarios();
+    } catch (error) {
+      console.error('Error deleting all scenarios:', error);
+      toast.error('Erreur lors de la suppression');
     }
   };
 
@@ -41,7 +68,48 @@ export default function Scenarios() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-2xl font-semibold text-slate-800">Scénarios</h3>
+        {scenarios.length > 0 && (
+          <button
+            data-testid="delete-all-scenarios-btn"
+            onClick={() => setShowDeleteAllConfirm(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
+          >
+            <Trash2 size={16} />
+            Tout supprimer ({scenarios.length})
+          </button>
+        )}
       </div>
+
+      {/* Modal de confirmation */}
+      {showDeleteAllConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle size={24} className="text-red-600" />
+              <h4 className="text-lg font-semibold text-slate-800">Confirmer la suppression</h4>
+            </div>
+            <p className="text-slate-600 mb-6">
+              Êtes-vous sûr de vouloir supprimer <strong>tous les {scenarios.length} scénarios</strong> ? 
+              Cette action est irréversible.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteAllConfirm(false)}
+                className="px-4 py-2 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                data-testid="confirm-delete-all-btn"
+                onClick={deleteAllScenarios}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+              >
+                Supprimer tout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-sm shadow-sm p-5">
         <p className="text-sm text-slate-600 mb-4">
@@ -81,6 +149,14 @@ export default function Scenarios() {
                       title="Voir le Gantt"
                     >
                       <Eye size={16} />
+                    </button>
+                    <button
+                      data-testid="delete-scenario-btn"
+                      onClick={() => deleteScenario(scenario.id, scenario.name)}
+                      className="text-red-600 hover:text-red-800 transition-colors"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </td>

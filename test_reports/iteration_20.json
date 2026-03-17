@@ -1,0 +1,86 @@
+{
+  "summary": "Tested 5 corrections requested: 1) article_id in blocked operations, 2) operations limit increased to 10000, 3) auto centres de charge import (already verified in iteration 19), 4) Delete all scenarios button, 5) Strict material constraint. All tests PASSED - 12/12 backend tests passed, frontend 'Tout supprimer' button verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_5_corrections.py",
+    "/app/test_reports/pytest/pytest_5_corrections.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_5_corrections.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 tests passed)",
+    "frontend": "100% (Delete all button and modal verified)"
+  },
+  "seed_data_creation": "Created test scenario 'Test Scenario for Button' for frontend testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 corrections verified. Operations endpoint now returns 7927 operations (limit increased from 1000 to 10000). DELETE /api/scenarios endpoint works. Frontend 'Tout supprimer' button with confirmation modal works.",
+  "features_verified": {
+    "1_article_id_in_blocked_operations": {
+      "description": "Les opérations bloquées contiennent order_id et article_id",
+      "status": "VERIFIED",
+      "code_location": "scheduler_engine.py lines 804-814",
+      "test": "test_scheduling_blocked_operations_have_article_id"
+    },
+    "2_operations_limit_10000": {
+      "description": "Limite 1000 opérations augmentée à 10000",
+      "status": "VERIFIED",
+      "code_location": "server.py uses to_list(10000) - lines 654, 679, 707, 708, etc.",
+      "actual_operations_returned": 7927
+    },
+    "3_auto_centres_de_charge": {
+      "description": "Import auto centres de charge",
+      "status": "VERIFIED",
+      "notes": "Already tested in iteration 19"
+    },
+    "4_delete_all_scenarios": {
+      "description": "API DELETE /api/scenarios supprime tous les scénarios",
+      "status": "VERIFIED",
+      "code_location": "server.py lines 1509-1518",
+      "tests": [
+        "test_delete_all_scenarios_endpoint_exists",
+        "test_delete_all_scenarios_response_format"
+      ]
+    },
+    "4b_frontend_delete_all_button": {
+      "description": "Bouton 'Tout supprimer' sur /scenarios avec modal de confirmation",
+      "status": "VERIFIED",
+      "code_location": "ScenariosComparison.js lines 107-160",
+      "ui_elements": [
+        {"testid": "delete-all-scenarios-btn", "text": "Tout supprimer (N)"},
+        {"testid": "confirm-delete-all-btn", "text": "Supprimer tout"}
+      ]
+    },
+    "5_material_constraint_strict": {
+      "description": "Contrainte matière stricte _material_earliest_date appliquée même à la 1ère itération",
+      "status": "VERIFIED",
+      "code_location": "scheduler_engine.py lines 888-907",
+      "code_comment": "CORRECTION: La contrainte matière doit TOUJOURS être appliquée même à la 1ère itération"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/operations", "status": "PASS", "notes": "Returns 7927 operations"},
+    {"endpoint": "GET /api/manufacturing-orders", "status": "PASS"},
+    {"endpoint": "GET /api/operations-enrichies", "status": "PASS"},
+    {"endpoint": "GET /api/scenarios", "status": "PASS"},
+    {"endpoint": "DELETE /api/scenarios", "status": "PASS", "notes": "Deletes all scenarios"},
+    {"endpoint": "POST /api/scheduling/calculate", "status": "PASS"},
+    {"endpoint": "GET /api/centres-de-charge", "status": "PASS"},
+    {"endpoint": "GET /api/machines", "status": "PASS"}
+  ],
+  "ui_elements_tested": [
+    {"selector": "[data-testid='delete-all-scenarios-btn']", "status": "PASS", "notes": "Button shows 'Tout supprimer (N)' where N is number of scenarios"},
+    {"selector": "[data-testid='confirm-delete-all-btn']", "status": "PASS", "notes": "Confirmation modal with 'Supprimer tout' button"}
+  ]
+}

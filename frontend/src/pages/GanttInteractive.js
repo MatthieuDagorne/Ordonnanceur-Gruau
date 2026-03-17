@@ -1282,10 +1282,18 @@ export default function GanttInteractive() {
                 const byOrder = {};
                 scenario.schedule_data.unscheduled_operations.forEach(op => {
                   if (!byOrder[op.order_id]) {
-                    byOrder[op.order_id] = { operations: [], reasons: new Set() };
+                    byOrder[op.order_id] = { 
+                      operations: [], 
+                      reasons: new Set(),
+                      article_id: op.article_id  // Récupérer l'article_id
+                    };
                   }
                   byOrder[op.order_id].operations.push(op);
                   if (op.reason) byOrder[op.order_id].reasons.add(op.reason);
+                  // Mettre à jour l'article_id si disponible
+                  if (op.article_id && !byOrder[op.order_id].article_id) {
+                    byOrder[op.order_id].article_id = op.article_id;
+                  }
                 });
 
                 return Object.entries(byOrder).map(([orderId, data]) => (
@@ -1295,9 +1303,16 @@ export default function GanttInteractive() {
                     style={{ backgroundColor: 'var(--bg-sunken)' }}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        OF {orderId}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          OF {orderId}
+                        </span>
+                        {data.article_id && (
+                          <span className="text-xs px-2 py-0.5 rounded font-mono" style={{ backgroundColor: 'var(--accent-primary-bg)', color: 'var(--accent-primary)' }}>
+                            {data.article_id}
+                          </span>
+                        )}
+                      </div>
                       <span className="text-sm px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--status-error)', color: 'white' }}>
                         {data.operations.length} opération(s)
                       </span>

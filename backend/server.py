@@ -651,7 +651,7 @@ async def delete_all_rules():
 @api_router.get("/manufacturing-orders")
 async def get_manufacturing_orders():
     """Retourne tous les ordres de fabrication."""
-    orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+    orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
     return orders
 
 
@@ -676,7 +676,7 @@ async def update_manufacturing_order(order_id: str, order: ManufacturingOrder):
 @api_router.get("/operations")
 async def get_operations():
     """Retourne toutes les opérations avec terminologie française."""
-    operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+    operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
     result = []
     for op in operations:
         result.append({
@@ -704,8 +704,8 @@ async def get_operations_enrichies():
     - Données de l'opération (tache_id, centre_de_charge_id, etc.)
     - Données de l'ordre (article_id, date_besoin, priority)
     """
-    orders_raw = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-    operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
+    orders_raw = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+    operations_raw = await db.operations.find({}, {"_id": 0}).to_list(10000)
     
     # Index des ordres par order_id pour jointure rapide
     orders_by_id = {}
@@ -773,8 +773,8 @@ async def get_projected_stock():
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
         planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         
         # Index des ordres par ID
         orders_by_id = {o.get('id'): o for o in orders}
@@ -1186,7 +1186,7 @@ async def get_mrp():
         aps_engine = APSEngine(db)
         
         # Récupérer les opérations ordonnancées pour les dates de consommation
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         scheduled_ops = [op for op in operations if op.get('scheduled_start')]
         
         result = await aps_engine.run_mrp(scheduled_operations=scheduled_ops)
@@ -1208,7 +1208,7 @@ async def get_capacity(horizon_days: int = 7):
         aps_engine = APSEngine(db)
         
         # Récupérer les opérations avec temps
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         
         result = await aps_engine.calculate_capacity(
             operations=operations,
@@ -1231,8 +1231,8 @@ async def get_aps_kpis():
     - Retards: ordres en retard avec détail
     """
     try:
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         machines = await db.machines.find({}, {"_id": 0}).to_list(100)
         
         now = datetime.now()
@@ -1504,6 +1504,19 @@ async def delete_scenario_inline(scenario_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Scénario non trouvé")
     return {"status": "deleted", "id": scenario_id}
+
+
+@api_router.delete("/scenarios")
+async def delete_all_scenarios():
+    """Supprime TOUS les scénarios."""
+    count = await db.scenarios.count_documents({})
+    result = await db.scenarios.delete_many({})
+    return {
+        "status": "deleted",
+        "deleted_count": result.deleted_count,
+        "message": f"{result.deleted_count} scénario(s) supprimé(s)"
+    }
+
 
 @api_router.get("/scenarios/{scenario_id}", response_model=Scenario)
 async def get_scenario(scenario_id: str):
@@ -2194,8 +2207,8 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             upsert=True
         )
         
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
@@ -2289,8 +2302,8 @@ async def get_assignment_diagnostic():
     Format due_date: ISO 8601 (YYYY-MM-DDTHH:MM:SS ou YYYY-MM-DD)
     """
     try:
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
-        operations_raw = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
+        operations_raw = await db.operations.find({}, {"_id": 0}).to_list(10000)
         machines_raw = await db.machines.find({}, {"_id": 0}).to_list(1000)
         rules = await db.business_rules.find({}, {"_id": 0}).to_list(1000)
         articles = await db.articles.find({}, {"_id": 0}).to_list(1000)
@@ -2439,7 +2452,7 @@ async def get_dashboard_stats():
     pending_orders = await db.manufacturing_orders.count_documents({"status": "pending"})
     
     late_orders = 0
-    orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+    orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
     today = datetime.now(timezone.utc)
     for order in orders:
         try:
@@ -2471,7 +2484,7 @@ async def get_machine_task_matrix():
     """
     try:
         machines = await db.machines.find({}, {"_id": 0}).to_list(100)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
         rules = await db.business_rules.find({"active": True}, {"_id": 0}).to_list(1000)
         centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(100)
         
@@ -2587,7 +2600,7 @@ async def get_gantt_data(scenario_id: str):
         calendars_dict = {c.get('id'): c for c in calendars}
         
         # Charger les ordres pour les infos supplémentaires
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
         orders_dict = {o.get('id'): o for o in orders}
         
         # Charger les besoins en matières pour chaque opération
@@ -2852,8 +2865,8 @@ async def get_projected_stock_advanced():
         stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
         planned_receipts = await db.planned_supplier_receipts.find({}, {"_id": 0}).to_list(1000)
-        operations = await db.operations.find({}, {"_id": 0}).to_list(1000)
-        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(1000)
+        operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
+        orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
         
         # Récupérer le dernier scénario d'ordonnancement
         last_scenario = await db.scenarios.find_one(

@@ -801,8 +801,15 @@ class SchedulerEngine:
                     }
                     valid_operations.append(op_enriched)
                 else:
+                    # Récupérer l'article_id de l'ordre si disponible
+                    article_id = None
+                    if order:
+                        article_id = order.get('article_id') or order.get('article')
+                    
                     blocked_operations.append({
                         'operation_id': op.get('id'),
+                        'order_id': op.get('order_id'),
+                        'article_id': article_id,
                         'reason': blocking_reason or 'Raison inconnue'
                     })
             
@@ -878,17 +885,26 @@ class SchedulerEngine:
                 # CONTRAINTE MATIÈRE: Date minimum de début
                 # IMPORTANT: N'utiliser que les contraintes des itérations précédentes
                 # qui sont basées sur les vraies dates de production calculées par le solver.
-                # La pré-validation (_material_earliest_date) est trop imprécise et peut bloquer
-                # inutilement des opérations.
+                # CORRECTION: La contrainte matière doit TOUJOURS être appliquée même à la 1ère itération
                 min_start = 0
                 min_date_source = None
                 
+                # D'abord, vérifier les contraintes des itérations précédentes (priorité)
                 if op_id in material_date_constraints:
                     # Contrainte des itérations précédentes (date de production réelle)
                     min_date = material_date_constraints[op_id]
                     min_start = int(self._datetime_to_minutes(min_date))
                     min_start = max(0, min_start)
                     min_date_source = f"itération précédente ({min_date.strftime('%d/%m %H:%M')})"
+                
+                # CORRECTION: Appliquer aussi la contrainte de pré-validation matière si pas d'autre contrainte
+                # Cette contrainte est STRICTE - une opération NE PEUT PAS commencer avant que la matière soit disponible
+                elif not ignore_material and op.get('_material_earliest_date'):
+                    mat_earliest = op.get('_material_earliest_date')
+                    if mat_earliest and mat_earliest > self.scheduling_start:
+                        min_start = int(self._datetime_to_minutes(mat_earliest))
+                        min_start = max(0, min_start)
+                        min_date_source = f"disponibilité matière ({mat_earliest.strftime('%d/%m %H:%M')})"
                 
                 if min_date_source:
                     logger.info(f"   📦 {op_id}: contrainte matière start >= {min_start} min - {min_date_source}")
