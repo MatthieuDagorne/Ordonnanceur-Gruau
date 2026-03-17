@@ -257,6 +257,67 @@ GET /api/projected-stock/{scenario_id}?article_id=XXX
 - [ ] Replanification dynamique (événements panne machine)
 - [ ] Propagation de priorité récursive (multi-niveaux)
 
+### Phase 11 - Améliorations Gros Volumes et Diagnostic (18 décembre 2025) ✅
+
+#### 11.1 Gestion des Gros Volumes ✅
+- **Pas de timeout technique** : Seul le paramètre "Durée maximum d'optimisation" du solveur contrôle l'arrêt
+- **Solution partielle** : Retourne la meilleure solution trouvée dans le temps imparti
+- **Calendriers optimisés** : Les contraintes de calendrier ont été optimisées pour éviter l'explosion combinatoire
+- **Opérations longues** : Les opérations durant plus qu'une journée de travail sont exemptées des contraintes horaires journalières (mais respectent les week-ends)
+
+#### 11.2 Infobulle Gantt - Matières Premières ✅
+- Affichage des composants matière de l'opération
+- Article composant (ID)
+- Quantité requise
+- Stock disponible
+- Statut disponibilité (✓ Dispo / ✗ Manque)
+- Magasin source
+
+#### 11.3 Contraintes Calendrier Améliorées ✅
+- Respect strict des week-ends (jours non travaillés)
+- Respect des horaires journaliers pour les opérations courtes
+- Assouplissement pour les opérations longues (durée > journée de travail)
+- Fusion des plages interdites adjacentes pour optimiser
+
+#### 11.4 Messages d'Erreur Collapsibles ✅
+- Section "Opérations non planifiables" déplacée sous le Gantt
+- Résumé agrégé : nombre d'OFs concernés, cause principale
+- Détail dépliable : agrégation par OF avec liste des opérations
+- Bouton "Voir le détail" / "Masquer"
+
+#### 11.5 Diagnostic Détaillé du Calcul ✅
+Nouvelles métriques dans `scheduling_stats` :
+| Métrique | Description |
+|----------|-------------|
+| `max_solver_time_configured` | Durée max d'optimisation paramétrée |
+| `actual_solver_time` | Durée réelle du calcul |
+| `total_operations_input` | Nombre total d'opérations candidates |
+| `operations_scheduled` | Nombre d'opérations planifiées |
+| `operations_blocked` | Nombre d'opérations bloquées |
+| `operations_material_delayed` | Nombre d'opérations retardées matière |
+| `global_utilization_percent` | Taux de remplissage machine global |
+| `machine_utilization` | Utilisation par machine (ops, temps, %) |
+| `blocked_reasons_summary` | Causes de blocage agrégées |
+
+#### 11.6 Création Automatique Centres de Charge ✅
+- À l'import des opérations, les centres de charge manquants sont créés automatiquement
+- Utilise `CentreDeCharge` et `DescriptionCentreDeCharge` du CSV ERP
+- Ne modifie pas les centres de charge existants
+- Champs enrichissables manuellement après création (calendrier, etc.)
+- Marqueur `auto_created: true` pour identifier les créations automatiques
+
+#### 11.7 Tests Validés ✅
+| Test | Résultat |
+|------|----------|
+| API /api/scenarios sans erreur | ✅ |
+| Calcul max_solver_time_seconds=120 sans 502 | ✅ |
+| scheduling_stats dans le résultat | ✅ |
+| active_options dans le résultat | ✅ |
+| materials dans les opérations (35/127) | ✅ |
+| UI Diagnostic collapsible | ✅ |
+| UI Erreurs collapsibles agrégées | ✅ |
+| Création auto centres de charge | ✅ |
+
 ## Tests Validés
 
 ### Replanification Automatique Sans Limite d'Itérations
