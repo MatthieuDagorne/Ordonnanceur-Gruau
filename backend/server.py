@@ -20,6 +20,14 @@ from services.rules_engine import RulesEngine
 from services.machine_assigner import MachineAssigner
 from services.demo_data import load_demo_data
 from services.aps_engine import APSEngine, BOMExploder, CapacityPlanner
+from services.erp_transformer import (
+    transform_manufacturing_orders,
+    transform_operations,
+    transform_operation_materials,
+    transform_stocks,
+    transform_planned_supplier_receipts,
+    transform_articles
+)
 from models.business_rule import BusinessRule as BusinessRuleModel
 
 ROOT_DIR = Path(__file__).parent
@@ -71,14 +79,15 @@ def read_csv_auto(contents: bytes) -> pd.DataFrame:
     Lit un CSV avec détection automatique du séparateur et de l'encodage.
     
     Gère les décimales européennes (virgule) si le séparateur est point-virgule.
+    Gère le BOM UTF-8.
     """
     separator = detect_csv_separator(contents)
     
     # Si séparateur point-virgule, les décimales peuvent utiliser la virgule
     decimal_char = ',' if separator == ';' else '.'
     
-    # Essayer différents encodages
-    for encoding in ['utf-8', 'latin-1', 'cp1252']:
+    # Essayer différents encodages (utf-8-sig en premier pour gérer le BOM)
+    for encoding in ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
         try:
             df = pd.read_csv(
                 io.BytesIO(contents), 
@@ -1617,34 +1626,53 @@ async def get_data_stats():
 # Import CSV with new structure
 @api_router.post("/import/manufacturing-orders", response_model=ImportResult)
 async def import_manufacturing_orders(file: UploadFile = File(...)):
+    """
+    Import CSV des ordres de fabrication (format ERP).
+    
+    Colonnes ERP supportées:
+    - OrdreFabrication, Article, QuantiteOrdre, QuantiteLivree
+    - StatutOrdre, DateLivraisonRequise, CodePlanificateur, Priorite
+    """
     try:
         previous_count = await db.manufacturing_orders.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
-        # Check for duplicate IDs
-        if 'id' in df.columns:
-            duplicate_ids = df['id'].duplicated().sum()
-            if duplicate_ids > 0:
-                return ImportResult(
-                    success=False,
-                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
-                    duplicates_found=duplicate_ids
-                )
+        logger.info(f"📥 Import OF: colonnes détectées = {df.columns.tolist()}")
+        
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'OrdreFabrication' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_manufacturing_orders(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            records = df.to_dict('records')
+            for record in records:
+                if 'id' not in record or pd.isna(record.get('id')):
+                    record['id'] = str(uuid.uuid4())
+                else:
+                    record['id'] = str(record['id'])
+                if 'article' in record and 'article_id' not in record:
+                    record['article_id'] = record['article']
+        
+        # Vérifier les doublons
+        ids = [r['id'] for r in records]
+        if len(ids) != len(set(ids)):
+            duplicates = len(ids) - len(set(ids))
+            return ImportResult(
+                success=False,
+                message=f"Erreur: {duplicates} ID(s) en double après transformation",
+                duplicates_found=duplicates
+            )
         
         await db.manufacturing_orders.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens ordres supprimés")
         
-        records = df.to_dict('records')
-        for record in records:
-            if 'id' not in record or pd.isna(record['id']):
-                record['id'] = str(uuid.uuid4())
-            else:
-                record['id'] = str(record['id'])
-            # Ensure article_id field
-            if 'article' in record and 'article_id' not in record:
-                record['article_id'] = record['article']
-            await db.manufacturing_orders.insert_one(record)
+        if records:
+            await db.manufacturing_orders.insert_many(records)
         
         logger.info(f"✅ {len(records)} nouveaux ordres importés")
         
@@ -1661,48 +1689,60 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
 @api_router.post("/import/operations", response_model=ImportResult)
 async def import_operations(file: UploadFile = File(...)):
     """
-    Import CSV des opérations.
+    Import CSV des opérations (format ERP).
     
-    Colonnes supportées:
-    - id, order_id, operation_id, tache_id, centre_de_charge_id
-    - production_time_minutes, setup_time_minutes, status
-    - transfer_time_minutes (optionnel, défaut: 0)
+    Colonnes ERP supportées:
+    - OrdreFabrication, Operation, OperationSuivante, Tache, DescriptionTache
+    - CentreDeCharge, DescriptionCentreDeCharge, TempsPreparation, TempsCycle
+    - TempsDeplacement, UniteTemps, QuantitePlanifiee, QuantiteAchevee, StatutOperation
+    
+    Calcul automatique:
+    - id = order_id + "_" + operation_seq
+    - production_time_minutes = run_time_unit × remaining_quantity
+    - transfer_time_minutes converti selon l'unité (Jours×1440, Heures×60)
     """
     try:
         previous_count = await db.operations.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
-        logger.info(f"📥 Import opérations: colonnes = {df.columns.tolist()}")
+        logger.info(f"📥 Import opérations: colonnes détectées = {df.columns.tolist()}")
         
-        # Check for duplicate IDs
-        if 'id' in df.columns:
-            duplicate_ids = df['id'].duplicated().sum()
-            if duplicate_ids > 0:
-                return ImportResult(
-                    success=False,
-                    message=f"Erreur: {duplicate_ids} ID(s) en double dans le fichier CSV",
-                    duplicates_found=duplicate_ids
-                )
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'OrdreFabrication' in df.columns and 'Operation' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_operations(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            records = df.to_dict('records')
+            for record in records:
+                if 'id' not in record or pd.isna(record.get('id')):
+                    record['id'] = str(uuid.uuid4())
+                else:
+                    record['id'] = str(record['id'])
+                if 'transfer_time_minutes' not in record or pd.isna(record.get('transfer_time_minutes')):
+                    record['transfer_time_minutes'] = 0
+                else:
+                    record['transfer_time_minutes'] = int(record['transfer_time_minutes'])
+        
+        # Vérifier les doublons
+        ids = [r['id'] for r in records]
+        if len(ids) != len(set(ids)):
+            duplicates = len(ids) - len(set(ids))
+            return ImportResult(
+                success=False,
+                message=f"Erreur: {duplicates} ID(s) en double après transformation",
+                duplicates_found=duplicates
+            )
         
         await db.operations.delete_many({})
         logger.info(f"🗑️  {previous_count} anciennes opérations supprimées")
         
-        records = df.to_dict('records')
-        for record in records:
-            if 'id' not in record or pd.isna(record['id']):
-                record['id'] = str(uuid.uuid4())
-            else:
-                record['id'] = str(record['id'])
-            
-            # S'assurer que transfer_time_minutes est présent (défaut: 0)
-            if 'transfer_time_minutes' not in record or pd.isna(record.get('transfer_time_minutes')):
-                record['transfer_time_minutes'] = 0
-            else:
-                record['transfer_time_minutes'] = int(record['transfer_time_minutes'])
-            
-            logger.debug(f"  Opération: {record}")
-            await db.operations.insert_one(record)
+        if records:
+            await db.operations.insert_many(records)
         
         logger.info(f"✅ {len(records)} nouvelles opérations importées")
         
@@ -1727,73 +1767,78 @@ async def get_articles():
 @api_router.post("/import/articles", response_model=ImportResult)
 async def import_articles(file: UploadFile = File(...)):
     """
-    Import CSV des articles avec attributs pour règles métier.
+    Import CSV des articles avec attributs (format ERP ou interne).
     
-    Format CSV attendu:
-    id,description,type_matiere,epaisseur,couleur,largeur,longueur
-    100235560,PORTE DROITE,Acier,10,blanc,500,1000
+    Format ERP:
+    - Article, DescriptionArticle, Matiere, Epaisseur, Longueur, Largeur, Couleur
     
-    Mapping CSV -> MongoDB:
-    - type_matiere -> material_type
-    - epaisseur -> thickness
-    - couleur -> color
-    - largeur -> width
-    - longueur -> length
+    Format interne:
+    - id, description, type_matiere, epaisseur, couleur, largeur, longueur
     """
     try:
         previous_count = await db.articles.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
-        if 'id' in df.columns:
-            duplicate_ids = df['id'].duplicated().sum()
-            if duplicate_ids > 0:
-                return ImportResult(
-                    success=False,
-                    message=f"Erreur: {duplicate_ids} ID(s) en double",
-                    duplicates_found=duplicate_ids
-                )
+        logger.info(f"📥 Import articles: colonnes détectées = {df.columns.tolist()}")
+        
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'Article' in df.columns and 'DescriptionArticle' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_articles(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            
+            if 'id' in df.columns:
+                duplicate_ids = df['id'].duplicated().sum()
+                if duplicate_ids > 0:
+                    return ImportResult(
+                        success=False,
+                        message=f"Erreur: {duplicate_ids} ID(s) en double",
+                        duplicates_found=duplicate_ids
+                    )
+            
+            # Mapping des colonnes CSV françaises vers les champs MongoDB anglais
+            column_mapping = {
+                'type_matiere': 'material_type',
+                'epaisseur': 'thickness',
+                'couleur': 'color',
+                'largeur': 'width',
+                'longueur': 'length'
+            }
+            
+            records = df.to_dict('records')
+            for record in records:
+                if 'id' not in record or pd.isna(record.get('id')):
+                    record['id'] = str(uuid.uuid4())
+                else:
+                    record['id'] = str(record['id'])
+                
+                for fr_col, en_col in column_mapping.items():
+                    if fr_col in record:
+                        value = record.pop(fr_col)
+                        if en_col in ['thickness', 'width', 'length'] and not pd.isna(value):
+                            try:
+                                record[en_col] = float(value)
+                            except (ValueError, TypeError):
+                                record[en_col] = value
+                        elif not pd.isna(value):
+                            record[en_col] = str(value)
         
         await db.articles.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens articles supprimés")
         
-        # Mapping des colonnes CSV françaises vers les champs MongoDB anglais
-        column_mapping = {
-            'type_matiere': 'material_type',
-            'epaisseur': 'thickness',
-            'couleur': 'color',
-            'largeur': 'width',
-            'longueur': 'length'
-        }
+        if records:
+            await db.articles.insert_many(records)
         
-        records = df.to_dict('records')
-        for record in records:
-            # Assurer l'ID
-            if 'id' not in record or pd.isna(record['id']):
-                record['id'] = str(uuid.uuid4())
-            else:
-                record['id'] = str(record['id'])
-            
-            # Mapper les colonnes françaises vers anglaises
-            for fr_col, en_col in column_mapping.items():
-                if fr_col in record:
-                    value = record.pop(fr_col)
-                    # Convertir les valeurs numériques
-                    if en_col in ['thickness', 'width', 'length'] and not pd.isna(value):
-                        try:
-                            record[en_col] = float(value)
-                        except (ValueError, TypeError):
-                            record[en_col] = value
-                    elif not pd.isna(value):
-                        record[en_col] = str(value)
-            
-            await db.articles.insert_one(record)
-        
-        logger.info(f"✅ {len(records)} nouveaux articles importés (avec attributs)")
+        logger.info(f"✅ {len(records)} nouveaux articles importés")
         
         return ImportResult(
             success=True,
-            message=f"Import réussi: {len(records)} articles avec attributs (remplace {previous_count} anciens)",
+            message=f"Import réussi: {len(records)} articles (remplace {previous_count} anciens)",
             records_imported=len(records),
             previous_records=previous_count
         )
@@ -1805,27 +1850,47 @@ async def import_articles(file: UploadFile = File(...)):
 @api_router.get("/stocks")
 async def get_stocks():
     """Retourne tous les stocks."""
-    stocks = await db.stocks.find({}, {"_id": 0}).to_list(1000)
+    stocks = await db.stocks.find({}, {"_id": 0}).to_list(10000)
     return stocks
 
 @api_router.post("/import/stocks", response_model=ImportResult)
 async def import_stocks(file: UploadFile = File(...)):
+    """
+    Import CSV des stocks (format ERP).
+    
+    Colonnes ERP supportées:
+    - Magasin, Article, StockPhysique
+    
+    Agrégation automatique par article_id.
+    """
     try:
         previous_count = await db.stocks.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
+        logger.info(f"📥 Import stocks: colonnes détectées = {df.columns.tolist()}")
+        
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'Magasin' in df.columns and 'StockPhysique' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_stocks(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            records = df.to_dict('records')
+            for record in records:
+                if 'id' not in record or pd.isna(record.get('id')):
+                    record['id'] = str(uuid.uuid4())
+                if 'article' in record and 'article_id' not in record:
+                    record['article_id'] = record['article']
+        
         await db.stocks.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens stocks supprimés")
         
-        records = df.to_dict('records')
-        for record in records:
-            if 'id' not in record or pd.isna(record.get('id')):
-                record['id'] = str(uuid.uuid4())
-            # Ensure article_id field
-            if 'article' in record and 'article_id' not in record:
-                record['article_id'] = record['article']
-            await db.stocks.insert_one(record)
+        if records:
+            await db.stocks.insert_many(records)
         
         logger.info(f"✅ {len(records)} nouveaux stocks importés")
         
@@ -1843,25 +1908,42 @@ async def import_stocks(file: UploadFile = File(...)):
 @api_router.post("/import/operation-materials", response_model=ImportResult)
 async def import_operation_materials(file: UploadFile = File(...)):
     """
-    Import CSV des besoins matière par opération.
-    Colonnes: id, order_id, operation_id, article_composant_id, quantity
+    Import CSV des besoins matière par opération (format ERP).
+    
+    Colonnes ERP supportées:
+    - OrdreFabrication, Operation, Position, Article, Magasin, QuantiteASortir
+    
+    Génération automatique:
+    - operation_id = order_id + "_" + operation_seq
     """
     try:
         previous_count = await db.operation_materials.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
+        logger.info(f"📥 Import matières: colonnes détectées = {df.columns.tolist()}")
+        
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'OrdreFabrication' in df.columns and 'QuantiteASortir' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_operation_materials(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            records = df.to_dict('records')
+            for record in records:
+                if 'quantity' in record:
+                    record['quantity'] = float(record['quantity']) if not pd.isna(record['quantity']) else 0
+                if 'operation_id' in record and not isinstance(record['operation_id'], str):
+                    record['operation_id'] = str(record['operation_id'])
+        
         await db.operation_materials.delete_many({})
         logger.info(f"🗑️  {previous_count} anciens besoins matière supprimés")
         
-        records = df.to_dict('records')
-        for record in records:
-            # Assurer le format des champs
-            if 'quantity' in record:
-                record['quantity'] = float(record['quantity'])
-            if 'operation_id' in record:
-                record['operation_id'] = int(record['operation_id'])
-            await db.operation_materials.insert_one(record)
+        if records:
+            await db.operation_materials.insert_many(records)
         
         logger.info(f"✅ {len(records)} besoins matière importés")
         
@@ -1879,23 +1961,38 @@ async def import_operation_materials(file: UploadFile = File(...)):
 @api_router.post("/import/planned-supplier-receipts", response_model=ImportResult)
 async def import_planned_supplier_receipts(file: UploadFile = File(...)):
     """
-    Import CSV des réceptions fournisseurs planifiées.
-    Colonnes: article_id, quantity, planned_date
+    Import CSV des réceptions fournisseurs planifiées (format ERP).
+    
+    Colonnes ERP supportées:
+    - Magasin, TypeTransaction, TypeOrdre, Ordre, Article
+    - DescriptionArticle, QuantitePlanifiee, DateTransaction
     """
     try:
         previous_count = await db.planned_supplier_receipts.count_documents({})
         contents = await file.read()
         df = read_csv_auto(contents)
         
+        logger.info(f"📥 Import réceptions: colonnes détectées = {df.columns.tolist()}")
+        
+        # Détecter le format (ERP ou interne)
+        is_erp_format = 'Magasin' in df.columns and 'DateTransaction' in df.columns
+        
+        if is_erp_format:
+            logger.info("📄 Format ERP détecté - transformation en cours...")
+            records = transform_planned_supplier_receipts(df)
+        else:
+            # Format interne (ancien format)
+            logger.info("📄 Format interne détecté")
+            records = df.to_dict('records')
+            for record in records:
+                if 'quantity' in record:
+                    record['quantity'] = float(record['quantity']) if not pd.isna(record['quantity']) else 0
+        
         await db.planned_supplier_receipts.delete_many({})
         logger.info(f"🗑️  {previous_count} anciennes réceptions planifiées supprimées")
         
-        records = df.to_dict('records')
-        for record in records:
-            # Assurer le format des champs
-            if 'quantity' in record:
-                record['quantity'] = float(record['quantity'])
-            await db.planned_supplier_receipts.insert_one(record)
+        if records:
+            await db.planned_supplier_receipts.insert_many(records)
         
         logger.info(f"✅ {len(records)} réceptions planifiées importées")
         
