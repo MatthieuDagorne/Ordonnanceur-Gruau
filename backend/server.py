@@ -279,6 +279,11 @@ class ScheduleRequestWithOptions(BaseModel):
     ignore_rules: bool = False
     ignore_material: bool = False
     ignore_calendars: bool = False
+    ignore_priorities: bool = False   # Ignorer les priorités des OF
+    
+    # Propagations à ignorer (debug)
+    ignore_priority_propagation: bool = False  # Ignorer la propagation de priorité vers fournisseurs
+    ignore_material_propagation: bool = False  # Ignorer la propagation matière (dépendances)
     
     # Paramètres solveur
     max_solver_time_seconds: int = 60
@@ -2085,6 +2090,9 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             'ignore_rules': request.ignore_rules,
             'ignore_material': request.ignore_material,
             'ignore_calendars': request.ignore_calendars,
+            'ignore_priorities': request.ignore_priorities,
+            'ignore_priority_propagation': request.ignore_priority_propagation,
+            'ignore_material_propagation': request.ignore_material_propagation,
             'debug_mode': request.debug_mode,
             'auto_assign_machines': request.auto_assign_machines,
             'max_solver_time_seconds': request.max_solver_time_seconds,

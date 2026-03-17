@@ -1,0 +1,106 @@
+{
+  "summary": "Tested advanced scheduling options (ignore_priorities, ignore_priority_propagation, ignore_material_propagation). All 14 backend tests passed. Frontend UI verified with all 6 checkboxes working correctly in Options Avancées section.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/scheduling/calculate",
+        "issue": "When all ignore options enabled (especially ignore_calendars=True), scheduler returns NO_VALID_OPERATIONS with empty active_options. This is expected behavior but could be documented."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_advanced_options.py",
+    "/app/test_reports/pytest/pytest_advanced_options.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_advanced_options.py"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (UI checkboxes working correctly)"
+  },
+  "seed_data_creation": "Created test scenarios: TEST_OPT_*, TEST_STORE_*, TEST_Advanced_Options_285161",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Advanced scheduling options tested. Backend correctly reads and returns active_options in scheduling result. Frontend correctly sends options to backend. Integration verified with full scheduling flow.",
+  "features_verified": {
+    "1_ignore_priorities": {
+      "description": "Option ignore_priorities désactive les priorités des OF - tous traités également",
+      "backend_location": "scheduler_engine.py lines 518-523",
+      "frontend_location": "Scheduling.js lines 54, 342-352",
+      "status": "VERIFIED",
+      "tests": [
+        "test_ignore_priorities_option_sent",
+        "test_ignore_priorities_option_false"
+      ]
+    },
+    "2_ignore_priority_propagation": {
+      "description": "Option ignore_priority_propagation désactive la propagation de priorité vers fournisseurs",
+      "backend_location": "scheduler_engine.py lines 524-529",
+      "frontend_location": "Scheduling.js lines 58, 388-399",
+      "status": "VERIFIED",
+      "tests": [
+        "test_ignore_priority_propagation_option",
+        "test_priority_propagation_disabled_when_priorities_ignored"
+      ]
+    },
+    "3_ignore_material_propagation": {
+      "description": "Option ignore_material_propagation désactive l'analyse des dépendances matière",
+      "backend_location": "scheduler_engine.py lines 588-593",
+      "frontend_location": "Scheduling.js lines 57, 401-412",
+      "status": "VERIFIED",
+      "tests": [
+        "test_ignore_material_propagation_option",
+        "test_material_propagation_disabled_when_material_ignored"
+      ]
+    },
+    "4_active_options_in_result": {
+      "description": "Les options actives sont retournées dans le champ active_options du résultat",
+      "backend_location": "scheduler_engine.py lines 1403-1411",
+      "status": "VERIFIED",
+      "tests": [
+        "test_scheduling_result_contains_active_options",
+        "test_scenario_stores_options"
+      ]
+    },
+    "5_frontend_options_avancees_section": {
+      "description": "Le formulaire affiche les options dans la section Options Avancées",
+      "frontend_location": "Scheduling.js lines 343-412",
+      "status": "VERIFIED",
+      "ui_elements": [
+        "ignore-rules-checkbox",
+        "ignore-priorities-checkbox",
+        "ignore-material-checkbox",
+        "ignore-calendars-checkbox",
+        "ignore-priority-propagation-checkbox",
+        "ignore-material-propagation-checkbox"
+      ]
+    },
+    "6_contraintes_appliquees_section": {
+      "description": "La section Contraintes Appliquées reflète les options cochées/décochées",
+      "status": "VERIFIED",
+      "notes": "Section shows green checkmarks for enabled constraints, updates dynamically when options are toggled"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "POST /api/scheduling/calculate", "status": "PASS", "notes": "All advanced options accepted"},
+    {"endpoint": "GET /api/scenarios/{id}", "status": "PASS", "notes": "active_options stored correctly"},
+    {"endpoint": "GET /api/data/stats", "status": "PASS"}
+  ],
+  "ui_elements_tested": [
+    {"selector": "[data-testid='ignore-rules-checkbox']", "status": "PASS"},
+    {"selector": "[data-testid='ignore-priorities-checkbox']", "status": "PASS"},
+    {"selector": "[data-testid='ignore-material-checkbox']", "status": "PASS"},
+    {"selector": "[data-testid='ignore-calendars-checkbox']", "status": "PASS"},
+    {"selector": "[data-testid='ignore-priority-propagation-checkbox']", "status": "PASS"},
+    {"selector": "[data-testid='ignore-material-propagation-checkbox']", "status": "PASS"}
+  ]
+}

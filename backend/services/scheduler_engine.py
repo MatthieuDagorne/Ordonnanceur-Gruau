@@ -406,6 +406,9 @@ class SchedulerEngine:
         ignore_rules = options.get('ignore_rules', False)
         ignore_material = options.get('ignore_material', False)
         ignore_calendars = options.get('ignore_calendars', False)
+        ignore_priorities = options.get('ignore_priorities', False)
+        ignore_priority_propagation = options.get('ignore_priority_propagation', False)
+        ignore_material_propagation = options.get('ignore_material_propagation', False)
         auto_assign_machines = options.get('auto_assign_machines', True)
         max_solver_time_seconds = options.get('max_solver_time_seconds', 60)
         optimization_gap = options.get('optimization_gap', 0.05)  # Gap d'optimalité (5% par défaut)
@@ -463,7 +466,14 @@ class SchedulerEngine:
             logger.info(f"  Calendriers: {len(calendars)}")
             logger.info(f"  Centres de charge: {len(centres_de_charge)}")
             logger.info(f"  Temps max solveur: {max_solver_time_seconds}s")
-            logger.info(f"  Ignorer calendriers: {ignore_calendars}")
+            logger.info(f"{'='*60}")
+            logger.info("\n⚙️  OPTIONS AVANCÉES DU SOLVEUR:")
+            logger.info(f"   Ignorer règles métier: {ignore_rules}")
+            logger.info(f"   Ignorer matière: {ignore_material}")
+            logger.info(f"   Ignorer calendriers: {ignore_calendars}")
+            logger.info(f"   Ignorer priorités: {ignore_priorities}")
+            logger.info(f"   Ignorer propagation priorité: {ignore_priority_propagation}")
+            logger.info(f"   Ignorer propagation matière: {ignore_material_propagation}")
             logger.info(f"{'='*60}\n")
             
             # Initialiser le gestionnaire de calendriers
@@ -505,139 +515,161 @@ class SchedulerEngine:
                         article_producers[article_id] = []
                     article_producers[article_id].append(o.get('id'))
             
-            # Identifier les OFs urgents (priority=1)
-            urgent_orders = [o for o in orders if o.get('priority', 0) == 1]
-            
-            if urgent_orders:
-                logger.info("\n🚨 PROPAGATION DE PRIORITÉ:")
-                logger.info(f"   OFs urgents initiaux: {[o.get('id') for o in urgent_orders]}")
+            # Si on ignore les priorités, tout le monde a priority=0
+            if ignore_priorities:
+                logger.info("\n🚫 PRIORITÉS IGNORÉES: Tous les OFs traités avec priorité=0")
+                for o in orders:
+                    o['_propagated_priority'] = 0
+                    o['_is_urgent'] = False
+            elif ignore_priority_propagation:
+                # On garde les priorités originales mais sans propagation
+                logger.info("\n🚫 PROPAGATION DE PRIORITÉ DÉSACTIVÉE: Seules les priorités originales sont conservées")
+                for o in orders:
+                    o['_propagated_priority'] = o.get('priority', 0)
+                    o['_is_urgent'] = o.get('priority', 0) == 1
+            else:
+                # Propagation de priorité normale
+                # Identifier les OFs urgents (priority=1)
+                urgent_orders = [o for o in orders if o.get('priority', 0) == 1]
                 
-                for urgent_order in urgent_orders:
-                    urgent_id = urgent_order.get('id')
-                    # Trouver les opérations de cet OF
-                    urgent_ops = [op for op in operations if op.get('order_id') == urgent_id]
+                if urgent_orders:
+                    logger.info("\n🚨 PROPAGATION DE PRIORITÉ:")
+                    logger.info(f"   OFs urgents initiaux: {[o.get('id') for o in urgent_orders]}")
                     
-                    for op in urgent_ops:
+                    for urgent_order in urgent_orders:
+                        urgent_id = urgent_order.get('id')
+                        # Trouver les opérations de cet OF
+                        urgent_ops = [op for op in operations if op.get('order_id') == urgent_id]
+                        
+                        for op in urgent_ops:
+                            op_id = op.get('id')
+                            # Récupérer les besoins matière
+                            materials = self.material_manager.get_operation_materials(op_id)
+                            
+                            for mat in materials:
+                                article_needed = mat.article_composant_id
+                                # Vérifier si cet article est fabriqué par un autre OF
+                                if article_needed in article_producers:
+                                    for producer_of in article_producers[article_needed]:
+                                        if producer_of != urgent_id and propagated_priority.get(producer_of, 0) == 0:
+                                            # Propager la priorité
+                                            propagated_priority[producer_of] = 1
+                                            
+                                            # Log détaillé pour le diagnostic
+                                            log_entry = {
+                                                'source_order': urgent_id,
+                                                'source_priority': 1,
+                                                'target_order': producer_of,
+                                                'article_needed': article_needed,
+                                                'reason': f"OF {urgent_id} (urgent, priority=1) consomme {article_needed}. "
+                                                          f"Stock peut être insuffisant. OF {producer_of} fabrique {article_needed}. "
+                                                          f"OF {producer_of} rendu urgent pour garantir disponibilité."
+                                            }
+                                            priority_propagation_log.append(log_entry)
+                                            logger.info(f"   🔺 OF {producer_of} rendu URGENT (fabrique {article_needed} pour OF {urgent_id})")
+                    
+                    # Mettre à jour les ordres avec la priorité propagée
+                    for o in orders:
+                        o['_propagated_priority'] = propagated_priority.get(o.get('id'), 0)
+                        o['_is_urgent'] = propagated_priority.get(o.get('id'), 0) == 1
+                else:
+                    for o in orders:
+                        o['_propagated_priority'] = o.get('priority', 0)
+                        o['_is_urgent'] = o.get('priority', 0) == 1
+            
+            # PROPAGATION BASÉE SUR LES DATES DE BESOIN (dépendances matière)
+            # Si un OF a une date de besoin et dépend d'un autre OF pour la matière,
+            # l'OF producteur doit être planifié en priorité pour permettre au consommateur de respecter sa deadline
+            
+            # Construire la liste des besoins matière par OF
+            material_dependencies = {}  # {consumer_of: [{article, producer_of, due_date}]}
+            critical_producers = {}  # {producer_of: earliest_deadline}
+            
+            if ignore_material_propagation:
+                logger.info("\n🚫 PROPAGATION MATIÈRE DÉSACTIVÉE: Les dépendances entre OFs ne sont pas analysées")
+                # Aucune dépendance matière ne sera créée, tous les OFs sont indépendants
+                for order in orders:
+                    order['_critical_for_deadline'] = None
+                    order['_is_critical_producer'] = False
+            else:
+                logger.info("\n📆 ANALYSE DES DÉPENDANCES MATIÈRE POUR DATES DE BESOIN:")
+                
+                for order in orders:
+                    order_id = order.get('id')
+                    due_date_str = order.get('due_date')
+                    if not due_date_str:
+                        continue
+                    
+                    try:
+                        due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+                    except:
+                        continue
+                    
+                    # Trouver les opérations de cet OF et leurs besoins matière
+                    order_ops = [op for op in operations if op.get('order_id') == order_id]
+                    
+                    for op in order_ops:
                         op_id = op.get('id')
-                        # Récupérer les besoins matière
                         materials = self.material_manager.get_operation_materials(op_id)
                         
                         for mat in materials:
                             article_needed = mat.article_composant_id
+                            qty_needed = mat.quantity
+                            
                             # Vérifier si cet article est fabriqué par un autre OF
                             if article_needed in article_producers:
+                                # IMPORTANT: Ne propager la priorité que si le stock projeté est INSUFFISANT
+                                # Le stock projeté au moment du démarrage de l'opération consommatrice
+                                # doit être vérifié SANS compter les productions de cet OF
+                                
+                                # Estimer la date de démarrage de l'opération consommatrice
+                                # Pour simplifier, on utilise le scheduling_start + un délai estimé
+                                estimated_start = self.scheduling_start
+                                
+                                # Calculer le stock projeté à cette date (hors productions non encore planifiées)
+                                projected_stock = self.material_manager.get_projected_stock(article_needed, estimated_start)
+                                
+                                # Si le stock projeté est suffisant, pas besoin de propager la priorité
+                                if projected_stock >= qty_needed:
+                                    logger.info(f"   ✓ {order_id}/{op_id}: stock projeté de {article_needed} suffisant ({projected_stock} >= {qty_needed}) - pas de propagation")
+                                    continue
+                                
+                                # Stock insuffisant - propager la priorité vers le producteur
                                 for producer_of in article_producers[article_needed]:
-                                    if producer_of != urgent_id and propagated_priority.get(producer_of, 0) == 0:
-                                        # Propager la priorité
-                                        propagated_priority[producer_of] = 1
-                                        
-                                        # Log détaillé pour le diagnostic
-                                        log_entry = {
-                                            'source_order': urgent_id,
-                                            'source_priority': 1,
-                                            'target_order': producer_of,
-                                            'article_needed': article_needed,
-                                            'reason': f"OF {urgent_id} (urgent, priority=1) consomme {article_needed}. "
-                                                      f"Stock peut être insuffisant. OF {producer_of} fabrique {article_needed}. "
-                                                      f"OF {producer_of} rendu urgent pour garantir disponibilité."
-                                        }
-                                        priority_propagation_log.append(log_entry)
-                                        logger.info(f"   🔺 OF {producer_of} rendu URGENT (fabrique {article_needed} pour OF {urgent_id})")
+                                    if producer_of != order_id:
+                                        if order_id not in material_dependencies:
+                                            material_dependencies[order_id] = []
+                                        material_dependencies[order_id].append({
+                                            'article': article_needed,
+                                            'producer_of': producer_of,
+                                            'due_date': due_date,
+                                            'operation_id': op_id,
+                                            'qty_needed': qty_needed,
+                                            'projected_stock': projected_stock
+                                        })
+                                        logger.info(f"   📦 {order_id} (besoin: {due_date.strftime('%d/%m %H:%M')}) dépend de {producer_of} pour {article_needed} (stock={projected_stock} < besoin={qty_needed})")
                 
-                # Mettre à jour les ordres avec la priorité propagée
-                for o in orders:
-                    o['_propagated_priority'] = propagated_priority.get(o.get('id'), 0)
-                    o['_is_urgent'] = propagated_priority.get(o.get('id'), 0) == 1
-            else:
-                for o in orders:
-                    o['_propagated_priority'] = o.get('priority', 0)
-                    o['_is_urgent'] = o.get('priority', 0) == 1
-            
-            # PROPAGATION BASÉE SUR LES DATES DE BESOIN
-            # Si un OF a une date de besoin et dépend d'un autre OF pour la matière,
-            # l'OF producteur doit être planifié en priorité pour permettre au consommateur de respecter sa deadline
-            logger.info("\n📆 ANALYSE DES DÉPENDANCES MATIÈRE POUR DATES DE BESOIN:")
-            
-            # Construire la liste des besoins matière par OF
-            material_dependencies = {}  # {consumer_of: [{article, producer_of, due_date}]}
-            
-            for order in orders:
-                order_id = order.get('id')
-                due_date_str = order.get('due_date')
-                if not due_date_str:
-                    continue
+                # Marquer les OFs producteurs comme "critiques" pour la planification
+                # Ils devront être planifiés en priorité pour respecter les deadlines des consommateurs
                 
-                try:
-                    due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
-                except:
-                    continue
-                
-                # Trouver les opérations de cet OF et leurs besoins matière
-                order_ops = [op for op in operations if op.get('order_id') == order_id]
-                
-                for op in order_ops:
-                    op_id = op.get('id')
-                    materials = self.material_manager.get_operation_materials(op_id)
-                    
-                    for mat in materials:
-                        article_needed = mat.article_composant_id
-                        qty_needed = mat.quantity
+                for consumer_of, deps in material_dependencies.items():
+                    for dep in deps:
+                        producer_of = dep['producer_of']
+                        due_date = dep['due_date']
                         
-                        # Vérifier si cet article est fabriqué par un autre OF
-                        if article_needed in article_producers:
-                            # IMPORTANT: Ne propager la priorité que si le stock projeté est INSUFFISANT
-                            # Le stock projeté au moment du démarrage de l'opération consommatrice
-                            # doit être vérifié SANS compter les productions de cet OF
-                            
-                            # Estimer la date de démarrage de l'opération consommatrice
-                            # Pour simplifier, on utilise le scheduling_start + un délai estimé
-                            estimated_start = self.scheduling_start
-                            
-                            # Calculer le stock projeté à cette date (hors productions non encore planifiées)
-                            projected_stock = self.material_manager.get_projected_stock(article_needed, estimated_start)
-                            
-                            # Si le stock projeté est suffisant, pas besoin de propager la priorité
-                            if projected_stock >= qty_needed:
-                                logger.info(f"   ✓ {order_id}/{op_id}: stock projeté de {article_needed} suffisant ({projected_stock} >= {qty_needed}) - pas de propagation")
-                                continue
-                            
-                            # Stock insuffisant - propager la priorité vers le producteur
-                            for producer_of in article_producers[article_needed]:
-                                if producer_of != order_id:
-                                    if order_id not in material_dependencies:
-                                        material_dependencies[order_id] = []
-                                    material_dependencies[order_id].append({
-                                        'article': article_needed,
-                                        'producer_of': producer_of,
-                                        'due_date': due_date,
-                                        'operation_id': op_id,
-                                        'qty_needed': qty_needed,
-                                        'projected_stock': projected_stock
-                                    })
-                                    logger.info(f"   📦 {order_id} (besoin: {due_date.strftime('%d/%m %H:%M')}) dépend de {producer_of} pour {article_needed} (stock={projected_stock} < besoin={qty_needed})")
-            
-            # Marquer les OFs producteurs comme "critiques" pour la planification
-            # Ils devront être planifiés en priorité pour respecter les deadlines des consommateurs
-            critical_producers = {}  # {producer_of: earliest_deadline}
-            
-            for consumer_of, deps in material_dependencies.items():
-                for dep in deps:
-                    producer_of = dep['producer_of']
-                    due_date = dep['due_date']
-                    
-                    if producer_of not in critical_producers or due_date < critical_producers[producer_of]:
-                        critical_producers[producer_of] = due_date
-            
-            # Mettre à jour les ordres avec les infos de criticité
-            for order in orders:
-                order_id = order.get('id')
-                if order_id in critical_producers:
-                    order['_critical_for_deadline'] = critical_producers[order_id].isoformat()
-                    order['_is_critical_producer'] = True
-                    logger.info(f"   🔴 {order_id} marqué CRITIQUE (doit finir avant {critical_producers[order_id].strftime('%d/%m %H:%M')} pour un OF consommateur)")
-                else:
-                    order['_critical_for_deadline'] = None
-                    order['_is_critical_producer'] = False
+                        if producer_of not in critical_producers or due_date < critical_producers[producer_of]:
+                            critical_producers[producer_of] = due_date
+                
+                # Mettre à jour les ordres avec les infos de criticité
+                for order in orders:
+                    order_id = order.get('id')
+                    if order_id in critical_producers:
+                        order['_critical_for_deadline'] = critical_producers[order_id].isoformat()
+                        order['_is_critical_producer'] = True
+                        logger.info(f"   🔴 {order_id} marqué CRITIQUE (doit finir avant {critical_producers[order_id].strftime('%d/%m %H:%M')} pour un OF consommateur)")
+                    else:
+                        order['_critical_for_deadline'] = None
+                        order['_is_critical_producer'] = False
             
             # PHASE 1.5: AUTO-ASSIGNATION DES MACHINES
             if auto_assign_machines and not ignore_rules:
@@ -1367,7 +1399,16 @@ class SchedulerEngine:
                 'objective_value': solver.objective_value if status in [cp_model.OPTIMAL, cp_model.FEASIBLE] else None,
                 'scheduling_start': self.scheduling_start.isoformat(),
                 'material_iteration': current_iteration,
-                'scheduling_strategy': scheduling_strategy  # Stocker la stratégie utilisée
+                'scheduling_strategy': scheduling_strategy,  # Stocker la stratégie utilisée
+                # Options avancées actives pour le diagnostic
+                'active_options': {
+                    'ignore_rules': ignore_rules,
+                    'ignore_material': ignore_material,
+                    'ignore_calendars': ignore_calendars,
+                    'ignore_priorities': ignore_priorities,
+                    'ignore_priority_propagation': ignore_priority_propagation,
+                    'ignore_material_propagation': ignore_material_propagation
+                }
             }
             
             # Extraire la solution
