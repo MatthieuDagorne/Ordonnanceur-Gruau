@@ -286,13 +286,20 @@ class MachineAssigner:
         if article_data:
             logger.info(f"    - article_data:        width={article_data.get('width')}, thickness={article_data.get('thickness')}")
         
-        allowed_machines, forbidden_machines, rules_diag = self.rules_engine.get_allowed_machines(
-            tache_id or '',
-            centre_de_charge_id,
-            candidate_machines,
-            article_id,  # article_id DEPUIS L'ORDRE!
-            article_data  # Données complètes pour règles sur attributs
-        )
+        # Si rules_engine est None (mode ignore_rules), toutes les machines du centre sont autorisées
+        if self.rules_engine is None:
+            logger.info(f"  [MODE SANS REGLES] Toutes les machines du centre sont autorisées")
+            allowed_machines = [{**m, 'preference_score': 0, 'rule_reasons': []} for m in candidate_machines]
+            forbidden_machines = []
+            rules_diag = {'applicable_rules': []}
+        else:
+            allowed_machines, forbidden_machines, rules_diag = self.rules_engine.get_allowed_machines(
+                tache_id or '',
+                centre_de_charge_id,
+                candidate_machines,
+                article_id,  # article_id DEPUIS L'ORDRE!
+                article_data  # Données complètes pour règles sur attributs
+            )
         
         diagnostic['regles_applicables'] = [
             f"{r['name']} ({r['type']})" for r in rules_diag.get('applicable_rules', [])
@@ -409,12 +416,15 @@ class MachineAssigner:
         logger.info(f"Clé de jointure: order_id")
         logger.info(f"Total opérations: {len(operations)}")
         logger.info(f"Total ordres: {len(orders)}")
+        logger.info(f"Mode règles: {'ACTIVÉ' if self.rules_engine else 'DÉSACTIVÉ (ignore_rules)'}")
         logger.info("#"*80)
         
         # Index des ordres par order_id (clé de jointure)
         orders_by_id = {o.get('id'): o for o in orders}
         
-        self.rules_engine.clear_applied_rules_log()
+        # Nettoyer le log des règles si rules_engine est disponible
+        if self.rules_engine:
+            self.rules_engine.clear_applied_rules_log()
         
         stats = {
             'assigned': 0, 
@@ -524,5 +534,5 @@ class MachineAssigner:
             'total_operations': len(operations),
             'failure_causes': stats['by_failure_cause'],
             'diagnostics_table': diagnostics_table,
-            'rules_diagnostics': self.rules_engine.get_diagnostics()
+            'rules_diagnostics': self.rules_engine.get_diagnostics() if self.rules_engine else {}
         }

@@ -723,11 +723,13 @@ class SchedulerEngine:
                 machine_centres_after = set(m.get('centre_de_charge_id') for m in machines if m.get('centre_de_charge_id'))
                 logger.info(f"   Total machines après ajout: {len(machines)} - Centres couverts: {len(machine_centres_after)}")
             
-            if auto_assign_machines and not ignore_rules:
+            # L'auto-assignation est TOUJOURS nécessaire si les opérations n'ont pas de machine
+            # La condition ignore_rules ne doit pas bloquer l'assignation de base
+            if auto_assign_machines:
                 logger.info("\n🤖 Auto-assignation des machines activée")
                 # IMPORTANT: Recréer le MachineAssigner APRÈS l'ajout des machines virtuelles
                 # pour que l'index machines_by_centre soit à jour
-                assigner = MachineAssigner(machines, rules_engine)
+                assigner = MachineAssigner(machines, rules_engine if not ignore_rules else None)
                 assignment_result = assigner.assign_machines_to_operations(operations, orders)
                 self.diagnostics.report['machine_assignment'] = assignment_result
                 
