@@ -214,6 +214,40 @@ Response: {
 GET /api/projected-stock/{scenario_id}?article_id=XXX
 ```
 
+### Phase 10 - Options Avancées du Solveur (17 décembre 2025) ✅
+
+#### 10.1 Nouvelles Options de Diagnostic ✅
+| Option | Description | Effet |
+|--------|-------------|-------|
+| `ignore_priorities` | Ignorer les priorités des OF | Tous les OFs traités avec priority=0 |
+| `ignore_priority_propagation` | Ignorer la propagation de priorité | Seules les priorités originales sont conservées |
+| `ignore_material_propagation` | Ignorer la propagation matière | Les dépendances entre OFs ne sont pas analysées |
+
+**Objectif** : Permettre à l'utilisateur de désactiver sélectivement des contraintes pour diagnostiquer pourquoi certaines opérations ne sont pas planifiées.
+
+#### 10.2 UI Options Avancées ✅
+- Section "Options Avancées" dans la page `/scheduling`
+- **Contraintes à Ignorer** : 4 checkboxes (règles métier, priorités, matière, calendriers)
+- **Propagations** : 2 checkboxes (priorité vers fournisseurs, dépendances matière)
+- **Logique de désactivation** : Si "Ignorer les priorités" est coché, "Ignorer propagation priorité" est automatiquement désactivé
+- **Section "Contraintes Appliquées"** : Affichage en temps réel des contraintes actives avec icônes vertes/grises
+
+#### 10.3 Backend - Logique Conditionnelle ✅
+- Options lues dans `scheduler_engine.py` (lignes 405-412)
+- **Phase 1.4** : Propagation de priorité conditionnée par `ignore_priorities` et `ignore_priority_propagation`
+- **Propagation matière** : Conditionnée par `ignore_material_propagation`
+- **Logs détaillés** : Messages "🚫 PRIORITÉS IGNORÉES" et "🚫 PROPAGATION MATIÈRE DÉSACTIVÉE"
+- **Résultat enrichi** : Champ `active_options` dans la réponse du calcul
+
+#### 10.4 Tests Validés ✅
+| Test | Résultat |
+|------|----------|
+| Options transmises au backend | ✅ Toutes les 6 options |
+| Options retournées dans le résultat | ✅ Champ `active_options` |
+| Logs du moteur | ✅ Messages conditionnels |
+| UI checkboxes fonctionnels | ✅ 6/6 testés |
+| Désactivation cascade (priorité → propagation) | ✅ |
+
 ## Backlog
 
 ### P3 - À Faire
