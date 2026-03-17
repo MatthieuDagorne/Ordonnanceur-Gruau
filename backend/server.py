@@ -97,7 +97,7 @@ def read_csv_auto(contents: bytes) -> pd.DataFrame:
             )
             logger.info(f"📄 CSV lu avec séparateur '{separator}', décimales '{decimal_char}', encodage '{encoding}'")
             return df
-        except Exception as e:
+        except Exception:
             continue
     
     # Fallback sans conversion décimale
@@ -1401,8 +1401,12 @@ async def create_scenario(scenario: Scenario):
 
 @api_router.get("/scenarios", response_model=List[Scenario])
 async def get_scenarios():
-    scenarios = await db.scenarios.find({}, {"_id": 0}).to_list(1000)
-    return scenarios
+    try:
+        scenarios = await db.scenarios.find({}, {"_id": 0}).to_list(1000)
+        return scenarios
+    except Exception as e:
+        logger.error(f"Erreur lors du chargement des scénarios: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur de base de données: {str(e)}")
 
 # IMPORTANT: Cette route doit être AVANT /scenarios/{scenario_id}
 @api_router.get("/scenarios/compare")
@@ -1691,6 +1695,109 @@ async def import_manufacturing_orders(file: UploadFile = File(...)):
         logger.error(f"Import error: {str(e)}", exc_info=True)
         return ImportResult(success=False, message=str(e))
 
+
+async def _create_missing_centres_de_charge(df: pd.DataFrame, db) -> int:
+    """
+    Crée automatiquement les centres de charge manquants à partir des données d'opérations ERP.
+    
+    Args:
+        df: DataFrame des opérations avec colonnes 'CentreDeCharge' et 'DescriptionCentreDeCharge'
+        db: Base de données
+    
+    Returns:
+        Nombre de centres de charge créés
+    
+    Notes:
+        - Ne modifie pas les centres de charge existants
+        - Crée seulement si le centre n'existe pas
+        - Utilise DescriptionCentreDeCharge si disponible
+    """
+    if 'CentreDeCharge' not in df.columns:
+        return 0
+    
+    # Obtenir les centres de charge uniques du CSV
+    unique_centres = df[['CentreDeCharge']].drop_duplicates()
+    
+    # Ajouter la description si disponible
+    if 'DescriptionCentreDeCharge' in df.columns:
+        # Prendre la première description non vide pour chaque centre
+        centre_descriptions = df.dropna(subset=['DescriptionCentreDeCharge'])[['CentreDeCharge', 'DescriptionCentreDeCharge']].drop_duplicates('CentreDeCharge')
+        unique_centres = unique_centres.merge(centre_descriptions, on='CentreDeCharge', how='left')
+    
+    centres_created = 0
+    
+    for _, row in unique_centres.iterrows():
+        centre_id = str(row['CentreDeCharge']) if pd.notna(row['CentreDeCharge']) else None
+        if not centre_id:
+            continue
+        
+        # Vérifier si le centre existe déjà
+        existing = await db.centres_de_charge.find_one({"id": centre_id})
+        if existing:
+            continue  # Ne pas écraser un centre existant
+        
+        # Créer le nouveau centre de charge
+        description = ''
+        if 'DescriptionCentreDeCharge' in row and pd.notna(row.get('DescriptionCentreDeCharge')):
+            description = str(row['DescriptionCentreDeCharge'])
+        
+        new_centre = {
+            "id": centre_id,
+            "nom": description or centre_id,  # Utiliser la description comme nom si disponible
+            "description": description,
+            "calendar_id": None,  # À compléter manuellement
+            "capacite_horaire": 1.0,
+            "auto_created": True  # Marqueur pour savoir que c'est une création automatique
+        }
+        
+        await db.centres_de_charge.insert_one(new_centre)
+        logger.info(f"   🏭 Centre de charge créé: {centre_id} ({description or 'sans description'})")
+        centres_created += 1
+    
+    return centres_created
+
+
+async def _create_missing_centres_from_internal_format(df: pd.DataFrame, db) -> int:
+    """
+    Crée automatiquement les centres de charge manquants à partir du format interne.
+    
+    Args:
+        df: DataFrame des opérations avec colonne 'centre_de_charge_id'
+        db: Base de données
+    
+    Returns:
+        Nombre de centres de charge créés
+    """
+    if 'centre_de_charge_id' not in df.columns:
+        return 0
+    
+    unique_centres = df['centre_de_charge_id'].dropna().unique()
+    centres_created = 0
+    
+    for centre_id in unique_centres:
+        centre_id = str(centre_id)
+        
+        # Vérifier si le centre existe déjà
+        existing = await db.centres_de_charge.find_one({"id": centre_id})
+        if existing:
+            continue
+        
+        new_centre = {
+            "id": centre_id,
+            "nom": centre_id,
+            "description": "",
+            "calendar_id": None,
+            "capacite_horaire": 1.0,
+            "auto_created": True
+        }
+        
+        await db.centres_de_charge.insert_one(new_centre)
+        logger.info(f"   🏭 Centre de charge créé: {centre_id}")
+        centres_created += 1
+    
+    return centres_created
+
+
 @api_router.post("/import/operations", response_model=ImportResult)
 async def import_operations(file: UploadFile = File(...)):
     """
@@ -1705,6 +1812,8 @@ async def import_operations(file: UploadFile = File(...)):
     - id = order_id + "_" + operation_seq
     - production_time_minutes = run_time_unit × remaining_quantity
     - transfer_time_minutes converti selon l'unité (Jours×1440, Heures×60)
+    
+    NOUVEAU: Création automatique des centres de charge manquants
     """
     try:
         previous_count = await db.operations.count_documents({})
@@ -1719,6 +1828,11 @@ async def import_operations(file: UploadFile = File(...)):
         if is_erp_format:
             logger.info("📄 Format ERP détecté - transformation en cours...")
             records = transform_operations(df)
+            
+            # NOUVEAU: Créer automatiquement les centres de charge manquants
+            centres_created = await _create_missing_centres_de_charge(df, db)
+            if centres_created > 0:
+                logger.info(f"🏭 {centres_created} centres de charge créés automatiquement")
         else:
             # Format interne (ancien format)
             logger.info("📄 Format interne détecté")
@@ -1732,6 +1846,12 @@ async def import_operations(file: UploadFile = File(...)):
                     record['transfer_time_minutes'] = 0
                 else:
                     record['transfer_time_minutes'] = int(record['transfer_time_minutes'])
+            
+            # Créer les centres de charge à partir du champ centre_de_charge_id si présent
+            if 'centre_de_charge_id' in df.columns:
+                centres_created = await _create_missing_centres_from_internal_format(df, db)
+                if centres_created > 0:
+                    logger.info(f"🏭 {centres_created} centres de charge créés automatiquement")
         
         # Vérifier les doublons
         ids = [r['id'] for r in records]
@@ -2474,9 +2594,9 @@ async def get_gantt_data(scenario_id: str):
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
         materials_by_op = {}
         for mat in operation_materials:
-            # L'id dans operation_materials est au format "ORDER_ID_OPERATION_SEQ" (ex: LV1100001_10)
+            # L'operation_id dans operation_materials est au format "ORDER_ID_OPERATION_SEQ" (ex: LV1100001_10)
             # C'est le même format que operation_id dans les opérations ordonnancées
-            op_id = mat.get('id')
+            op_id = mat.get('operation_id') or mat.get('id')
             if op_id:
                 if op_id not in materials_by_op:
                     materials_by_op[op_id] = []

@@ -32,6 +32,10 @@ export default function GanttInteractive() {
   const [dateRangeStart, setDateRangeStart] = useState(null);
   const [dateRangeEnd, setDateRangeEnd] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  
+  // État pour la section des erreurs collapsible
+  const [errorsExpanded, setErrorsExpanded] = useState(false);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -834,47 +838,6 @@ export default function GanttInteractive() {
         )}
       </div>
 
-      {/* Liste des opérations non planifiées */}
-      {scenario?.schedule_data?.unscheduled_operations?.length > 0 && (
-        <div className="p-4 rounded-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--status-error)' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircle size={18} style={{ color: 'var(--status-error)' }} />
-            <h3 className="font-semibold" style={{ color: 'var(--status-error)' }}>
-              Opérations non planifiables ({scenario.schedule_data.unscheduled_count})
-            </h3>
-          </div>
-          <div className="space-y-2">
-            {scenario.schedule_data.unscheduled_operations.map((op, idx) => (
-              <div 
-                key={idx}
-                className="flex items-center justify-between p-3 rounded-lg"
-                style={{ backgroundColor: 'var(--bg-elevated)' }}
-              >
-                <div>
-                  <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {op.operation_id}
-                  </span>
-                  <span className="ml-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-                    (OF {op.order_id})
-                  </span>
-                </div>
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  {op.reason}
-                </div>
-                {op.blocking_components?.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <Package size={14} style={{ color: 'var(--status-error)' }} />
-                    <span className="text-sm font-mono" style={{ color: 'var(--status-error)' }}>
-                      {op.blocking_components.join(', ')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Gantt Chart */}
       <div 
         className="rounded-lg overflow-hidden"
@@ -1162,25 +1125,41 @@ export default function GanttInteractive() {
                 <div className="flex items-center gap-2 mb-2">
                   <Package size={14} style={{ color: 'var(--text-muted)' }} />
                   <span className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>
-                    Matières premières
+                    Matières premières ({hoveredTask.materials.length})
                   </span>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {hoveredTask.materials.map((mat, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-xs">
-                      <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>
-                        {mat.article_id}
-                      </span>
-                      <span 
-                        className="font-mono px-1.5 py-0.5 rounded"
-                        style={{ 
-                          backgroundColor: mat.available ? 'var(--status-success-bg)' : 'var(--status-error-bg)',
-                          color: mat.available ? 'var(--status-success)' : 'var(--status-error)'
-                        }}
-                      >
-                        {mat.in_stock} / {mat.needed}
-                        {mat.available ? ' ✓' : ' ✗'}
-                      </span>
+                    <div key={idx} className="p-1.5 rounded" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {mat.article_id}
+                        </span>
+                        <span 
+                          className="font-mono px-1.5 py-0.5 rounded"
+                          style={{ 
+                            backgroundColor: mat.available ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: mat.available ? 'var(--status-success)' : 'var(--status-error)'
+                          }}
+                        >
+                          {mat.available ? '✓ Dispo' : '✗ Manque'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                        <div>
+                          <span>Qté requise: </span>
+                          <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{mat.needed}</span>
+                        </div>
+                        <div>
+                          <span>En stock: </span>
+                          <span className="font-mono" style={{ color: mat.in_stock >= mat.needed ? 'var(--status-success)' : 'var(--status-error)' }}>{mat.in_stock}</span>
+                        </div>
+                      </div>
+                      {mat.magasin && (
+                        <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                          Magasin: <span style={{ color: 'var(--text-secondary)' }}>{mat.magasin}</span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1242,6 +1221,277 @@ export default function GanttInteractive() {
               </ul>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* NOUVELLE SECTION: Opérations non planifiables (collapsible, agrégée) */}
+      {scenario?.schedule_data?.unscheduled_operations?.length > 0 && (
+        <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--status-error)' }}>
+          {/* Résumé avec bouton pour déplier */}
+          <button
+            onClick={() => setErrorsExpanded(!errorsExpanded)}
+            className="w-full p-4 flex items-center justify-between hover:bg-opacity-80 transition-colors"
+            style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)' }}
+            data-testid="errors-toggle"
+          >
+            <div className="flex items-center gap-3">
+              <AlertCircle size={20} style={{ color: 'var(--status-error)' }} />
+              <div className="text-left">
+                <h4 className="font-semibold" style={{ color: 'var(--status-error)' }}>
+                  {scenario.schedule_data.unscheduled_operations.length} opération(s) non planifiable(s)
+                </h4>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {(() => {
+                    const ops = scenario.schedule_data.unscheduled_operations;
+                    const uniqueOrders = [...new Set(ops.map(op => op.order_id))].length;
+                    const reasons = {};
+                    ops.forEach(op => {
+                      const reason = op.reason?.includes('machine') ? 'Machine manquante' :
+                                     op.reason?.includes('matière') ? 'Matière insuffisante' :
+                                     op.reason?.includes('calendrier') ? 'Contrainte calendrier' :
+                                     'Autre';
+                      reasons[reason] = (reasons[reason] || 0) + 1;
+                    });
+                    const mainReason = Object.entries(reasons).sort((a, b) => b[1] - a[1])[0];
+                    return `${uniqueOrders} OF(s) concerné(s) • Cause principale: ${mainReason?.[0] || 'Inconnue'} (${mainReason?.[1] || 0})`;
+                  })()}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                {errorsExpanded ? 'Masquer' : 'Voir le détail'}
+              </span>
+              <svg 
+                className={`w-5 h-5 transition-transform ${errorsExpanded ? 'rotate-180' : ''}`}
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </button>
+
+          {/* Détail collapsible agrégé par OF */}
+          {errorsExpanded && (
+            <div className="p-4 space-y-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+              {(() => {
+                // Agréger par OF
+                const byOrder = {};
+                scenario.schedule_data.unscheduled_operations.forEach(op => {
+                  if (!byOrder[op.order_id]) {
+                    byOrder[op.order_id] = { operations: [], reasons: new Set() };
+                  }
+                  byOrder[op.order_id].operations.push(op);
+                  if (op.reason) byOrder[op.order_id].reasons.add(op.reason);
+                });
+
+                return Object.entries(byOrder).map(([orderId, data]) => (
+                  <div 
+                    key={orderId}
+                    className="p-3 rounded-lg"
+                    style={{ backgroundColor: 'var(--bg-sunken)' }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        OF {orderId}
+                      </span>
+                      <span className="text-sm px-2 py-0.5 rounded" style={{ backgroundColor: 'var(--status-error)', color: 'white' }}>
+                        {data.operations.length} opération(s)
+                      </span>
+                    </div>
+                    <div className="text-sm space-y-1" style={{ color: 'var(--text-secondary)' }}>
+                      {[...data.reasons].map((reason, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span>•</span>
+                          <span>{reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {data.operations.map((op, idx) => (
+                        <span 
+                          key={idx}
+                          className="text-xs px-1.5 py-0.5 rounded font-mono"
+                          style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
+                        >
+                          {op.operation_id?.split('_')[1] || op.operation_id}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION DIAGNOSTIC détaillée */}
+      {scenario?.schedule_data?.scheduling_stats && (
+        <div className="rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <button
+            onClick={() => setDiagnosticsExpanded(!diagnosticsExpanded)}
+            className="w-full p-4 flex items-center justify-between hover:bg-opacity-80 transition-colors"
+            data-testid="diagnostics-toggle"
+          >
+            <div className="flex items-center gap-3">
+              <FileText size={20} style={{ color: 'var(--accent-primary)' }} />
+              <div className="text-left">
+                <h4 className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Diagnostic du calcul
+                </h4>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {scenario.schedule_data.scheduling_stats.operations_scheduled} planifiées sur {scenario.schedule_data.scheduling_stats.total_operations_input} • 
+                  Taux remplissage: {scenario.schedule_data.scheduling_stats.global_utilization_percent}% •
+                  Temps: {scenario.schedule_data.scheduling_stats.actual_solver_time}s / {scenario.schedule_data.scheduling_stats.max_solver_time_configured}s max
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                {diagnosticsExpanded ? 'Masquer' : 'Voir le détail'}
+              </span>
+              <svg 
+                className={`w-5 h-5 transition-transform ${diagnosticsExpanded ? 'rotate-180' : ''}`}
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </button>
+
+          {diagnosticsExpanded && (
+            <div className="p-4 space-y-4" style={{ borderTop: '1px solid var(--border-default)' }}>
+              {/* Stats principales */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Opérations candidates</p>
+                  <p className="text-xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {scenario.schedule_data.scheduling_stats.total_operations_input}
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Planifiées</p>
+                  <p className="text-xl font-bold font-mono" style={{ color: 'var(--status-success)' }}>
+                    {scenario.schedule_data.scheduling_stats.operations_scheduled}
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Bloquées</p>
+                  <p className="text-xl font-bold font-mono" style={{ color: 'var(--status-error)' }}>
+                    {scenario.schedule_data.scheduling_stats.operations_blocked}
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Retardées (matière)</p>
+                  <p className="text-xl font-bold font-mono" style={{ color: 'var(--status-warning)' }}>
+                    {scenario.schedule_data.scheduling_stats.operations_material_delayed}
+                  </p>
+                </div>
+              </div>
+
+              {/* Temps et performance */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Durée max configurée</p>
+                  <p className="text-lg font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {scenario.schedule_data.scheduling_stats.max_solver_time_configured}s
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Durée réelle</p>
+                  <p className="text-lg font-bold font-mono" style={{ color: 'var(--accent-primary)' }}>
+                    {scenario.schedule_data.scheduling_stats.actual_solver_time}s
+                  </p>
+                </div>
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>
+                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Taux remplissage global</p>
+                  <p className="text-lg font-bold font-mono" style={{ color: scenario.schedule_data.scheduling_stats.global_utilization_percent > 70 ? 'var(--status-success)' : 'var(--status-warning)' }}>
+                    {scenario.schedule_data.scheduling_stats.global_utilization_percent}%
+                  </p>
+                </div>
+              </div>
+
+              {/* Raisons de blocage */}
+              {scenario.schedule_data.scheduling_stats.blocked_reasons_summary && 
+               Object.keys(scenario.schedule_data.scheduling_stats.blocked_reasons_summary).length > 0 && (
+                <div>
+                  <h5 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Causes de blocage</h5>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(scenario.schedule_data.scheduling_stats.blocked_reasons_summary).map(([reason, count]) => (
+                      <div 
+                        key={reason}
+                        className="px-3 py-1.5 rounded-full text-sm"
+                        style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--status-error)' }}
+                      >
+                        {reason === 'machine_missing' ? 'Machine manquante' :
+                         reason === 'material_shortage' ? 'Matière insuffisante' :
+                         reason === 'calendar_constraint' ? 'Contrainte calendrier' :
+                         reason === 'business_rule' ? 'Règle métier' : reason}: <strong>{count}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Options actives */}
+              {scenario.schedule_data.active_options && (
+                <div>
+                  <h5 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Options actives</h5>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(scenario.schedule_data.active_options).map(([option, value]) => (
+                      <div 
+                        key={option}
+                        className="px-2 py-1 rounded text-xs font-mono"
+                        style={{ 
+                          backgroundColor: value ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-sunken)',
+                          color: value ? 'var(--status-success)' : 'var(--text-muted)'
+                        }}
+                      >
+                        {option}: {value ? 'OUI' : 'NON'}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Utilisation machine */}
+              {scenario.schedule_data.scheduling_stats.machine_utilization && 
+               Object.keys(scenario.schedule_data.scheduling_stats.machine_utilization).length > 0 && (
+                <div>
+                  <h5 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Utilisation par machine</h5>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {Object.entries(scenario.schedule_data.scheduling_stats.machine_utilization)
+                      .sort((a, b) => b[1].utilization_percent - a[1].utilization_percent)
+                      .slice(0, 8)
+                      .map(([machineId, stats]) => (
+                        <div 
+                          key={machineId}
+                          className="p-2 rounded text-sm"
+                          style={{ backgroundColor: 'var(--bg-sunken)' }}
+                        >
+                          <div className="font-mono font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {machineId}
+                          </div>
+                          <div className="flex justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+                            <span>{stats.operations_count} ops</span>
+                            <span style={{ color: stats.utilization_percent > 70 ? 'var(--status-success)' : 'var(--status-warning)' }}>
+                              {stats.utilization_percent}%
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -438,7 +438,7 @@ class SchedulerEngine:
         now_paris = datetime.now(PARIS_TZ)
         self.scheduling_start = now_paris.replace(second=0, microsecond=0) + timedelta(minutes=1)
         
-        logger.info(f"\n🕐 TIMEZONE: Europe/Paris")
+        logger.info("\n🕐 TIMEZONE: Europe/Paris")
         logger.info(f"   Heure de planification: {self.scheduling_start.strftime('%d/%m/%Y %H:%M')}")
         
         # Initialiser le diagnostic
@@ -941,7 +941,7 @@ class SchedulerEngine:
                 elif len(intervals) == 1:
                     logger.info(f"   ○ Machine {machine_id}: 1 seule opération (pas de contrainte)")
             
-            # CONTRAINTES DE CALENDRIER: Interdire les plages hors horaires de travail
+            # CONTRAINTES DE CALENDRIER: Restreindre les opérations aux plages de travail
             calendar_constraints_count = 0
             if self.calendar_manager and not ignore_calendars:
                 logger.info("\n📌 CONTRAINTES DE CALENDRIER:")
@@ -949,35 +949,84 @@ class SchedulerEngine:
                 for machine_id, intervals_data in machine_to_intervals.items():
                     calendar = self.calendar_manager.get_calendar_for_machine(machine_id)
                     working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
-                    start_hour = calendar.get('start_hour', 0)
-                    end_hour = calendar.get('end_hour', 24)
+                    
+                    # Récupérer les heures de travail
+                    start_time_str = calendar.get('start_time', '')
+                    end_time_str = calendar.get('end_time', '')
+                    
+                    if start_time_str and ':' in start_time_str:
+                        parts = start_time_str.split(':')
+                        work_start_hour = int(parts[0])
+                        work_start_min = int(parts[1]) if len(parts) > 1 else 0
+                    else:
+                        work_start_hour = calendar.get('start_hour', 0)
+                        work_start_min = 0
+                    
+                    if end_time_str and ':' in end_time_str:
+                        parts = end_time_str.split(':')
+                        work_end_hour = int(parts[0])
+                        work_end_min = int(parts[1]) if len(parts) > 1 else 0
+                    else:
+                        work_end_hour = calendar.get('end_hour', 24)
+                        work_end_min = 0
+                    
+                    work_start_minutes = work_start_hour * 60 + work_start_min
+                    work_end_minutes = work_end_hour * 60 + work_end_min
+                    daily_work_minutes = work_end_minutes - work_start_minutes
                     
                     # Vérifier si le calendrier est 24/7 (pas de contrainte)
-                    is_24_7 = (working_days == {0, 1, 2, 3, 4, 5, 6} and start_hour == 0 and end_hour >= 23)
-                    
-                    if is_24_7:
+                    if working_days == {0, 1, 2, 3, 4, 5, 6} and work_start_minutes == 0 and work_end_minutes >= 23*60:
                         logger.info(f"   ○ Machine {machine_id}: Calendrier 24/7 (pas de contrainte)")
                         continue
                     
-                    # Calculer les plages horaires interdites
-                    forbidden_slots = self.calendar_manager.calculate_forbidden_time_slots(
-                        machine_id, self.scheduling_start, horizon_days=7
-                    )
+                    # Calculer les plages interdites
+                    forbidden_slots = []
+                    base_date = self.scheduling_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                    
+                    for day_offset in range(21):  # 3 semaines
+                        day_start = base_date + timedelta(days=day_offset)
+                        day_weekday = day_start.weekday()
+                        day_start_min = int((day_start - self.scheduling_start).total_seconds() / 60)
+                        
+                        if day_weekday not in working_days:
+                            # Journée entière non travaillée (week-end)
+                            slot_start = day_start_min
+                            slot_end = day_start_min + 24 * 60
+                            if slot_end > 0 and slot_start < horizon:
+                                forbidden_slots.append((max(0, slot_start), min(slot_end, horizon)))
+                        else:
+                            # Jour travaillé - ajouter MATIN et SOIR
+                            if work_start_minutes > 0:
+                                slot_start = day_start_min
+                                slot_end = day_start_min + work_start_minutes
+                                if slot_end > 0 and slot_start < horizon:
+                                    forbidden_slots.append((max(0, slot_start), min(slot_end, horizon)))
+                            
+                            if work_end_minutes < 24 * 60:
+                                slot_start = day_start_min + work_end_minutes
+                                slot_end = day_start_min + 24 * 60
+                                if slot_end > 0 and slot_start < horizon:
+                                    forbidden_slots.append((max(0, slot_start), min(slot_end, horizon)))
                     
                     if not forbidden_slots:
-                        logger.info(f"   ○ Machine {machine_id}: Pas de plages interdites calculées")
                         continue
                     
-                    logger.info(f"   ✓ Machine {machine_id}: {len(forbidden_slots)} plages interdites")
-                    logger.info(f"      Calendrier: jours={list(working_days)}, heures={start_hour}-{end_hour}")
-                    # Log des premières plages pour debug
-                    for i, (fs, fe) in enumerate(forbidden_slots[:3]):
-                        fs_dt = self.scheduling_start + timedelta(minutes=fs)
-                        fe_dt = self.scheduling_start + timedelta(minutes=fe)
-                        logger.info(f"      Plage {i+1}: [{fs}-{fe}] = [{fs_dt.strftime('%d/%m %H:%M')} - {fe_dt.strftime('%d/%m %H:%M')}]")
+                    # Fusionner les plages adjacentes
+                    forbidden_slots.sort()
+                    merged_slots = []
+                    for slot in forbidden_slots:
+                        if merged_slots and slot[0] <= merged_slots[-1][1]:
+                            merged_slots[-1] = (merged_slots[-1][0], max(merged_slots[-1][1], slot[1]))
+                        else:
+                            merged_slots.append(slot)
                     
-                    # Pour chaque opération sur cette machine, contraindre le début et la fin
-                    # pour éviter les plages interdites
+                    # Séparer week-ends et horaires journaliers
+                    weekend_slots = [(s, e) for s, e in merged_slots if (e - s) >= 24*60]
+                    daily_slots = [(s, e) for s, e in merged_slots if (e - s) < 24*60]
+                    
+                    logger.info(f"   ✓ Machine {machine_id}: {len(weekend_slots)} week-ends, {len(daily_slots)} plages horaires")
+                    logger.info(f"      Horaires: {work_start_hour:02d}:{work_start_min:02d} - {work_end_hour:02d}:{work_end_min:02d} ({daily_work_minutes}min/jour)")
+                    
                     for interval_data in intervals_data:
                         op_id = interval_data['op_id']
                         if op_id not in start_vars or op_id not in end_vars:
@@ -985,20 +1034,25 @@ class SchedulerEngine:
                         
                         start_var = start_vars[op_id]
                         end_var = end_vars[op_id]
+                        op_duration = interval_data['duration']
                         
-                        # Créer les contraintes pour éviter chaque plage interdite
-                        # L'opération entière doit être SOIT avant SOIT après la plage
-                        # Soit end <= slot_start (termine avant la fermeture)
-                        # Soit start >= slot_end (commence après la fermeture)
-                        for slot_start, slot_end in forbidden_slots[:50]:  # Limiter pour performance
-                            b = model.new_bool_var(f'calendar_{op_id}_{slot_start}')
-                            
-                            # Si b=True: L'opération se termine AVANT la plage interdite
+                        # TOUJOURS contraindre les week-ends (plages longues)
+                        for slot_start, slot_end in weekend_slots:
+                            b = model.new_bool_var(f'weekend_{op_id}_{slot_start}')
                             model.add(end_var <= slot_start).only_enforce_if(b)
-                            # Si b=False: L'opération commence APRÈS la plage interdite
                             model.add(start_var >= slot_end).only_enforce_if(b.Not())
-                            
                             calendar_constraints_count += 1
+                        
+                        # Contraindre les horaires journaliers SEULEMENT si l'opération peut tenir dans une journée
+                        # Si l'opération dure plus longtemps que la journée de travail, on la laisse dépasser
+                        if op_duration <= daily_work_minutes:
+                            for slot_start, slot_end in daily_slots:
+                                b = model.new_bool_var(f'daily_{op_id}_{slot_start}')
+                                model.add(end_var <= slot_start).only_enforce_if(b)
+                                model.add(start_var >= slot_end).only_enforce_if(b.Not())
+                                calendar_constraints_count += 1
+                        else:
+                            logger.info(f"      ⚠️  Op {op_id}: durée {op_duration}min > {daily_work_minutes}min/jour - horaires assouplis")
                 
                 logger.info(f"\n   Total: {calendar_constraints_count} contraintes de calendrier")
             else:
@@ -1117,7 +1171,7 @@ class SchedulerEngine:
                             critical_producer_ops.append(op_id)
                 
                 if critical_producer_ops:
-                    logger.info(f"\n   🎯 PRIORISATION DES PRODUCTEURS CRITIQUES:")
+                    logger.info("\n   🎯 PRIORISATION DES PRODUCTEURS CRITIQUES:")
                     logger.info(f"   {len(critical_producer_ops)} opérations de producteurs critiques")
                     
                     # Objectif multi-critères:
@@ -1440,6 +1494,25 @@ class SchedulerEngine:
                         # Temps de transfert vers l'opération suivante
                         transfer_time = op.get('transfer_time_minutes', 0)
                         
+                        # Récupérer les matières premières de l'opération pour l'infobulle
+                        materials_list = []
+                        if self.material_manager:
+                            op_materials = self.material_manager.get_operation_materials(op_id)
+                            for mat in op_materials:
+                                # Calculer le stock disponible à la date de début de l'opération
+                                op_start_datetime = self._minutes_to_datetime(op_start_minutes)
+                                projected_stock = self.material_manager.get_projected_stock(
+                                    mat.article_composant_id, 
+                                    op_start_datetime
+                                )
+                                materials_list.append({
+                                    'article_id': mat.article_composant_id,
+                                    'needed': mat.quantity,
+                                    'in_stock': projected_stock,
+                                    'available': projected_stock >= mat.quantity,
+                                    'magasin': mat.magasin or 'Principal'
+                                })
+                        
                         scheduled_op = {
                             'operation_id': op_id,
                             'order_id': op.get('order_id'),
@@ -1459,14 +1532,16 @@ class SchedulerEngine:
                             'transfer_time_minutes': transfer_time,
                             'is_last_operation': op_id in last_op_of_order,
                             'is_late': False,  # Sera mis à jour après analyse
-                            'lateness_minutes': 0  # Durée du retard en minutes
+                            'lateness_minutes': 0,  # Durée du retard en minutes
+                            # Matières premières pour l'infobulle
+                            'materials': materials_list
                         }
                         scheduled_ops.append(scheduled_op)
                 
                 # POST-TRAITEMENT JIT: Détecter les ordres en retard
                 late_orders = []
                 if scheduling_strategy == 'JIT' and 'jit_due_date_info' in dir():
-                    logger.info(f"\n⏰ ANALYSE DES RETARDS (stratégie JIT):")
+                    logger.info("\n⏰ ANALYSE DES RETARDS (stratégie JIT):")
                     
                     # Index des opérations planifiées par ID
                     scheduled_ops_by_id = {op['operation_id']: op for op in scheduled_ops}
@@ -1509,7 +1584,7 @@ class SchedulerEngine:
                     if late_orders:
                         logger.info(f"   ⚠️ Total: {len(late_orders)} ordre(s) en retard")
                     else:
-                        logger.info(f"   ✅ Tous les ordres respectent leurs dates de besoin")
+                        logger.info("   ✅ Tous les ordres respectent leurs dates de besoin")
                 
                 # POST-TRAITEMENT MATIÈRE: Vérifier les ruptures et replanifier si nécessaire
                 # Continuer tant qu'il reste du temps dans le budget global
@@ -1703,6 +1778,56 @@ class SchedulerEngine:
                 
                 # 4. Ordres en retard (stratégie JIT)
                 result['late_orders'] = late_orders if 'late_orders' in dir() else []
+                
+                # 5. STATISTIQUES DE DIAGNOSTIC DÉTAILLÉES
+                total_elapsed = time.time() - start_time
+                
+                # Grouper les opérations planifiées par machine pour le calcul d'utilisation
+                ops_by_machine = {}
+                for op in scheduled_ops:
+                    m_id = op.get('machine_id')
+                    if m_id:
+                        if m_id not in ops_by_machine:
+                            ops_by_machine[m_id] = []
+                        ops_by_machine[m_id].append(op)
+                
+                # Calculer le taux de remplissage machine
+                machine_utilization = {}
+                total_work_time = 0
+                total_available_time = 0
+                
+                for machine_id, ops in ops_by_machine.items():
+                    ops_sorted = sorted(ops, key=lambda x: x['start_minutes'])
+                    if ops_sorted:
+                        first_start = min(op['start_minutes'] for op in ops_sorted)
+                        last_end = max(op['end_minutes'] for op in ops_sorted)
+                        span = last_end - first_start
+                        work = sum(op['duration_minutes'] for op in ops_sorted)
+                        utilization = (work / span * 100) if span > 0 else 0
+                        machine_utilization[machine_id] = {
+                            'operations_count': len(ops_sorted),
+                            'work_time_minutes': work,
+                            'span_minutes': span,
+                            'utilization_percent': round(utilization, 1)
+                        }
+                        total_work_time += work
+                        total_available_time += span
+                
+                global_utilization = (total_work_time / total_available_time * 100) if total_available_time > 0 else 0
+                
+                result['scheduling_stats'] = {
+                    'max_solver_time_configured': max_solver_time_seconds,
+                    'actual_solver_time': round(solver.wall_time, 2),
+                    'total_elapsed_time': round(total_elapsed, 2),
+                    'iterations_count': current_iteration,
+                    'total_operations_input': len(operations),
+                    'operations_scheduled': len(scheduled_ops),
+                    'operations_blocked': len(blocked_operations),
+                    'operations_material_delayed': len(material_delayed_operations),
+                    'global_utilization_percent': round(global_utilization, 1),
+                    'machine_utilization': machine_utilization,
+                    'blocked_reasons_summary': self._summarize_blocked_reasons(blocked_operations)
+                }
             
             # Log solver result
             self.diagnostics.log_solver_result(
@@ -1772,3 +1897,26 @@ class SchedulerEngine:
             cp_model.UNKNOWN: 'UNKNOWN'
         }
         return status_map.get(status, 'UNKNOWN')
+    
+    def _summarize_blocked_reasons(self, blocked_operations: List[Dict]) -> Dict[str, int]:
+        """Résume les raisons de blocage par catégorie."""
+        reasons_count = {}
+        for blocked in blocked_operations:
+            reason = blocked.get('reason', 'Raison inconnue')
+            # Catégoriser les raisons
+            if 'machine' in reason.lower():
+                category = 'machine_missing'
+            elif 'matière' in reason.lower() or 'material' in reason.lower():
+                category = 'material_shortage'
+            elif 'calendrier' in reason.lower() or 'calendar' in reason.lower():
+                category = 'calendar_constraint'
+            elif 'règle' in reason.lower() or 'rule' in reason.lower():
+                category = 'business_rule'
+            else:
+                category = 'other'
+            
+            if category not in reasons_count:
+                reasons_count[category] = 0
+            reasons_count[category] += 1
+        
+        return reasons_count

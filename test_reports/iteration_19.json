@@ -1,0 +1,85 @@
+{
+  "summary": "Tested all 7 APS improvements for iteration 19. Backend: 11/11 tests passed. Frontend: Gantt diagnostic sections verified. Fixed bug in /api/gantt/data where materials were not being joined due to wrong field name ('id' vs 'operation_id').",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_features.py",
+    "/app/test_reports/pytest/pytest_iteration19.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_iteration19_features.py",
+    "/app/backend/server.py (line 2599: fixed operation_materials join to use 'operation_id' instead of 'id')"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 tests passed)",
+    "frontend": "100% (UI diagnostics, materials tooltip verified)"
+  },
+  "seed_data_creation": "Used existing 'Test Diagnostic UI' scenario (e3d80f33-7685-4ad4-8db9-40a33c6c5bc1)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 7 improvements verified. Materials now display in Gantt tooltip. Diagnostic and error sections are collapsible as expected.",
+  "features_verified": {
+    "1_scenarios_api_no_error": {
+      "description": "API /api/scenarios returns scenarios without error",
+      "status": "VERIFIED",
+      "test": "test_scenarios_endpoint_returns_200"
+    },
+    "2_no_timeout_502": {
+      "description": "Scheduling calculation with max_solver_time_seconds doesn't timeout",
+      "status": "VERIFIED",
+      "test": "test_calculate_scheduling_no_timeout"
+    },
+    "3_scheduling_stats": {
+      "description": "Scheduling result contains 'scheduling_stats' with operations_scheduled, global_utilization_percent, actual_solver_time",
+      "status": "VERIFIED",
+      "test": "test_scheduling_stats_present_in_result",
+      "fields_present": ["operations_scheduled", "global_utilization_percent", "actual_solver_time", "max_solver_time_configured", "total_operations_input", "operations_blocked", "machine_utilization", "blocked_reasons_summary"]
+    },
+    "4_active_options": {
+      "description": "Scheduling result contains 'active_options'",
+      "status": "VERIFIED",
+      "test": "test_active_options_present_in_result",
+      "options": ["ignore_rules", "ignore_material", "ignore_calendars", "ignore_priorities", "ignore_priority_propagation", "ignore_material_propagation"]
+    },
+    "5_materials_in_operations": {
+      "description": "Scheduled operations contain 'materials' field with article_id, needed, in_stock, available, magasin",
+      "status": "VERIFIED",
+      "test": "test_materials_contain_required_fields",
+      "notes": "35 out of 127 operations have materials",
+      "bug_fixed": "Changed mat.get('id') to mat.get('operation_id') in /api/gantt/data endpoint line 2599"
+    },
+    "6_diagnostic_ui": {
+      "description": "Gantt page displays 'Diagnostic du calcul' collapsible section",
+      "status": "VERIFIED",
+      "ui_elements": ["diagnostics-toggle", "errors-toggle"],
+      "content": "Shows operations_scheduled, global_utilization_percent, actual_solver_time, blocked_reasons_summary, active_options, machine_utilization"
+    },
+    "7_auto_create_centres_de_charge": {
+      "description": "Operations import creates missing centres de charge automatically",
+      "status": "VERIFIED",
+      "test": "test_centres_de_charge_created_on_import",
+      "notes": "auto_created flag present on automatically created centres"
+    }
+  },
+  "api_endpoints_tested": [
+    {"endpoint": "GET /api/scenarios", "status": "PASS"},
+    {"endpoint": "GET /api/scenarios/{id}", "status": "PASS"},
+    {"endpoint": "POST /api/scheduling/calculate", "status": "PASS"},
+    {"endpoint": "GET /api/centres-de-charge", "status": "PASS"},
+    {"endpoint": "GET /api/gantt/data/{id}", "status": "PASS", "notes": "Fixed materials join"}
+  ],
+  "ui_elements_tested": [
+    {"selector": "[data-testid='diagnostics-toggle']", "status": "PASS", "notes": "Collapsible Diagnostic du calcul section"},
+    {"selector": "[data-testid='errors-toggle']", "status": "PASS", "notes": "Collapsible 30 opérations non planifiables section"},
+    {"selector": "Tooltip materials section", "status": "PASS", "notes": "Shows MATIÈRES PREMIÈRES with article_id, needed, in_stock, available status"}
+  ]
+}

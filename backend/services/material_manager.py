@@ -33,6 +33,7 @@ class MaterialRequirement:
     operation_seq: int
     article_composant_id: str
     quantity: float
+    magasin: str = ""  # Entrepôt/magasin source
 
 
 @dataclass
@@ -119,7 +120,8 @@ class MaterialManager:
                     order_id=mat.get('order_id', ''),
                     operation_seq=mat.get('operation_id', 0),
                     article_composant_id=mat.get('article_composant_id', ''),
-                    quantity=mat.get('due_quantity') or mat.get('quantity', 0)
+                    quantity=mat.get('due_quantity') or mat.get('quantity', 0),
+                    magasin=mat.get('warehouse_id', '') or mat.get('magasin', '')
                 ))
         
         # Réceptions planifiées
