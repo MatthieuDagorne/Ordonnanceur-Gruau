@@ -326,7 +326,7 @@ class SchedulerEngine:
     
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
         """
-        Parse une date/heure en datetime.
+        Parse une date/heure en datetime avec timezone Europe/Paris.
         Supporte: YYYY-MM-DDTHH:MM:SS, YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
         """
         if not date_str:
@@ -336,12 +336,20 @@ class SchedulerEngine:
             if 'T' in date_str:
                 if '+' in date_str or 'Z' in date_str:
                     date_str = date_str.replace('Z', '+00:00')
-                    return datetime.fromisoformat(date_str)
-                return datetime.fromisoformat(date_str)
+                    dt = datetime.fromisoformat(date_str)
+                    # Convertir en timezone Paris
+                    return dt.astimezone(PARIS_TZ)
+                dt = datetime.fromisoformat(date_str)
+                # Ajouter timezone si absente
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=PARIS_TZ)
+                return dt
             elif ' ' in date_str:
-                return datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                return dt.replace(tzinfo=PARIS_TZ)
             else:
-                return datetime.strptime(date_str, '%Y-%m-%d')
+                dt = datetime.strptime(date_str, '%Y-%m-%d')
+                return dt.replace(tzinfo=PARIS_TZ)
         except Exception as e:
             logger.warning(f"Impossible de parser la date '{date_str}': {e}")
             return None
@@ -787,8 +795,13 @@ class SchedulerEngine:
                 priority = op.get('_priority', 0)
                 if date_besoin:
                     dt = self._parse_datetime(date_besoin)
-                    return (dt or datetime.max, -priority)
-                return (datetime.max, -priority)
+                    if dt:
+                        # S'assurer que la date a une timezone pour la comparaison
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=PARIS_TZ)
+                        return (dt, -priority)
+                # Utiliser une date max avec timezone pour la comparaison
+                return (datetime.max.replace(tzinfo=PARIS_TZ), -priority)
             
             valid_operations.sort(key=get_sort_key)
             
@@ -821,10 +834,14 @@ class SchedulerEngine:
             interval_vars = {}
             machine_to_intervals = {}
             
+            # Convertir l'horizon en entier
+            horizon = int(horizon)
+            
             # Créer les variables pour chaque opération valide
             for op in valid_operations:
                 op_id = op.get('id')
-                duration = op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0)
+                # OR-Tools nécessite des entiers - arrondir la durée
+                duration = int(op.get('production_time_minutes', 60) + op.get('setup_time_minutes', 0))
                 
                 # CONTRAINTE MATIÈRE: Date minimum de début
                 # IMPORTANT: N'utiliser que les contraintes des itérations précédentes
@@ -837,7 +854,7 @@ class SchedulerEngine:
                 if op_id in material_date_constraints:
                     # Contrainte des itérations précédentes (date de production réelle)
                     min_date = material_date_constraints[op_id]
-                    min_start = self._datetime_to_minutes(min_date)
+                    min_start = int(self._datetime_to_minutes(min_date))
                     min_start = max(0, min_start)
                     min_date_source = f"itération précédente ({min_date.strftime('%d/%m %H:%M')})"
                 
@@ -1015,7 +1032,8 @@ class SchedulerEngine:
                     op2_id = op2.get('id')
                     
                     # Récupérer le temps de transfert de l'opération 1 (temps pour aller vers op2)
-                    transfer_time = op1.get('transfer_time_minutes', 0)
+                    # OR-Tools nécessite des entiers
+                    transfer_time = int(op1.get('transfer_time_minutes', 0))
                     
                     if op1_id in end_vars and op2_id in start_vars:
                         # Vérifier si op2 a une contrainte matière
@@ -1181,7 +1199,8 @@ class SchedulerEngine:
                 for order_id, last_op_info in last_ops_per_order.items():
                     op_id = last_op_info['op_id']
                     order = orders_by_id.get(order_id, {})
-                    transfer_time = last_op_info['transfer_time']
+                    # OR-Tools nécessite des entiers
+                    transfer_time = int(last_op_info['transfer_time'])
                     
                     # Déterminer la date cible : deadline propre OU deadline dérivée (pour les producteurs critiques)
                     due_date_str = order.get('due_date')
@@ -1205,10 +1224,10 @@ class SchedulerEngine:
                             deadline_source = "dérivée (producteur critique)"
                     
                     if effective_deadline and op_id in end_vars:
-                        due_date_minutes = self._datetime_to_minutes(effective_deadline)
+                        due_date_minutes = int(self._datetime_to_minutes(effective_deadline))
                         
                         # Date cible = date de besoin - temps de transfert final
-                        target_end = due_date_minutes - transfer_time
+                        target_end = int(due_date_minutes - transfer_time)
                         due_date_targets[order_id] = {
                             'due_date': effective_deadline,
                             'due_date_minutes': due_date_minutes,
@@ -1253,7 +1272,8 @@ class SchedulerEngine:
                         op2 = sorted_ops[i + 1]
                         op1_id = op1.get('id')
                         op2_id = op2.get('id')
-                        transfer_time = op1.get('transfer_time_minutes', 0)
+                        # OR-Tools nécessite des entiers
+                        transfer_time = int(op1.get('transfer_time_minutes', 0))
                         
                         if op1_id in end_vars and op2_id in start_vars:
                             # Temps d'attente = start(op2) - (end(op1) + transfer_time)
