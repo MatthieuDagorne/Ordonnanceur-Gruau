@@ -47,10 +47,15 @@ export default function Scheduling() {
   const [scenarioName, setScenarioName] = useState('');
   const [schedulingStrategy, setSchedulingStrategy] = useState('ASAP');
   
-  // Contraintes
+  // Contraintes - Options d'ignorance
   const [ignoreRules, setIgnoreRules] = useState(false);
   const [ignoreMaterial, setIgnoreMaterial] = useState(false);
   const [ignoreCalendars, setIgnoreCalendars] = useState(false);
+  const [ignorePriorities, setIgnorePriorities] = useState(false);
+  
+  // Propagations
+  const [ignoreMaterialPropagation, setIgnoreMaterialPropagation] = useState(false);
+  const [ignorePriorityPropagation, setIgnorePriorityPropagation] = useState(false);
   
   // Paramètres solveur
   const [maxSolverTime, setMaxSolverTime] = useState(60);
@@ -90,9 +95,15 @@ export default function Scheduling() {
       const response = await axios.post(`${API}/scheduling/calculate`, {
         scenario_name: scenarioName,
         scheduling_strategy: schedulingStrategy,
+        // Options d'ignorance
         ignore_rules: ignoreRules,
         ignore_material: ignoreMaterial,
         ignore_calendars: ignoreCalendars,
+        ignore_priorities: ignorePriorities,
+        // Propagations (désactivées si option parente ignorée)
+        ignore_material_propagation: ignoreMaterial ? true : ignoreMaterialPropagation,
+        ignore_priority_propagation: ignorePriorities ? true : ignorePriorityPropagation,
+        // Paramètres solveur
         max_solver_time_seconds: maxSolverTime,
         optimization_gap: optimizationGap / 100,
         respect_sequence: respectSequence,
@@ -307,11 +318,11 @@ export default function Scheduling() {
         {showAdvanced && (
           <div className="px-5 pb-5 border-t border-slate-200 pt-4">
             <div className="grid grid-cols-2 gap-6">
-              {/* Contraintes */}
+              {/* Contraintes à ignorer */}
               <div className="space-y-3">
                 <h5 className="text-sm font-semibold text-slate-700">Contraintes à Ignorer</h5>
                 <p className="text-xs text-slate-500 mb-3">
-                  Utilisez ces options pour identifier les causes de blocage
+                  Désactivez ces contraintes pour identifier les causes de blocage
                 </p>
                 
                 <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
@@ -328,8 +339,27 @@ export default function Scheduling() {
                 <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
                   <input
                     type="checkbox"
+                    checked={ignorePriorities}
+                    onChange={(e) => {
+                      setIgnorePriorities(e.target.checked);
+                      // Si on ignore les priorités, on désactive aussi la propagation
+                      if (e.target.checked) setIgnorePriorityPropagation(true);
+                    }}
+                    className="rounded border-slate-300"
+                    data-testid="ignore-priorities-checkbox"
+                  />
+                  Ignorer les priorités des OF
+                </label>
+                
+                <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
                     checked={ignoreMaterial}
-                    onChange={(e) => setIgnoreMaterial(e.target.checked)}
+                    onChange={(e) => {
+                      setIgnoreMaterial(e.target.checked);
+                      // Si on ignore la matière, on désactive aussi la propagation
+                      if (e.target.checked) setIgnoreMaterialPropagation(true);
+                    }}
                     className="rounded border-slate-300"
                     data-testid="ignore-material-checkbox"
                   />
@@ -348,20 +378,52 @@ export default function Scheduling() {
                 </label>
               </div>
               
-              {/* Options séquence */}
+              {/* Propagations et Options */}
               <div className="space-y-3">
-                <h5 className="text-sm font-semibold text-slate-700">Options de Planification</h5>
+                <h5 className="text-sm font-semibold text-slate-700">Propagations</h5>
+                <p className="text-xs text-slate-500 mb-3">
+                  Ces propagations créent des dépendances entre ordres de fabrication
+                </p>
                 
-                <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                <label className={`flex items-center gap-2 text-sm cursor-pointer ${ignorePriorities ? 'text-slate-400' : 'text-slate-600'}`}>
                   <input
                     type="checkbox"
-                    checked={respectSequence}
-                    onChange={(e) => setRespectSequence(e.target.checked)}
-                    className="rounded border-slate-300"
-                    data-testid="respect-sequence-checkbox"
+                    checked={ignorePriorityPropagation}
+                    onChange={(e) => setIgnorePriorityPropagation(e.target.checked)}
+                    disabled={ignorePriorities}
+                    className="rounded border-slate-300 disabled:opacity-50"
+                    data-testid="ignore-priority-propagation-checkbox"
                   />
-                  Respecter l'ordre des opérations dans l'OF
+                  Ignorer la propagation de priorité vers fournisseurs
+                  {ignorePriorities && <span className="text-xs text-slate-400 ml-1">(désactivé)</span>}
                 </label>
+                
+                <label className={`flex items-center gap-2 text-sm cursor-pointer ${ignoreMaterial ? 'text-slate-400' : 'text-slate-600'}`}>
+                  <input
+                    type="checkbox"
+                    checked={ignoreMaterialPropagation}
+                    onChange={(e) => setIgnoreMaterialPropagation(e.target.checked)}
+                    disabled={ignoreMaterial}
+                    className="rounded border-slate-300 disabled:opacity-50"
+                    data-testid="ignore-material-propagation-checkbox"
+                  />
+                  Ignorer la propagation matière (dépendances)
+                  {ignoreMaterial && <span className="text-xs text-slate-400 ml-1">(désactivé)</span>}
+                </label>
+                
+                <div className="border-t border-slate-200 pt-3 mt-3">
+                  <h5 className="text-sm font-semibold text-slate-700 mb-2">Options de Planification</h5>
+                  <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={respectSequence}
+                      onChange={(e) => setRespectSequence(e.target.checked)}
+                      className="rounded border-slate-300"
+                      data-testid="respect-sequence-checkbox"
+                    />
+                    Respecter l'ordre des opérations dans l'OF
+                  </label>
+                </div>
               </div>
             </div>
           </div>
@@ -377,12 +439,24 @@ export default function Scheduling() {
             <span className={ignoreRules ? "text-slate-400 line-through" : ""}>Règles métier d'affectation</span>
           </div>
           <div className="flex items-start gap-2">
+            <CheckCircle size={14} className={ignorePriorities ? "text-slate-300" : "text-green-500"} />
+            <span className={ignorePriorities ? "text-slate-400 line-through" : ""}>Priorités des OF</span>
+          </div>
+          <div className="flex items-start gap-2">
             <CheckCircle size={14} className={ignoreMaterial ? "text-slate-300" : "text-green-500"} />
             <span className={ignoreMaterial ? "text-slate-400 line-through" : ""}>Disponibilité matière</span>
           </div>
           <div className="flex items-start gap-2">
             <CheckCircle size={14} className={ignoreCalendars ? "text-slate-300" : "text-green-500"} />
             <span className={ignoreCalendars ? "text-slate-400 line-through" : ""}>Calendriers machines</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <CheckCircle size={14} className={(ignorePriorities || ignorePriorityPropagation) ? "text-slate-300" : "text-green-500"} />
+            <span className={(ignorePriorities || ignorePriorityPropagation) ? "text-slate-400 line-through" : ""}>Propagation priorité</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <CheckCircle size={14} className={(ignoreMaterial || ignoreMaterialPropagation) ? "text-slate-300" : "text-green-500"} />
+            <span className={(ignoreMaterial || ignoreMaterialPropagation) ? "text-slate-400 line-through" : ""}>Propagation matière</span>
           </div>
           <div className="flex items-start gap-2">
             <CheckCircle size={14} className="text-green-500" />
