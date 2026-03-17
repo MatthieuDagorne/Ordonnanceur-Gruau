@@ -377,3 +377,44 @@ Nouvelles métriques dans `scheduling_stats` :
 - Délai entre producteur et consommateur = **0 minutes** (flux tiré optimal)
 - JIT planifie au plus tard quand possible (1073 min plus tard qu'ASAP)
 - Le producteur est automatiquement avancé pour les deadlines serrées
+
+### Phase 12 - Corrections Gros Volumes et Ergonomie (18 décembre 2025) ✅
+
+#### 12.1 Limite 1000 Opérations Corrigée ✅
+- Limite augmentée de 1000 à 10000 pour toutes les requêtes `to_list()`
+- Test: 7927 opérations retournées au lieu de 1000 précédemment
+- Affecte: `/api/operations`, `/api/manufacturing-orders`, `/api/operations-enrichies`
+
+#### 12.2 Codes Articles dans Messages d'Erreur ✅
+- `article_id` et `order_id` ajoutés dans `blocked_operations`
+- UI: Les opérations non planifiables affichent maintenant l'article concerné
+- Format: "OF {orderId} [{article_id}]"
+
+#### 12.3 Bouton Supprimer Tous les Scénarios ✅
+- Nouvel endpoint `DELETE /api/scenarios` qui supprime tous les scénarios
+- UI: Bouton "Tout supprimer (N)" en haut à droite de la page Scénarios
+- Modal de confirmation avant suppression
+
+#### 12.4 Contrainte Matière Stricte pour Ordres Urgents ✅
+**Règle métier corrigée:**
+- La disponibilité matière est une **contrainte dure**
+- Si matière manquante → opération NON planifiable, même si ordre urgent
+- La priorité ne contourne PLUS la contrainte matière
+- La priorité sert UNIQUEMENT à arbitrer entre solutions faisables
+
+**Correction technique:**
+```python
+# AVANT: _material_earliest_date ignorée à la 1ère itération
+# APRÈS: Contrainte appliquée dès la 1ère itération
+elif not ignore_material and op.get('_material_earliest_date'):
+    min_start = int(self._datetime_to_minutes(mat_earliest))
+```
+
+#### 12.5 Tests Validés ✅
+| Test | Résultat |
+|------|----------|
+| Operations retournées > 1000 | ✅ 7927 ops |
+| DELETE /api/scenarios | ✅ |
+| Bouton "Tout supprimer" | ✅ |
+| article_id dans blocked_operations | ✅ |
+| Contrainte matière stricte | ✅ |
