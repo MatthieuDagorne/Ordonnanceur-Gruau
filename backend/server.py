@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import io
 import uuid
@@ -2866,10 +2866,14 @@ async def get_machine_task_matrix():
 
 # Données Gantt enrichies
 @api_router.get("/gantt/data/{scenario_id}")
-async def get_gantt_data(scenario_id: str):
+async def get_gantt_data(scenario_id: str, display_horizon_days: int = None):
     """
     Retourne les données formatées pour l'affichage Gantt interactif.
     Inclut les informations sur les machines, les plages horaires, matières et calendriers.
+    
+    Le paramètre display_horizon_days limite l'AFFICHAGE aux opérations démarrant dans
+    les N premiers jours. Le moteur peut avoir planifié au-delà pour optimiser, mais
+    l'utilisateur ne voit que la période demandée (améliore les performances d'affichage).
     """
     try:
         scenario = await db.scenarios.find_one({"id": scenario_id}, {"_id": 0})
@@ -2877,6 +2881,10 @@ async def get_gantt_data(scenario_id: str):
             raise HTTPException(status_code=404, detail="Scénario non trouvé")
         
         schedule_data = scenario.get('schedule_data', {})
+        
+        # Si pas de display_horizon_days spécifié, utiliser l'horizon du scénario
+        if display_horizon_days is None:
+            display_horizon_days = schedule_data.get('scheduling_stats', {}).get('horizon_stats', {}).get('horizon_days', 0)
         operations = schedule_data.get('operations', [])
         
         # Charger les machines pour les couleurs et noms
@@ -2939,6 +2947,44 @@ async def get_gantt_data(scenario_id: str):
         
         # Trier les opérations par date de début pour simuler les consommations dans l'ordre
         sorted_operations = sorted(operations, key=lambda x: x.get('start_datetime', ''))
+        
+        # SUJET 1: FILTRAGE PAR HORIZON D'AFFICHAGE
+        # Le moteur peut planifier au-delà de l'horizon pour optimiser, mais l'affichage
+        # se limite aux N premiers jours demandés par l'utilisateur. Cela:
+        # 1. Allège l'affichage du Gantt (moins d'opérations = rendu plus rapide)
+        # 2. Permet à l'utilisateur de se concentrer sur la période pertinente
+        total_operations_before_filter = len(sorted_operations)
+        operations_beyond_horizon = 0
+        
+        scheduling_start_dt = None
+        scheduling_start_str = schedule_data.get('scheduling_start')
+        if scheduling_start_str:
+            try:
+                scheduling_start_dt = datetime.fromisoformat(scheduling_start_str.replace('Z', '+00:00'))
+            except:
+                pass
+        
+        if display_horizon_days > 0 and scheduling_start_dt:
+            display_horizon_limit = scheduling_start_dt + timedelta(days=display_horizon_days)
+            logger.info(f"🖼️ FILTRAGE AFFICHAGE GANTT: {display_horizon_days} jours (limite: {display_horizon_limit.strftime('%d/%m/%Y %H:%M')})")
+            
+            filtered_operations = []
+            for op in sorted_operations:
+                op_start_str = op.get('start_datetime')
+                if op_start_str:
+                    try:
+                        op_start_dt = datetime.fromisoformat(op_start_str.replace('Z', '+00:00'))
+                        if op_start_dt < display_horizon_limit:
+                            filtered_operations.append(op)
+                        else:
+                            operations_beyond_horizon += 1
+                    except:
+                        filtered_operations.append(op)  # En cas d'erreur de parsing, inclure
+                else:
+                    filtered_operations.append(op)  # Pas de date = inclure par défaut
+            
+            sorted_operations = filtered_operations
+            logger.info(f"   Opérations dans l'horizon: {len(sorted_operations)}/{total_operations_before_filter} ({operations_beyond_horizon} au-delà)")
         
         # Simuler les consommations pour calculer le stock projeté à chaque horodatage
         # On utilise un dictionnaire pour tracker les consommations cumulées
@@ -3136,7 +3182,11 @@ async def get_gantt_data(scenario_id: str):
             'total_tasks': len(gantt_tasks),
             'machine_colors': machine_colors,
             'centres_de_charge': centres_for_filter,
-            'calendars': calendar_info
+            'calendars': calendar_info,
+            # Statistiques d'affichage par horizon
+            'display_horizon_days': display_horizon_days,
+            'total_operations_scheduled': total_operations_before_filter,
+            'operations_beyond_horizon': operations_beyond_horizon
         }
     except HTTPException:
         raise

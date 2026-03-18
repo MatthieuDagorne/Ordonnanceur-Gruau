@@ -1052,6 +1052,28 @@ class SchedulerEngine:
             blocked_operations = []
             material_delayed_operations = []  # Opérations reportées pour manque matière
             
+            # SUJET 3: PROPAGATION DES RUPTURES MATIÈRE
+            # Si une opération n'a pas sa matière, toutes les opérations SUIVANTES du même OF
+            # doivent être reportées également (la chaîne de production est bloquée)
+            # On construit d'abord une map des opérations par OF, triées par numéro de séquence
+            ops_by_order_sorted = {}
+            for op in operations:
+                order_id = op.get('order_id')
+                if order_id:
+                    if order_id not in ops_by_order_sorted:
+                        ops_by_order_sorted[order_id] = []
+                    ops_by_order_sorted[order_id].append(op)
+            
+            # Trier les opérations de chaque OF par numéro de séquence (ex: _10, _20, _30)
+            for order_id in ops_by_order_sorted:
+                ops_by_order_sorted[order_id].sort(
+                    key=lambda x: int(x.get('id', '').rsplit('_', 1)[-1]) if '_' in x.get('id', '') and x.get('id', '').rsplit('_', 1)[-1].isdigit() else 0
+                )
+            
+            # Tracker les OF dont une opération est bloquée pour matière (avec la date de report)
+            # Toutes les opérations suivantes de cet OF seront reportées à la même date minimum
+            order_material_block = {}  # {order_id: {'earliest_date': datetime, 'blocking_components': [], 'blocking_op': str}}
+            
             for op in operations:
                 order_id = op.get('order_id')
                 order = orders_by_id.get(order_id)
@@ -1061,6 +1083,7 @@ class SchedulerEngine:
                 blocking_reason = None
                 material_status = None
                 earliest_material_date = None
+                propagated_from_earlier_op = False
                 
                 # Vérification machine
                 machine_id = op.get('machine_id')
@@ -1071,8 +1094,29 @@ class SchedulerEngine:
                     is_valid = False
                     blocking_reason = f'Machine {machine_id} introuvable'
                 
-                # Vérification matière avec projection
-                if is_valid and not ignore_material:
+                # SUJET 3: Vérifier si une opération PRÉCÉDENTE du même OF est bloquée pour matière
+                # Si oui, cette opération est également bloquée (la chaîne est interrompue)
+                if is_valid and not ignore_material and order_id in order_material_block:
+                    block_info = order_material_block[order_id]
+                    ops_of_this_order = ops_by_order_sorted.get(order_id, [])
+                    op_index = next((i for i, o in enumerate(ops_of_this_order) if o.get('id') == op_id), -1)
+                    blocking_op_index = next((i for i, o in enumerate(ops_of_this_order) if o.get('id') == block_info['blocking_op']), -1)
+                    
+                    # Si cette opération vient APRÈS l'opération bloquée, elle est aussi reportée
+                    if op_index > blocking_op_index:
+                        earliest_material_date = block_info['earliest_date']
+                        propagated_from_earlier_op = True
+                        logger.info(f"⏳ Opération {op_id} reportée (cascade): Op précédente {block_info['blocking_op']} bloquée pour {block_info['blocking_components']}")
+                        material_delayed_operations.append({
+                            'operation_id': op_id,
+                            'blocking_components': block_info['blocking_components'],
+                            'earliest_date': earliest_material_date.isoformat() if earliest_material_date else None,
+                            'propagated_from': block_info['blocking_op'],
+                            'reason': 'Propagation rupture matière - opération précédente bloquée'
+                        })
+                
+                # Vérification matière avec projection (seulement si pas déjà bloquée par propagation)
+                if is_valid and not ignore_material and not propagated_from_earlier_op:
                     # Vérifier les besoins matière de l'opération
                     material_status = self.material_manager.check_operation_materials(
                         op_id,
@@ -1090,9 +1134,33 @@ class SchedulerEngine:
                                 'blocking_components': material_status.blocking_components,
                                 'earliest_date': earliest_material_date.isoformat()
                             })
+                            
+                            # SUJET 3: Enregistrer ce blocage pour propager aux opérations suivantes
+                            # Si cet OF n'est pas encore dans le tracker, ou si cette date est plus tardive
+                            if order_id not in order_material_block:
+                                order_material_block[order_id] = {
+                                    'earliest_date': earliest_material_date,
+                                    'blocking_components': material_status.blocking_components,
+                                    'blocking_op': op_id
+                                }
+                            elif earliest_material_date > order_material_block[order_id]['earliest_date']:
+                                # Mettre à jour si cette rupture impose une date plus tardive
+                                order_material_block[order_id] = {
+                                    'earliest_date': earliest_material_date,
+                                    'blocking_components': material_status.blocking_components,
+                                    'blocking_op': op_id
+                                }
                         else:
                             is_valid = False
                             blocking_reason = f'Matière insuffisante: {material_status.blocking_components}'
+                            
+                            # SUJET 3: Bloquer aussi les opérations suivantes (pas de date de report possible)
+                            if order_id not in order_material_block:
+                                order_material_block[order_id] = {
+                                    'earliest_date': None,  # Pas de date = vraiment non planifiable
+                                    'blocking_components': material_status.blocking_components,
+                                    'blocking_op': op_id
+                                }
                 
                 if is_valid:
                     # Enrichir avec date_besoin pour le tri et informations d'urgence
@@ -1109,7 +1177,8 @@ class SchedulerEngine:
                         '_article_id': (order.get('article_id') or order.get('article')) if order else None,
                         '_order_quantity': order_quantity,
                         '_material_earliest_date': earliest_material_date,
-                        '_material_status': material_status
+                        '_material_status': material_status,
+                        '_material_propagated': propagated_from_earlier_op
                     }
                     valid_operations.append(op_enriched)
                 else:
@@ -1124,6 +1193,12 @@ class SchedulerEngine:
                         'article_id': article_id,
                         'reason': blocking_reason or 'Raison inconnue'
                     })
+            
+            # Log des OF avec propagation de rupture matière
+            if order_material_block:
+                logger.info(f"\n📦 PROPAGATION RUPTURE MATIÈRE (SUJET 3):")
+                for order_id, block_info in order_material_block.items():
+                    logger.info(f"   OF {order_id}: Opération bloquante {block_info['blocking_op']} → {block_info['blocking_components']}")
             
             logger.info(f"📊 Opérations valides pour le solveur: {len(valid_operations)}")
             logger.info(f"📊 Opérations bloquées: {len(blocked_operations)}")
@@ -1530,7 +1605,10 @@ class SchedulerEngine:
             orders_by_id = {o.get('id'): o for o in orders}
             
             # STRATÉGIE ASAP (Au plus tôt) - Comportement par défaut
-            # Objectif: minimiser le makespan + prioriser les producteurs critiques
+            # Objectifs (par ordre de priorité):
+            # 1. Prioriser les producteurs critiques (terminer tôt pour débloquer les consommateurs)
+            # 2. Maximiser le taux de remplissage (minimiser les temps morts entre opérations)
+            # 3. Minimiser le makespan global
             if scheduling_strategy == 'ASAP':
                 # Identifier les opérations des producteurs critiques
                 critical_producer_ops = []
@@ -1542,14 +1620,27 @@ class SchedulerEngine:
                         if op_id in end_vars:
                             critical_producer_ops.append(op_id)
                 
+                # SUJET 2: MAXIMISER LE TAUX DE REMPLISSAGE
+                # Stratégie: Pénaliser le démarrage tardif de chaque opération
+                # Plus une opération démarre tôt, moins de "trou" il y a dans le planning
+                logger.info("\n   🎯 OPTIMISATION DU TAUX DE REMPLISSAGE:")
+                
+                # Somme pondérée des temps de début (à minimiser = compacter le planning)
+                # Chaque opération a un poids égal à sa durée (pour équilibrer l'impact)
+                start_sum_terms = []
+                for op in valid_operations:
+                    op_id = op.get('id')
+                    if op_id in start_vars:
+                        # Poids = 1 pour toutes les opérations (traitement équitable)
+                        start_sum_terms.append(start_vars[op_id])
+                
+                # Poids pour équilibrer les différents objectifs
+                CRITICAL_PRIORITY_WEIGHT = 10000  # Très élevé: les producteurs critiques d'abord
+                COMPACTION_WEIGHT = 10            # Moyen: compacter le planning (remplissage)
+                MAKESPAN_WEIGHT = 1               # Faible: réduire la durée totale
+                
                 if critical_producer_ops:
-                    logger.info("\n   🎯 PRIORISATION DES PRODUCTEURS CRITIQUES:")
                     logger.info(f"   {len(critical_producer_ops)} opérations de producteurs critiques")
-                    
-                    # Objectif multi-critères:
-                    # 1. Minimiser la somme des fins des producteurs critiques (les terminer tôt)
-                    # 2. Minimiser le makespan global
-                    CRITICAL_PRIORITY_WEIGHT = 1000
                     
                     # Somme des fins des producteurs critiques
                     sum_critical_ends = model.new_int_var(0, horizon * len(critical_producer_ops), 'sum_critical_ends')
@@ -1559,20 +1650,46 @@ class SchedulerEngine:
                     makespan = model.new_int_var(0, horizon, 'makespan')
                     model.add_max_equality(makespan, list(end_vars.values()))
                     
-                    # Objectif combiné: minimiser (WEIGHT * sum_critical_ends + makespan)
-                    combined_objective = model.new_int_var(0, CRITICAL_PRIORITY_WEIGHT * horizon * len(critical_producer_ops) + horizon, 'combined_objective')
-                    model.add(combined_objective == CRITICAL_PRIORITY_WEIGHT * sum_critical_ends + makespan)
+                    # Somme des démarrages (pour compaction)
+                    sum_starts = model.new_int_var(0, horizon * len(start_sum_terms), 'sum_starts')
+                    model.add(sum_starts == sum(start_sum_terms))
+                    
+                    # Objectif combiné:
+                    # minimiser (CRITICAL×sum_critical_ends + COMPACTION×sum_starts + MAKESPAN×makespan)
+                    max_objective_value = (
+                        CRITICAL_PRIORITY_WEIGHT * horizon * len(critical_producer_ops) +
+                        COMPACTION_WEIGHT * horizon * len(start_sum_terms) +
+                        MAKESPAN_WEIGHT * horizon
+                    )
+                    combined_objective = model.new_int_var(0, max_objective_value, 'combined_objective')
+                    model.add(combined_objective == 
+                        CRITICAL_PRIORITY_WEIGHT * sum_critical_ends + 
+                        COMPACTION_WEIGHT * sum_starts + 
+                        MAKESPAN_WEIGHT * makespan
+                    )
                     model.minimize(combined_objective)
                     
-                    logger.info(f"   ✓ Objectif: minimiser {CRITICAL_PRIORITY_WEIGHT}×fins_critiques + makespan")
+                    logger.info(f"   ✓ Objectif: minimiser {CRITICAL_PRIORITY_WEIGHT}×fins_critiques + {COMPACTION_WEIGHT}×sum_starts + {MAKESPAN_WEIGHT}×makespan")
                 else:
-                    # Pas de producteurs critiques, minimiser simplement le makespan
+                    # Pas de producteurs critiques
                     if end_vars:
+                        # Makespan global
                         makespan = model.new_int_var(0, horizon, 'makespan')
                         model.add_max_equality(makespan, list(end_vars.values()))
-                        model.minimize(makespan)
+                        
+                        # Somme des démarrages (pour compaction)
+                        sum_starts = model.new_int_var(0, horizon * len(start_sum_terms), 'sum_starts')
+                        model.add(sum_starts == sum(start_sum_terms))
+                        
+                        # Objectif combiné: compaction + makespan
+                        max_objective_value = COMPACTION_WEIGHT * horizon * len(start_sum_terms) + MAKESPAN_WEIGHT * horizon
+                        combined_objective = model.new_int_var(0, max_objective_value, 'combined_objective')
+                        model.add(combined_objective == COMPACTION_WEIGHT * sum_starts + MAKESPAN_WEIGHT * makespan)
+                        model.minimize(combined_objective)
+                        
+                        logger.info(f"   ✓ Objectif: minimiser {COMPACTION_WEIGHT}×sum_starts + {MAKESPAN_WEIGHT}×makespan")
                 
-                logger.info("   ✓ Stratégie: ASAP (Au plus tôt)")
+                logger.info("   ✓ Stratégie: ASAP (Au plus tôt) avec maximisation du remplissage")
             
             # STRATÉGIE JIT (Juste-à-temps / Au plus tard)
             # Objectif: maximiser les temps de début tout en respectant les dates de besoin

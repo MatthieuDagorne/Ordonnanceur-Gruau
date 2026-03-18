@@ -785,13 +785,20 @@ export default function GanttInteractive() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-6 gap-4">
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
             <Package size={16} style={{ color: 'var(--brand-primary)' }} />
             <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Opérations</span>
           </div>
-          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>{total_tasks}</p>
+          <p className="text-2xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+            {total_tasks}
+            {ganttData?.operations_beyond_horizon > 0 && (
+              <span className="text-sm font-normal ml-1" style={{ color: 'var(--text-muted)' }}>
+                / {ganttData.total_operations_scheduled}
+              </span>
+            )}
+          </p>
         </div>
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
@@ -815,6 +822,20 @@ export default function GanttInteractive() {
               </span>
             )}
           </p>
+        </div>
+        <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar size={16} style={{ color: 'var(--accent-primary)' }} />
+            <span className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Horizon Affiché</span>
+          </div>
+          <p className="text-xl font-bold font-mono" style={{ color: 'var(--text-primary)' }}>
+            {ganttData?.display_horizon_days > 0 ? `${ganttData.display_horizon_days} jours` : 'Tout'}
+          </p>
+          {ganttData?.operations_beyond_horizon > 0 && (
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+              +{ganttData.operations_beyond_horizon} ops au-delà
+            </p>
+          )}
         </div>
         <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
           <div className="flex items-center gap-2 mb-1">
