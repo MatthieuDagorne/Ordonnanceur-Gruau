@@ -1411,6 +1411,59 @@ export default function GanttInteractive() {
                 </div>
               </div>
 
+              {/* Statistiques d'horizon et de fractionnement */}
+              {scenario.schedule_data.scheduling_stats.horizon_stats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)' }}>
+                    <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Horizon planification</p>
+                    <p className="text-lg font-bold font-mono" style={{ color: '#3B82F6' }}>
+                      {scenario.schedule_data.scheduling_stats.horizon_stats.horizon_days === 0 
+                        ? 'Tous' 
+                        : `J+${scenario.schedule_data.scheduling_stats.horizon_stats.horizon_days}j`}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)' }}>
+                    <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Dans l'horizon</p>
+                    <p className="text-lg font-bold font-mono" style={{ color: '#3B82F6' }}>
+                      {scenario.schedule_data.scheduling_stats.horizon_stats.orders_in_horizon || 0}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)' }}>
+                    <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>En retard</p>
+                    <p className="text-lg font-bold font-mono" style={{ color: 'var(--status-error)' }}>
+                      {scenario.schedule_data.scheduling_stats.horizon_stats.orders_late || 0}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(139, 92, 246, 0.1)' }}>
+                    <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Par dépendance</p>
+                    <p className="text-lg font-bold font-mono" style={{ color: '#8B5CF6' }}>
+                      {scenario.schedule_data.scheduling_stats.horizon_stats.orders_dependency || 0}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Statistiques de fractionnement */}
+              {scenario.schedule_data.scheduling_stats.split_stats && 
+               scenario.schedule_data.scheduling_stats.split_stats.operations_split > 0 && (
+                <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(139, 92, 246, 0.1)' }}>
+                  <p className="text-sm font-semibold mb-2" style={{ color: '#8B5CF6' }}>Fractionnement des opérations longues</p>
+                  <div className="flex gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>
+                    <span>
+                      <strong style={{ color: 'var(--text-primary)' }}>
+                        {scenario.schedule_data.scheduling_stats.split_stats.operations_split}
+                      </strong> opérations fractionnées
+                    </span>
+                    <span>→</span>
+                    <span>
+                      <strong style={{ color: 'var(--text-primary)' }}>
+                        {scenario.schedule_data.scheduling_stats.split_stats.sub_operations_created}
+                      </strong> sous-opérations créées
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Temps et performance */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--bg-sunken)' }}>

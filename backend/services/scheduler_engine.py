@@ -500,6 +500,148 @@ class SchedulerEngine:
             logger.info(f"   Réceptions planifiées: {len(planned_receipts)}")
             logger.info(f"   Besoins opérations: {len(operation_materials)}")
             
+            # PHASE 1.3: FILTRAGE PAR HORIZON DE PLANIFICATION
+            # Objectif: Réduire le volume à optimiser tout en gardant une vue d'ensemble
+            horizon_days = options.get('horizon_days', 14)
+            allow_splitting = options.get('allow_splitting', True)
+            
+            # Statistiques de filtrage par horizon
+            horizon_stats = {
+                'horizon_days': horizon_days,
+                'original_orders_count': len(orders),
+                'original_operations_count': len(operations),
+                'orders_in_horizon': 0,
+                'orders_late': 0,
+                'orders_dependency': 0,
+                'orders_excluded': 0,
+                'filtered_orders_count': 0,
+                'filtered_operations_count': 0
+            }
+            
+            if horizon_days > 0:
+                logger.info(f"\n📅 FILTRAGE PAR HORIZON DE PLANIFICATION: {horizon_days} jours")
+                
+                # Date limite de l'horizon
+                horizon_limit = self.scheduling_start + timedelta(days=horizon_days)
+                logger.info(f"   Date limite horizon: {horizon_limit.strftime('%d/%m/%Y %H:%M')}")
+                
+                # Index des ordres par ID pour recherche rapide
+                orders_by_id = {o.get('id'): o for o in orders}
+                
+                # Catégoriser les ordres
+                orders_in_horizon = set()  # OFs dans l'horizon
+                orders_late = set()         # OFs en retard
+                orders_dependency = set()   # OFs inclus par dépendance
+                
+                # 1. Identifier les ordres dans l'horizon ET les ordres en retard
+                for order in orders:
+                    order_id = order.get('id')
+                    due_date_str = order.get('due_date')
+                    
+                    if due_date_str:
+                        try:
+                            due_date = self._parse_datetime(due_date_str)
+                            if due_date:
+                                if due_date <= self.scheduling_start:
+                                    # Ordre en retard - TOUJOURS inclus
+                                    orders_late.add(order_id)
+                                    logger.info(f"   🔴 {order_id}: EN RETARD (due: {due_date.strftime('%d/%m %H:%M')})")
+                                elif due_date <= horizon_limit:
+                                    # Ordre dans l'horizon
+                                    orders_in_horizon.add(order_id)
+                        except Exception:
+                            # Si date invalide, inclure par défaut dans l'horizon
+                            orders_in_horizon.add(order_id)
+                    else:
+                        # Pas de date de besoin - inclure dans l'horizon par défaut
+                        orders_in_horizon.add(order_id)
+                
+                logger.info(f"   ✓ Ordres dans l'horizon: {len(orders_in_horizon)}")
+                logger.info(f"   ✓ Ordres en retard: {len(orders_late)}")
+                
+                # 2. Identifier les dépendances nécessaires (OFs producteurs)
+                # Pour chaque OF inclus, vérifier si ses besoins matière nécessitent des OFs hors horizon
+                included_orders = orders_in_horizon | orders_late
+                
+                # Map article -> OF producteur
+                article_producers_map = {}
+                for o in orders:
+                    article_id = o.get('article_id')
+                    if article_id:
+                        if article_id not in article_producers_map:
+                            article_producers_map[article_id] = []
+                        article_producers_map[article_id].append(o.get('id'))
+                
+                # Récupérer toutes les opérations des ordres inclus
+                included_ops = [op for op in operations if op.get('order_id') in included_orders]
+                
+                # Pour chaque opération incluse, vérifier les besoins matière
+                for op in included_ops:
+                    op_id = op.get('id')
+                    order_id = op.get('order_id')
+                    
+                    # Récupérer les besoins matière de cette opération
+                    op_materials = self.material_manager.get_operation_materials(op_id)
+                    
+                    for mat in op_materials:
+                        article_needed = mat.article_composant_id
+                        qty_needed = mat.quantity
+                        
+                        # Vérifier si le stock initial est suffisant
+                        initial_stock = self.material_manager.get_projected_stock(article_needed, self.scheduling_start)
+                        
+                        if initial_stock < qty_needed:
+                            # Stock insuffisant - vérifier si un OF peut produire cet article
+                            if article_needed in article_producers_map:
+                                for producer_of_id in article_producers_map[article_needed]:
+                                    if producer_of_id not in included_orders and producer_of_id not in orders_dependency:
+                                        # Ajouter l'OF producteur par dépendance
+                                        orders_dependency.add(producer_of_id)
+                                        logger.info(f"   🔗 {producer_of_id}: Ajouté par dépendance matière ({article_needed} pour {order_id})")
+                
+                # Mise à jour des ordres inclus avec les dépendances
+                all_included_orders = orders_in_horizon | orders_late | orders_dependency
+                
+                # 3. Filtrer les ordres et opérations
+                filtered_orders = [o for o in orders if o.get('id') in all_included_orders]
+                filtered_order_ids = set(o.get('id') for o in filtered_orders)
+                filtered_operations = [op for op in operations if op.get('order_id') in filtered_order_ids]
+                
+                # Mettre à jour les statistiques
+                horizon_stats['orders_in_horizon'] = len(orders_in_horizon)
+                horizon_stats['orders_late'] = len(orders_late)
+                horizon_stats['orders_dependency'] = len(orders_dependency)
+                horizon_stats['orders_excluded'] = len(orders) - len(filtered_orders)
+                horizon_stats['filtered_orders_count'] = len(filtered_orders)
+                horizon_stats['filtered_operations_count'] = len(filtered_operations)
+                
+                logger.info(f"\n   📊 RÉSUMÉ DU FILTRAGE:")
+                logger.info(f"      Ordres originaux: {len(orders)}")
+                logger.info(f"      - Dans l'horizon: {len(orders_in_horizon)}")
+                logger.info(f"      - En retard: {len(orders_late)}")
+                logger.info(f"      - Par dépendance: {len(orders_dependency)}")
+                logger.info(f"      - Exclus: {horizon_stats['orders_excluded']}")
+                logger.info(f"      Ordres retenus: {len(filtered_orders)}")
+                logger.info(f"      Opérations retenues: {len(filtered_operations)}/{len(operations)}")
+                
+                # Marquer les ordres avec leur raison d'inclusion
+                for o in filtered_orders:
+                    oid = o.get('id')
+                    if oid in orders_late:
+                        o['_horizon_inclusion_reason'] = 'late'
+                    elif oid in orders_in_horizon:
+                        o['_horizon_inclusion_reason'] = 'in_horizon'
+                    elif oid in orders_dependency:
+                        o['_horizon_inclusion_reason'] = 'dependency'
+                
+                # Remplacer les listes de travail
+                orders = filtered_orders
+                operations = filtered_operations
+            else:
+                logger.info(f"\n📅 HORIZON DE PLANIFICATION: Désactivé (tous les ordres)")
+                for o in orders:
+                    o['_horizon_inclusion_reason'] = 'no_filter'
+            
             # PHASE 1.4: PROPAGATION DE PRIORITÉ
             # Identifier les OFs urgents et propager la priorité aux OFs fournisseurs
             priority_propagation_log = []
@@ -736,6 +878,117 @@ class SchedulerEngine:
                 # Log du résultat de l'assignation
                 assigned_count = sum(1 for op in operations if op.get('machine_id'))
                 logger.info(f"   Opérations avec machine assignée: {assigned_count}/{len(operations)}")
+            
+            # PHASE 1.6: FRACTIONNEMENT DES OPÉRATIONS LONGUES
+            # Si une opération dépasse la durée de travail quotidienne, elle est fractionnée
+            # en plusieurs sous-opérations qui reprennent à la période d'ouverture suivante
+            split_stats = {
+                'split_enabled': allow_splitting,
+                'original_operations_count': len(operations),
+                'operations_split': 0,
+                'sub_operations_created': 0
+            }
+            
+            if allow_splitting and self.calendar_manager and not ignore_calendars:
+                logger.info("\n✂️  FRACTIONNEMENT DES OPÉRATIONS LONGUES:")
+                
+                new_operations = []
+                operations_to_remove = []
+                
+                for op in operations:
+                    op_id = op.get('id')
+                    machine_id = op.get('machine_id')
+                    
+                    if not machine_id:
+                        continue
+                    
+                    # Calculer la durée totale de l'opération
+                    production_time = op.get('production_time_minutes', 0) or 0
+                    setup_time = op.get('setup_time_minutes', 0) or 0
+                    total_duration = production_time + setup_time
+                    
+                    # Récupérer les heures de travail quotidiennes pour cette machine
+                    calendar = self.calendar_manager.get_calendar_for_machine(machine_id)
+                    work_start_str = calendar.get('start_time', '')
+                    work_end_str = calendar.get('end_time', '')
+                    
+                    if work_start_str and ':' in work_start_str:
+                        parts = work_start_str.split(':')
+                        work_start_min = int(parts[0]) * 60 + int(parts[1])
+                    else:
+                        work_start_min = calendar.get('start_hour', 0) * 60
+                    
+                    if work_end_str and ':' in work_end_str:
+                        parts = work_end_str.split(':')
+                        work_end_min = int(parts[0]) * 60 + int(parts[1])
+                    else:
+                        work_end_min = calendar.get('end_hour', 24) * 60
+                    
+                    daily_work_minutes = work_end_min - work_start_min
+                    
+                    # Si calendrier 24/7, pas besoin de fractionner
+                    if daily_work_minutes >= 24 * 60 - 60:  # 23h ou plus
+                        continue
+                    
+                    # Vérifier si l'opération doit être fractionnée
+                    if total_duration > daily_work_minutes:
+                        # Calculer le nombre de fractions nécessaires
+                        num_splits = math.ceil(total_duration / daily_work_minutes)
+                        
+                        # Limiter le nombre de fractions pour éviter l'explosion
+                        max_splits = 10
+                        if num_splits > max_splits:
+                            logger.warning(f"   ⚠️  Op {op_id}: Durée {total_duration}min nécessiterait {num_splits} fractions, limité à {max_splits}")
+                            num_splits = max_splits
+                        
+                        logger.info(f"   ✂️  Op {op_id}: {total_duration}min > {daily_work_minutes}min/jour → {num_splits} fractions")
+                        
+                        # Marquer l'opération originale pour suppression
+                        operations_to_remove.append(op_id)
+                        split_stats['operations_split'] += 1
+                        
+                        # Créer les sous-opérations
+                        remaining_duration = total_duration
+                        for i in range(num_splits):
+                            # Durée de cette fraction
+                            fraction_duration = min(daily_work_minutes, remaining_duration)
+                            remaining_duration -= fraction_duration
+                            
+                            # Créer la sous-opération
+                            sub_op = op.copy()
+                            sub_op['id'] = f"{op_id}_PART{i+1}"
+                            sub_op['_parent_operation_id'] = op_id
+                            sub_op['_is_split_operation'] = True
+                            sub_op['_split_index'] = i
+                            sub_op['_split_total'] = num_splits
+                            
+                            # La première fraction inclut le setup time
+                            if i == 0:
+                                sub_op['production_time_minutes'] = fraction_duration - setup_time if fraction_duration > setup_time else fraction_duration
+                                sub_op['setup_time_minutes'] = setup_time if fraction_duration > setup_time else 0
+                            else:
+                                sub_op['production_time_minutes'] = fraction_duration
+                                sub_op['setup_time_minutes'] = 0  # Pas de setup pour les fractions suivantes
+                            
+                            new_operations.append(sub_op)
+                            split_stats['sub_operations_created'] += 1
+                
+                # Appliquer les modifications
+                if operations_to_remove:
+                    operations = [op for op in operations if op.get('id') not in operations_to_remove]
+                    operations.extend(new_operations)
+                    
+                    logger.info(f"\n   📊 RÉSUMÉ DU FRACTIONNEMENT:")
+                    logger.info(f"      Opérations fractionnées: {split_stats['operations_split']}")
+                    logger.info(f"      Sous-opérations créées: {split_stats['sub_operations_created']}")
+                    logger.info(f"      Total opérations: {len(operations)}")
+            else:
+                if allow_splitting:
+                    logger.info("\n✂️  FRACTIONNEMENT: Désactivé (calendriers ignorés ou non définis)")
+                else:
+                    logger.info("\n✂️  FRACTIONNEMENT: Désactivé par option")
+            
+            split_stats['final_operations_count'] = len(operations)
             
             # PHASE 2: ANALYSE DE FAISABILITÉ
             feasible_count, blocked_count = self.diagnostics.analyze_all_operations(
@@ -1928,7 +2181,11 @@ class SchedulerEngine:
                     'operations_material_delayed': len(material_delayed_operations),
                     'global_utilization_percent': round(global_utilization, 1),
                     'machine_utilization': machine_utilization,
-                    'blocked_reasons_summary': self._summarize_blocked_reasons(blocked_operations)
+                    'blocked_reasons_summary': self._summarize_blocked_reasons(blocked_operations),
+                    # Statistiques d'horizon
+                    'horizon_stats': horizon_stats,
+                    # Statistiques de fractionnement
+                    'split_stats': split_stats
                 }
             
             # Log solver result

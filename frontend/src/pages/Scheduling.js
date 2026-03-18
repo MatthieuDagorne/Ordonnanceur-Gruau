@@ -37,6 +37,14 @@ const SOLVER_TIMES = [
   { value: 600, label: '10 minutes' },
 ];
 
+const HORIZON_OPTIONS = [
+  { value: 0, label: 'Tous les ordres' },
+  { value: 7, label: '7 jours' },
+  { value: 14, label: '14 jours' },
+  { value: 21, label: '21 jours' },
+  { value: 30, label: '30 jours' },
+];
+
 export default function Scheduling() {
   const [calculating, setCalculating] = useState(false);
   const [stats, setStats] = useState(null);
@@ -46,6 +54,7 @@ export default function Scheduling() {
   // Paramètres du scénario
   const [scenarioName, setScenarioName] = useState('');
   const [schedulingStrategy, setSchedulingStrategy] = useState('ASAP');
+  const [horizonDays, setHorizonDays] = useState(14);
   
   // Contraintes - Options d'ignorance
   const [ignoreRules, setIgnoreRules] = useState(false);
@@ -63,6 +72,7 @@ export default function Scheduling() {
   
   // Options avancées
   const [respectSequence, setRespectSequence] = useState(true);
+  const [allowSplitting, setAllowSplitting] = useState(true);
   
   // État de progression du calcul asynchrone
   const [calculationProgress, setCalculationProgress] = useState(null);
@@ -99,6 +109,7 @@ export default function Scheduling() {
       const response = await axios.post(`${API}/scheduling/calculate/async`, {
         scenario_name: scenarioName,
         scheduling_strategy: schedulingStrategy,
+        horizon_days: horizonDays,
         // Options d'ignorance
         ignore_rules: ignoreRules,
         ignore_material: ignoreMaterial,
@@ -111,6 +122,7 @@ export default function Scheduling() {
         max_solver_time_seconds: maxSolverTime,
         optimization_gap: optimizationGap / 100,
         respect_sequence: respectSequence,
+        allow_splitting: allowSplitting && !ignoreCalendars,
         debug_mode: true,
         auto_assign_machines: true
       });
@@ -276,6 +288,39 @@ export default function Scheduling() {
               </button>
             );
           })}
+        </div>
+        
+        {/* Horizon de planification */}
+        <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar size={16} style={{ color: 'var(--text-secondary)' }} />
+            <label className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Horizon de Planification
+            </label>
+          </div>
+          <div className="flex items-center gap-4">
+            <select
+              value={horizonDays}
+              onChange={(e) => setHorizonDays(parseInt(e.target.value))}
+              className="h-10 rounded-sm border px-3 py-1 text-sm"
+              style={{ 
+                backgroundColor: 'var(--surface)', 
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
+              data-testid="horizon-days"
+            >
+              {HORIZON_OPTIONS.map((h) => (
+                <option key={h.value} value={h.value}>{h.label}</option>
+              ))}
+            </select>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {horizonDays === 0 
+                ? 'Tous les ordres seront optimisés (peut être lent pour gros volumes)'
+                : `Optimise uniquement jusqu'à J+${horizonDays}. Les ordres en retard et les dépendances sont toujours inclus.`
+              }
+            </p>
+          </div>
         </div>
       </div>
 
@@ -451,6 +496,19 @@ export default function Scheduling() {
                     />
                     Respecter l'ordre des opérations dans l'OF
                   </label>
+                  
+                  <label className={`flex items-center gap-2 text-sm cursor-pointer mt-2 ${ignoreCalendars ? 'text-slate-400' : 'text-slate-600'}`}>
+                    <input
+                      type="checkbox"
+                      checked={allowSplitting}
+                      onChange={(e) => setAllowSplitting(e.target.checked)}
+                      disabled={ignoreCalendars}
+                      className="rounded border-slate-300 disabled:opacity-50"
+                      data-testid="allow-splitting-checkbox"
+                    />
+                    Fractionner les opérations longues (multi-jours)
+                    {ignoreCalendars && <span className="text-xs text-slate-400 ml-1">(désactivé)</span>}
+                  </label>
                 </div>
               </div>
             </div>
@@ -495,8 +553,26 @@ export default function Scheduling() {
             <span className={!respectSequence ? "text-slate-400 line-through" : ""}>Séquence des gammes</span>
           </div>
           <div className="flex items-start gap-2">
+            <CheckCircle size={14} className={(allowSplitting && !ignoreCalendars) ? "text-green-500" : "text-slate-300"} />
+            <span className={(!allowSplitting || ignoreCalendars) ? "text-slate-400 line-through" : ""}>Fractionnement multi-jours</span>
+          </div>
+          <div className="flex items-start gap-2">
             <CheckCircle size={14} className="text-green-500" />
             <span>production_time + setup_time</span>
+          </div>
+        </div>
+        
+        {/* Résumé de l'horizon */}
+        <div className="mt-4 pt-3 border-t border-slate-200">
+          <div className="flex items-center gap-2 text-sm">
+            <Calendar size={14} className="text-blue-500" />
+            <span className="text-slate-600">
+              <strong>Horizon:</strong>{' '}
+              {horizonDays === 0 
+                ? 'Tous les ordres' 
+                : `J+${horizonDays} jours (+ retards + dépendances)`
+              }
+            </span>
           </div>
         </div>
       </div>

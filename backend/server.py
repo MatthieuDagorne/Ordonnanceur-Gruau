@@ -283,6 +283,9 @@ class ScheduleRequestWithOptions(BaseModel):
     # Stratégie de planification
     scheduling_strategy: str = "ASAP"  # "ASAP" (au plus tôt) ou "JIT" (au plus tard)
     
+    # Horizon de planification
+    horizon_days: int = 14  # Horizon en jours (0 = tous les ordres)
+    
     # Contraintes à ignorer (debug)
     ignore_rules: bool = False
     ignore_material: bool = False
@@ -300,7 +303,7 @@ class ScheduleRequestWithOptions(BaseModel):
     # Options avancées
     debug_mode: bool = True
     auto_assign_machines: bool = True
-    allow_splitting: bool = False     # Permettre le fractionnement des opérations
+    allow_splitting: bool = True      # Permettre le fractionnement des opérations longues
     respect_sequence: bool = True     # Respecter l'ordre des opérations dans l'OF
 
 class ImportResult(BaseModel):
@@ -2241,6 +2244,7 @@ async def calculate_schedule(request: ScheduleRequestWithOptions):
             'optimization_gap': request.optimization_gap,
             'allow_splitting': request.allow_splitting,
             'respect_sequence': request.respect_sequence,
+            'horizon_days': request.horizon_days,  # Horizon de planification
             'unavailabilities': unavailabilities  # Ajouter les indisponibilités
         }
         
@@ -2370,8 +2374,9 @@ async def run_scheduling_job(job_id: str, request_dict: dict):
             'max_solver_time_seconds': request_dict.get('max_solver_time_seconds', 60),
             'scheduling_strategy': request_dict.get('scheduling_strategy', 'ASAP'),
             'optimization_gap': request_dict.get('optimization_gap', 0.05),
-            'allow_splitting': request_dict.get('allow_splitting', False),
+            'allow_splitting': request_dict.get('allow_splitting', True),
             'respect_sequence': request_dict.get('respect_sequence', True),
+            'horizon_days': request_dict.get('horizon_days', 14),  # Horizon de planification
             'unavailabilities': unavailabilities
         }
         
@@ -2448,6 +2453,7 @@ async def calculate_schedule_async(request: ScheduleRequestWithOptions, backgrou
         'scenario_id': request.scenario_id,
         'scenario_name': request.scenario_name,
         'scheduling_strategy': request.scheduling_strategy,
+        'horizon_days': request.horizon_days,  # Horizon de planification
         'ignore_rules': request.ignore_rules,
         'ignore_material': request.ignore_material,
         'ignore_calendars': request.ignore_calendars,
