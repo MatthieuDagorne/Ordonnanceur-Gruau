@@ -9,7 +9,11 @@ class RulesEngine:
     """
     Moteur de règles métier.
     
-    Types de règles: ALLOW, FORBID, PREFER
+    Types de règles:
+    - REQUIRE: Machine obligatoire/exclusive - SEULE cette machine peut traiter l'opération
+    - FORBID: Machine interdite - Cette machine ne peut PAS traiter l'opération
+    - PREFER: Machine préférée - Bonus de préférence (non contraignant)
+    - ALLOW: DEPRECATED - Remplacé par REQUIRE
     
     Critères de matching:
     1. Règles simples: tache_id, centre_de_charge_id, article_id
@@ -109,6 +113,14 @@ class RulesEngine:
     ) -> Tuple[bool, List[str], int]:
         """
         Évalue si une machine peut être utilisée pour les critères donnés.
+        
+        Logique des règles:
+        - REQUIRE: SEULE la machine spécifiée est autorisée (toutes les autres sont interdites)
+        - FORBID: Cette machine spécifique est interdite
+        - PREFER: Cette machine a un bonus de préférence
+        
+        Returns:
+            (allowed: bool, reasons: List[str], preference_score: int)
         """
         # Si pas de données article, essayer de les récupérer
         if not article_data and article_id:
@@ -125,26 +137,43 @@ class RulesEngine:
         reasons = []
         preference_score = 0
         
+        # Vérifier s'il y a des règles REQUIRE pour cette opération
+        require_rules = [r for r in applicable_rules if r.rule_type == RuleType.REQUIRE or r.rule_type == RuleType.ALLOW]
+        
+        if require_rules:
+            # Il y a des règles REQUIRE - seules ces machines sont autorisées
+            required_machine_ids = [r.machine_id for r in require_rules]
+            
+            if machine_id in required_machine_ids:
+                # Cette machine est requise
+                matching_rule = next(r for r in require_rules if r.machine_id == machine_id)
+                criteria_display = matching_rule.get_criteria_display()
+                reason = f"REQUIS par '{matching_rule.name}' ({criteria_display})"
+                reasons.append(reason)
+                self._log_application(tache_id, centre_de_charge_id, article_id, matching_rule, machine_id, "REQUIS")
+            else:
+                # Cette machine n'est PAS dans la liste des machines requises
+                allowed = False
+                rule_names = ", ".join([r.name for r in require_rules])
+                reason = f"NON AUTORISÉ - Seules les machines requises sont permises: {required_machine_ids} (règles: {rule_names})"
+                reasons.append(reason)
+        
+        # Vérifier les règles FORBID
         for rule in applicable_rules:
-            if rule.machine_id == machine_id:
+            if rule.machine_id == machine_id and rule.rule_type == RuleType.FORBID:
+                allowed = False
                 criteria_display = rule.get_criteria_display()
-                
-                if rule.rule_type == RuleType.FORBID:
-                    allowed = False
-                    reason = f"INTERDIT par '{rule.name}' ({criteria_display})"
-                    reasons.append(reason)
-                    self._log_application(tache_id, centre_de_charge_id, article_id, rule, machine_id, "BLOQUE")
-                    
-                elif rule.rule_type == RuleType.ALLOW:
-                    reason = f"AUTORISE par '{rule.name}'"
-                    reasons.append(reason)
-                    self._log_application(tache_id, centre_de_charge_id, article_id, rule, machine_id, "AUTORISE")
-                    
-                elif rule.rule_type == RuleType.PREFER:
-                    preference_score += 100
-                    reason = f"PREFEREE par '{rule.name}' (+100)"
-                    reasons.append(reason)
-                    self._log_application(tache_id, centre_de_charge_id, article_id, rule, machine_id, "PREFEREE")
+                reason = f"INTERDIT par '{rule.name}' ({criteria_display})"
+                reasons.append(reason)
+                self._log_application(tache_id, centre_de_charge_id, article_id, rule, machine_id, "INTERDIT")
+        
+        # Vérifier les règles PREFER
+        for rule in applicable_rules:
+            if rule.machine_id == machine_id and rule.rule_type == RuleType.PREFER:
+                preference_score += 100
+                reason = f"PRÉFÉRÉ par '{rule.name}' (+100)"
+                reasons.append(reason)
+                self._log_application(tache_id, centre_de_charge_id, article_id, rule, machine_id, "PRÉFÉRÉ")
         
         if not reasons:
             reasons.append("Aucune règle ne cible cette machine")
@@ -271,7 +300,7 @@ class RulesEngine:
     def get_diagnostics(self) -> Dict[str, Any]:
         """Retourne les statistiques de diagnostic."""
         rules_by_type = {
-            'ALLOW': len([r for r in self.rules if r.rule_type == RuleType.ALLOW]),
+            'REQUIRE': len([r for r in self.rules if r.rule_type == RuleType.REQUIRE or r.rule_type == RuleType.ALLOW]),
             'FORBID': len([r for r in self.rules if r.rule_type == RuleType.FORBID]),
             'PREFER': len([r for r in self.rules if r.rule_type == RuleType.PREFER])
         }
@@ -285,7 +314,7 @@ class RulesEngine:
             'rules_detail': [
                 {
                     'name': r.name,
-                    'type': r.rule_type.value,
+                    'type': 'REQUIRE' if r.rule_type in [RuleType.REQUIRE, RuleType.ALLOW] else r.rule_type.value,
                     'tache_id': r.tache_id,
                     'centre_de_charge_id': r.centre_de_charge_id,
                     'article_id': r.article_id,

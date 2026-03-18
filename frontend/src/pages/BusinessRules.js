@@ -7,9 +7,9 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const RULE_TYPES = [
-  { value: 'REQUIRE', label: 'Requis - Exclusif', icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', description: 'Seule cette machine peut traiter' },
-  { value: 'FORBID', label: 'Interdit', icon: Ban, color: 'text-red-600', bg: 'bg-red-100', description: 'Cette machine est interdite' },
-  { value: 'PREFER', label: 'Préféré', icon: Star, color: 'text-amber-600', bg: 'bg-amber-100', description: 'Préférence (non contraignant)' }
+  { value: 'REQUIRE', label: 'Requis', icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', borderColor: '#16a34a', bgColor: '#dcfce7', description: 'Seule cette machine peut traiter l\'opération' },
+  { value: 'FORBID', label: 'Interdit', icon: Ban, color: 'text-red-600', bg: 'bg-red-100', borderColor: '#dc2626', bgColor: '#fee2e2', description: 'Cette machine est interdite pour l\'opération' },
+  { value: 'PREFER', label: 'Préféré', icon: Star, color: 'text-amber-600', bg: 'bg-amber-100', borderColor: '#d97706', bgColor: '#fef3c7', description: 'Préférence (non contraignant)' }
 ];
 
 const ATTRIBUTE_NAMES = [
@@ -323,8 +323,10 @@ export default function BusinessRules() {
   };
 
   const getRuleTypeDisplay = (ruleType) => {
-    const type = RULE_TYPES.find(t => t.value === ruleType);
-    if (!type) return { icon: AlertCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
+    // Convertir ALLOW en REQUIRE pour rétrocompatibilité
+    const normalizedType = ruleType === 'ALLOW' ? 'REQUIRE' : ruleType;
+    const type = RULE_TYPES.find(t => t.value === normalizedType);
+    if (!type) return { icon: AlertCircle, color: 'text-slate-500', bg: 'bg-slate-100', label: ruleType };
     return type;
   };
 
@@ -552,20 +554,24 @@ export default function BusinessRules() {
               <div className="mt-2 flex gap-3">
                 {RULE_TYPES.map(type => {
                   const Icon = type.icon;
+                  const isSelected = formData.rule_type === type.value;
                   return (
                     <button
                       key={type.value}
                       type="button"
                       onClick={() => setFormData({ ...formData, rule_type: type.value })}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 transition-all ${
-                        formData.rule_type === type.value
-                          ? `border-slate-900 ${type.bg}`
-                          : 'border-slate-200 hover:border-slate-300'
-                      }`}
+                      className="flex flex-col items-start gap-1 px-4 py-3 rounded-lg border-2 transition-all text-left"
+                      style={{
+                        borderColor: isSelected ? type.borderColor : '#e2e8f0',
+                        backgroundColor: isSelected ? type.bgColor : 'white'
+                      }}
                       data-testid={`rule-type-${type.value}`}
                     >
-                      <Icon size={16} className={type.color} />
-                      <span className="text-sm font-medium">{type.value}</span>
+                      <div className="flex items-center gap-2">
+                        <Icon size={16} style={{ color: type.borderColor }} />
+                        <span className="text-sm font-semibold" style={{ color: type.borderColor }}>{type.label}</span>
+                      </div>
+                      <span className="text-xs text-slate-500">{type.description}</span>
                     </button>
                   );
                 })}
@@ -813,9 +819,16 @@ export default function BusinessRules() {
                       <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{rule.name}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium ${typeInfo.bg} ${typeInfo.color}`}>
+                      <span 
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                        style={{ 
+                          backgroundColor: typeInfo.bgColor || '#f3f4f6', 
+                          color: typeInfo.borderColor || '#6b7280',
+                          border: `1px solid ${typeInfo.borderColor || '#d1d5db'}`
+                        }}
+                      >
                         <Icon size={12} />
-                        {rule.rule_type}
+                        {typeInfo.label || rule.rule_type}
                       </span>
                     </td>
                     <td className="px-4 py-3">

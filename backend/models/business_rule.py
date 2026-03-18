@@ -7,9 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class RuleType(str, Enum):
-    ALLOW = "ALLOW"
-    FORBID = "FORBID"
-    PREFER = "PREFER"
+    REQUIRE = "REQUIRE"  # Requis - Machine exclusive/obligatoire
+    FORBID = "FORBID"    # Interdit - Machine interdite
+    PREFER = "PREFER"    # Préféré - Préférence (non contraignant)
+    ALLOW = "ALLOW"      # DEPRECATED - Remplacé par REQUIRE
 
 
 class ComparisonOperator(str, Enum):

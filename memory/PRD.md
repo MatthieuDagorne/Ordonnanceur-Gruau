@@ -10,63 +10,80 @@ Advanced Planning & Scheduling (APS) application for industrial manufacturing, u
 
 ## Recent Updates (2026-03-18)
 
-### BUG CRITIQUE RÉSOLU: Opérations planifiées malgré stock projeté négatif
+### FEATURE: Règle REQUIRE (obligatoire/exclusive) ✅
 
-**Problème**: Des opérations consommant l'article 0157042 étaient planifiées même quand le stock projeté à leur date était négatif (106 opérations avec stock négatif).
+**Implémentation complète** de la règle REQUIRE qui remplace ALLOW :
 
-**Causes identifiées et corrigées**:
+**Logique des règles métier**:
+- **REQUIRE** (Requis): Machine obligatoire/exclusive - SEULE cette machine peut traiter l'opération
+- **FORBID** (Interdit): Machine interdite - Cette machine ne peut PAS traiter l'opération
+- **PREFER** (Préféré): Machine préférée - Bonus de préférence (non contraignant)
+- **ALLOW**: DEPRECATED - Automatiquement converti en REQUIRE
 
-1. **`get_projected_stock` utilisait un total global au lieu des mouvements horodatés**
-   - Le code soustrayait `planned_consumptions[article_id]` (total cumulé de TOUTES les réservations)
-   - **Fix**: Parcourir `self.movements` et ne compter que les consommations AVANT la date demandée
-
-2. **Les IDs d'opérations n'étaient pas correctement mappés**
-   - Le code utilisait `mat.get('id')` au lieu de `mat.get('operation_id')`
-   - **Fix**: `op_id = mat.get('operation_id') or mat.get('id')`
-
-**Code corrigé** (`material_manager.py`):
+**Backend** (`rules_engine.py`):
 ```python
-def get_projected_stock(self, article_id, at_date):
-    stock = self.initial_stocks.get(article_id, 0)
-    # + réceptions avant at_date
-    # + productions avant at_date
+def evaluate_machine(self, ...):
+    require_rules = [r for r in applicable_rules if r.rule_type in [RuleType.REQUIRE, RuleType.ALLOW]]
     
-    # CORRECTION: Parcourir les mouvements horodatés
-    for movement in self.movements:
-        if movement.article_id == article_id and movement.movement_type == 'CONSUMPTION':
-            if _normalize_datetime(movement.date) <= at_date:
-                stock -= abs(movement.quantity)
-    return stock
+    if require_rules:
+        required_machine_ids = [r.machine_id for r in require_rules]
+        if machine_id in required_machine_ids:
+            # Machine requise - OK
+        else:
+            # Machine NON autorisée - Bloquée
+            allowed = False
 ```
 
-**Résultat validé**:
-- Article 0157042 : **10 opérations planifiées, 0 avec stock négatif** ✅
-- Avant correction : 106 opérations avec stock négatif
+**Frontend** (`BusinessRules.js`):
+- Traduction française des types de règles
+- Couleurs distinctives:
+  - Requis: Vert (#16a34a)
+  - Interdit: Rouge (#dc2626)
+  - Préféré: Orange (#d97706)
+- Descriptions explicatives dans le formulaire
 
-### BUG CRITIQUE RÉSOLU: Opérations planifiées le week-end
-- Cause: Convention jours 1-7 vs 0-6, horizon contraintes 21j
-- Fix: Conversion jours, extension horizon, `add_bool_or()`
-- Résultat: 0 opérations le week-end ✅
+### Bugs critiques résolus (session précédente)
 
-### BUG CRITIQUE RÉSOLU: Stock projeté - Opérations marquées "non planifié"
-- Cause: Mauvais mapping `mat.get('id')` vs `mat.get('operation_id')`
-- Fix: `op_id = mat.get('operation_id') or mat.get('id')`
-- Résultat: Timeline correctement horodatée ✅
+1. **Stock projeté négatif**: Opérations planifiées malgré stock insuffisant
+   - Fix: Calcul chronologique des mouvements dans `get_projected_stock()`
 
-### Améliorations UI (Sujets 4-9)
-- Traduction règles métier FR
-- Tooltips Gantt enrichis
-- Barre de progression avec timer
-- Page Ordres Fab. avec descriptions
+2. **Opérations le week-end**: Calendrier non respecté
+   - Fix: Conversion jours 1-7→0-6, extension horizon contraintes, `add_bool_or()`
+
+3. **Opérations marquées "non planifié"**: Mauvais mapping IDs
+   - Fix: `operation_id` au lieu de `id`
+
+### Améliorations UI
+
+| Fonctionnalité | Description | Statut |
+|----------------|-------------|--------|
+| Règles métier FR | Traduction REQUIRE/Interdit/Préféré | ✅ |
+| Tooltips Gantt | Description tâche + article | ✅ |
+| Timer progression | mm:ss + % vs temps max | ✅ |
+| Page Ordres Fab. | Op.Seq + descriptions | ✅ |
 
 ## Tests validés
 
-| Test | Avant | Après | Statut |
-|------|-------|-------|--------|
-| Article 0157042 stock négatif | 106 ops | 0 ops | ✅ PASS |
-| Calendrier week-end | Ops samedi | 0 ops | ✅ PASS |
-| Stock projeté horodaté | Non planifié | Planifié | ✅ PASS |
+| Test | Résultat |
+|------|----------|
+| Règle REQUIRE appliquée | ✅ PASS |
+| Affichage FR règles | ✅ PASS |
+| Conversion ALLOW→REQUIRE | ✅ PASS |
+| Calcul avec règles | 765 ops ✅ |
+
+## API Endpoints
+
+### Rules
+- `GET /api/rules` - Liste des règles métier
+- `POST /api/rules` - Créer une règle
+- `PUT /api/rules/{id}` - Modifier une règle
+- `DELETE /api/rules/{id}` - Supprimer une règle
+
+### Scheduling
+- `POST /api/scheduling/calculate/async` - Calcul asynchrone
+- Options: `ignore_rules: false` pour activer les règles métier
 
 ## Backlog
-1. (P0) Implémenter la règle REQUIRE dans rules_engine
-2. (P2) Export CSV du planning
+1. (P2) Export CSV du planning finalisé
+2. (P2) Règles basées sur attributs d'articles (épaisseur, largeur, etc.)
+3. (P3) Tableau de bord KPIs avancé
