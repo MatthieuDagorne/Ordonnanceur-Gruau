@@ -7,9 +7,9 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const RULE_TYPES = [
-  { value: 'ALLOW', label: 'ALLOW - Autoriser', icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100' },
-  { value: 'FORBID', label: 'FORBID - Interdire', icon: Ban, color: 'text-red-600', bg: 'bg-red-100' },
-  { value: 'PREFER', label: 'PREFER - Préférer', icon: Star, color: 'text-amber-600', bg: 'bg-amber-100' }
+  { value: 'REQUIRE', label: 'Requis - Exclusif', icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100', description: 'Seule cette machine peut traiter' },
+  { value: 'FORBID', label: 'Interdit', icon: Ban, color: 'text-red-600', bg: 'bg-red-100', description: 'Cette machine est interdite' },
+  { value: 'PREFER', label: 'Préféré', icon: Star, color: 'text-amber-600', bg: 'bg-amber-100', description: 'Préférence (non contraignant)' }
 ];
 
 const ATTRIBUTE_NAMES = [
@@ -58,7 +58,7 @@ export default function BusinessRules() {
     tache_id: '',
     centre_de_charge_id: '',
     article_id: '',
-    rule_type: 'FORBID',
+    rule_type: 'REQUIRE',
     machine_id: '',
     active: true
   });
@@ -298,7 +298,7 @@ export default function BusinessRules() {
       tache_id: '',
       centre_de_charge_id: '',
       article_id: '',
-      rule_type: 'FORBID',
+      rule_type: 'REQUIRE',
       machine_id: '',
       active: true
     });
@@ -455,9 +455,9 @@ export default function BusinessRules() {
                 data-testid="filter-type"
               >
                 <option value="">Tous</option>
-                <option value="ALLOW">ALLOW</option>
-                <option value="FORBID">FORBID</option>
-                <option value="PREFER">PREFER</option>
+                <option value="REQUIRE">Requis</option>
+                <option value="FORBID">Interdit</option>
+                <option value="PREFER">Préféré</option>
               </select>
             </div>
             <div>

@@ -714,9 +714,20 @@ async def get_operations_enrichies():
     Chaque opération contient:
     - Données de l'opération (tache_id, centre_de_charge_id, etc.)
     - Données de l'ordre (article_id, date_besoin, priority)
+    - Descriptions de tâche, centre de charge et article (SUJET 8)
     """
     orders_raw = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
     operations_raw = await db.operations.find({}, {"_id": 0}).to_list(10000)
+    
+    # Charger les descriptions (SUJET 8)
+    articles = await db.articles.find({}, {"_id": 0}).to_list(10000)
+    articles_dict = {a.get('id') or a.get('article_id'): a for a in articles}
+    
+    centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(1000)
+    centres_dict = {c.get('id'): c for c in centres}
+    
+    taches = await db.taches.find({}, {"_id": 0}).to_list(1000)
+    taches_dict = {t.get('id'): t for t in taches}
     
     # Index des ordres par order_id pour jointure rapide
     orders_by_id = {}
@@ -736,20 +747,43 @@ async def get_operations_enrichies():
         order_id = op.get('order_id')
         order_data = orders_by_id.get(order_id, {})
         
+        # Extraire le numéro de séquence depuis l'id (format: ORDER_SEQ)
+        op_id_full = op.get('id', '')
+        op_seq = ''
+        if '_' in op_id_full:
+            op_seq = op_id_full.rsplit('_', 1)[-1]  # Ex: "LV1125217_60" -> "60"
+        
+        # Récupérer les descriptions (SUJET 8)
+        article_id = order_data.get('article_id')
+        article = articles_dict.get(article_id, {})
+        article_description = article.get('name') or article.get('article_label') or ''
+        
+        centre_id = op.get('centre_de_charge_id') or op.get('work_center_id')
+        centre = centres_dict.get(centre_id, {})
+        centre_description = centre.get('nom') or centre.get('name') or ''
+        
+        tache_id = op.get('tache_id') or op.get('task_id')
+        tache = taches_dict.get(tache_id, {})
+        tache_description = tache.get('description') or tache.get('name') or tache.get('nom') or ''
+        
         enriched_op = {
             # Données de l'opération
             'id': op.get('id'),
             'order_id': order_id,
+            'operation_seq': op_seq,  # SUJET 8: Numéro de séquence
             'operation_id': op.get('operation_id'),
-            'tache_id': op.get('tache_id') or op.get('task_id'),
-            'centre_de_charge_id': op.get('centre_de_charge_id') or op.get('work_center_id'),
+            'tache_id': tache_id,
+            'tache_description': tache_description,  # SUJET 8
+            'centre_de_charge_id': centre_id,
+            'centre_description': centre_description,  # SUJET 8
             'production_time_minutes': op.get('production_time_minutes', 0),
             'setup_time_minutes': op.get('setup_time_minutes', 0),
             'status': op.get('status'),
             'machine_id': op.get('machine_id'),
             
             # Données de l'ordre (jointure sur order_id)
-            'article_id': order_data.get('article_id'),
+            'article_id': article_id,
+            'article_description': article_description,  # SUJET 8
             'date_besoin': order_data.get('date_besoin'),
             'priority': order_data.get('priority', 0),
             'quantity': order_data.get('quantity'),
@@ -760,7 +794,7 @@ async def get_operations_enrichies():
         result.append(enriched_op)
     
     # Trier par date_besoin puis par order_id
-    result.sort(key=lambda x: (x.get('date_besoin') or '9999-99-99', x.get('order_id') or '', x.get('operation_id') or 0))
+    result.sort(key=lambda x: (x.get('date_besoin') or '9999-99-99', x.get('order_id') or '', x.get('operation_seq') or '0'))
     
     return result
 
@@ -2903,6 +2937,18 @@ async def get_gantt_data(scenario_id: str, display_horizon_days: int = None):
         orders = await db.manufacturing_orders.find({}, {"_id": 0}).to_list(10000)
         orders_dict = {o.get('id'): o for o in orders}
         
+        # Charger les articles pour les descriptions (SUJET 5)
+        articles = await db.articles.find({}, {"_id": 0}).to_list(10000)
+        articles_dict = {a.get('id') or a.get('article_id'): a for a in articles}
+        
+        # Charger les opérations d'origine pour récupérer tache_id (SUJET 5)
+        raw_operations = await db.operations.find({}, {"_id": 0}).to_list(10000)
+        raw_ops_dict = {op.get('id'): op for op in raw_operations}
+        
+        # Charger les tâches si elles existent (SUJET 5)
+        taches = await db.taches.find({}, {"_id": 0}).to_list(1000)
+        taches_dict = {t.get('id'): t for t in taches}
+        
         # Charger les besoins en matières pour chaque opération
         operation_materials = await db.operation_materials.find({}, {"_id": 0}).to_list(10000)
         materials_by_op = {}
@@ -3071,11 +3117,25 @@ async def get_gantt_data(scenario_id: str, display_horizon_days: int = None):
                     cumulated_consumptions[article_id] = 0
                 cumulated_consumptions[article_id] += qty_needed
             
+            # SUJET 5: Récupérer les descriptions de tâche et d'article
+            op_id_full = op.get('operation_id')
+            raw_op = raw_ops_dict.get(op_id_full, {})
+            tache_id = raw_op.get('tache_id', '')
+            tache = taches_dict.get(tache_id, {})
+            tache_description = tache.get('description') or tache.get('name') or tache.get('nom') or tache_id
+            
+            article_id = op.get('article_id') or order.get('article_id')
+            article = articles_dict.get(article_id, {})
+            article_description = article.get('name') or article.get('article_label') or article.get('description') or ''
+            
             gantt_tasks.append({
                 'id': op.get('operation_id'),
                 'operation_id': op.get('operation_id'),
                 'order_id': order_id,
-                'article_id': op.get('article_id') or order.get('article_id'),
+                'article_id': article_id,
+                'article_description': article_description,  # SUJET 5
+                'tache_id': tache_id,  # SUJET 5
+                'tache_description': tache_description,  # SUJET 5
                 'machine_id': machine_id,
                 'machine_name': machine.get('nom', machine_id),
                 'centre_de_charge_id': centre_id,

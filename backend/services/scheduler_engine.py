@@ -1476,20 +1476,37 @@ class SchedulerEngine:
                         end_var = end_vars[op_id]
                         op_duration = interval_data['duration']
                         
-                        # TOUJOURS contraindre les week-ends (plages longues)
+                        # CONTRAINTE STRICTE: L'opération ne peut PAS chevaucher les plages interdites
+                        # Pour chaque plage interdite [slot_start, slot_end], l'opération doit:
+                        # - soit finir AVANT le début de la plage (end <= slot_start)
+                        # - soit commencer APRÈS la fin de la plage (start >= slot_end)
+                        
+                        # WEEK-ENDS: Contrainte stricte (plages longues >= 24h)
                         for slot_start, slot_end in weekend_slots:
-                            b = model.new_bool_var(f'weekend_{op_id}_{slot_start}')
-                            model.add(end_var <= slot_start).only_enforce_if(b)
-                            model.add(start_var >= slot_end).only_enforce_if(b.Not())
+                            # Créer deux variables booléennes pour les deux possibilités
+                            before_slot = model.new_bool_var(f'before_weekend_{op_id}_{slot_start}')
+                            after_slot = model.new_bool_var(f'after_weekend_{op_id}_{slot_start}')
+                            
+                            # Si before_slot est vrai, l'opération finit avant la plage
+                            model.add(end_var <= slot_start).only_enforce_if(before_slot)
+                            # Si after_slot est vrai, l'opération commence après la plage
+                            model.add(start_var >= slot_end).only_enforce_if(after_slot)
+                            
+                            # IMPORTANT: Au moins une des deux conditions DOIT être vraie
+                            model.add_bool_or([before_slot, after_slot])
                             calendar_constraints_count += 1
                         
-                        # Contraindre les horaires journaliers SEULEMENT si l'opération peut tenir dans une journée
-                        # Si l'opération dure plus longtemps que la journée de travail, on la laisse dépasser
+                        # HORAIRES JOURNALIERS: Contrainte stricte si l'opération peut tenir dans une journée
                         if op_duration <= daily_work_minutes:
                             for slot_start, slot_end in daily_slots:
-                                b = model.new_bool_var(f'daily_{op_id}_{slot_start}')
-                                model.add(end_var <= slot_start).only_enforce_if(b)
-                                model.add(start_var >= slot_end).only_enforce_if(b.Not())
+                                before_slot = model.new_bool_var(f'before_daily_{op_id}_{slot_start}')
+                                after_slot = model.new_bool_var(f'after_daily_{op_id}_{slot_start}')
+                                
+                                model.add(end_var <= slot_start).only_enforce_if(before_slot)
+                                model.add(start_var >= slot_end).only_enforce_if(after_slot)
+                                
+                                # Au moins une des deux conditions DOIT être vraie
+                                model.add_bool_or([before_slot, after_slot])
                                 calendar_constraints_count += 1
                         else:
                             logger.info(f"      ⚠️  Op {op_id}: durée {op_duration}min > {daily_work_minutes}min/jour - horaires assouplis")

@@ -1101,8 +1101,20 @@ export default function GanttInteractive() {
               <span style={{ color: 'var(--text-muted)' }}>Ordre:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.order_id}</span>
               
+              <span style={{ color: 'var(--text-muted)' }}>Tâche:</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>
+                {hoveredTask.tache_description || hoveredTask.tache_id || '-'}
+              </span>
+              
               <span style={{ color: 'var(--text-muted)' }}>Article:</span>
-              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.article_id || '-'}</span>
+              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>
+                {hoveredTask.article_id || '-'}
+                {hoveredTask.article_description && (
+                  <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {hoveredTask.article_description}
+                  </span>
+                )}
+              </span>
               
               {hoveredTask.order_quantity > 0 && (
                 <>
@@ -1110,9 +1122,6 @@ export default function GanttInteractive() {
                   <span className="font-mono font-bold" style={{ color: 'var(--accent-primary)' }}>{hoveredTask.order_quantity}</span>
                 </>
               )}
-              
-              <span style={{ color: 'var(--text-muted)' }}>Centre:</span>
-              <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{hoveredTask.centre_de_charge_nom || '-'}</span>
               
               <span style={{ color: 'var(--text-muted)' }}>Début:</span>
               <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{formatDateTime(hoveredTask.start)}</span>

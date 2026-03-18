@@ -13,7 +13,6 @@ const importTypes = [
   { key: 'stocks', label: 'Stocks', testId: 'import-stocks' },
   { key: 'operation-materials', label: 'Matières par Opération', testId: 'import-operation-materials' },
   { key: 'planned-supplier-receipts', label: 'Réceptions Fournisseurs', testId: 'import-planned-receipts' },
-  { key: 'bom', label: 'Nomenclatures (BOM)', testId: 'import-bom' },
 ];
 
 export default function ImportData() {
@@ -161,10 +160,6 @@ export default function ImportData() {
               <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Réceptions Prévues</p>
                 <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.planned_receipts || 0}</p>
-              </div>
-              <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
-                <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Nomenclatures (BOM)</p>
-                <p className="text-lg font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{stats.bom_lines || 0}</p>
               </div>
               <div className="p-3 rounded-lg" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--status-info)' }}>Indisponibilités</p>
@@ -358,12 +353,6 @@ export default function ImportData() {
             <p className="font-medium" style={{ color: 'var(--status-info)' }}>Réceptions Fournisseurs:</p>
             <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--status-info-bg)', border: '1px solid var(--status-info-border)' }}>
               article_id, quantity, planned_date
-            </code>
-          </div>
-          <div>
-            <p className="font-medium" style={{ color: 'var(--brand-primary)' }}>Nomenclatures BOM:</p>
-            <code className="text-xs font-mono px-2 py-1 rounded" style={{ backgroundColor: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
-              parent_article_id, child_article_id, quantity, level, unit, scrap_rate
             </code>
           </div>
         </div>

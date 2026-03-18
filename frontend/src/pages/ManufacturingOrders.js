@@ -305,12 +305,11 @@ export default function ManufacturingOrders() {
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Article</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Date Besoin</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Priorité</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Op. ID</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Op. Seq</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Tâche</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Centre</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Prod (min)</th>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Setup (min)</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)' }}>Jointure</th>
                 </tr>
               </thead>
               <tbody>
@@ -327,9 +326,16 @@ export default function ManufacturingOrders() {
                     <td className="px-3 py-2 font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{op.order_id}</td>
                     <td className="px-3 py-2">
                       {op.article_id ? (
-                        <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-warning-bg)', color: 'var(--status-warning)' }}>
-                          {op.article_id}
-                        </span>
+                        <div>
+                          <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-warning-bg)', color: 'var(--status-warning)' }}>
+                            {op.article_id}
+                          </span>
+                          {op.article_description && (
+                            <div className="text-xs mt-0.5 truncate max-w-[150px]" style={{ color: 'var(--text-muted)' }} title={op.article_description}>
+                              {op.article_description}
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs" style={{ color: 'var(--status-error)' }}>NON TROUVE</span>
                       )}
@@ -351,34 +357,41 @@ export default function ManufacturingOrders() {
                     </td>
                     <td className="px-3 py-2 text-xs text-center" style={{ color: 'var(--text-secondary)' }}>{op.priority || 0}</td>
                     <td className="px-3 py-2">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
-                        {op.operation_id}
+                      <span className="px-1.5 py-0.5 rounded text-xs font-mono font-bold" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
+                        {op.operation_seq || '-'}
                       </span>
                     </td>
                     <td className="px-3 py-2">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
-                        {op.tache_id || '-'}
-                      </span>
+                      <div>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
+                          {op.tache_id || '-'}
+                        </span>
+                        {op.tache_description && (
+                          <div className="text-xs mt-0.5 truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }} title={op.tache_description}>
+                            {op.tache_description}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
-                        {op.centre_de_charge_id || '-'}
-                      </span>
+                      <div>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-secondary)' }}>
+                          {op.centre_de_charge_id || '-'}
+                        </span>
+                        {op.centre_description && (
+                          <div className="text-xs mt-0.5 truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }} title={op.centre_description}>
+                            {op.centre_description}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{op.production_time_minutes || 0}</td>
                     <td className="px-3 py-2 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{op.setup_time_minutes || 0}</td>
-                    <td className="px-3 py-2">
-                      {op.article_id ? (
-                        <CheckCircle size={14} style={{ color: 'var(--status-success)' }} />
-                      ) : (
-                        <XCircle size={14} style={{ color: 'var(--status-error)' }} />
-                      )}
-                    </td>
                   </tr>
                 ))}
                 {filteredOperations.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                    <td colSpan={9} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
                       {operations.length === 0 ? 'Aucune opération. Importez des données CSV.' : 'Aucune opération ne correspond aux filtres.'}
                     </td>
                   </tr>
@@ -482,14 +495,6 @@ export default function ManufacturingOrders() {
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 bg-amber-100 border border-amber-300 rounded"></div>
             <span className="text-slate-600">Urgent (≤3 jours)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <CheckCircle size={16} className="text-green-600" />
-            <span className="text-slate-600">Jointure OK (ordre trouvé)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <XCircle size={16} className="text-red-600" />
-            <span className="text-slate-600">Jointure KO (ordre non trouvé)</span>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { 
@@ -69,6 +69,10 @@ export default function Scheduling() {
   
   // État de progression du calcul asynchrone
   const [calculationProgress, setCalculationProgress] = useState(null);
+  // SUJET 9: Timer pour afficher le temps écoulé
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const startTimeRef = useRef(null);
+  const timerIntervalRef = useRef(null);
   
   // État de validation de la config
   const [configValidation, setConfigValidation] = useState(null);
@@ -120,6 +124,14 @@ export default function Scheduling() {
 
     setCalculating(true);
     setCalculationProgress(null);
+    
+    // SUJET 9: Démarrer le timer de progression
+    setElapsedSeconds(0);
+    startTimeRef.current = Date.now();
+    timerIntervalRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setElapsedSeconds(elapsed);
+    }, 1000);
 
     try {
       // Utiliser le mode ASYNCHRONE pour éviter les timeouts du proxy
@@ -161,14 +173,18 @@ export default function Scheduling() {
           
           if (jobStatus.status === 'completed') {
             clearInterval(pollInterval);
+            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
             setCalculating(false);
             setCalculationProgress(null);
+            setElapsedSeconds(0);
             toast.success(`Calcul terminé: ${jobStatus.result?.operations_count || 0} opérations planifiées`);
             navigate(`/gantt/${jobStatus.scenario_id}`);
           } else if (jobStatus.status === 'failed') {
             clearInterval(pollInterval);
+            if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
             setCalculating(false);
             setCalculationProgress(null);
+            setElapsedSeconds(0);
             toast.error(`Erreur: ${jobStatus.error}`);
           }
         } catch (pollError) {
@@ -581,67 +597,6 @@ export default function Scheduling() {
         )}
       </div>
 
-      {/* Contraintes appliquées */}
-      <div className="bg-slate-50 border border-slate-200 rounded-sm p-5">
-        <h4 className="text-sm font-semibold text-slate-700 mb-3">Contraintes Appliquées</h4>
-        <div className="grid grid-cols-2 gap-3 text-sm text-slate-600">
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={ignoreRules ? "text-slate-300" : "text-green-500"} />
-            <span className={ignoreRules ? "text-slate-400 line-through" : ""}>Règles métier d'affectation</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={ignorePriorities ? "text-slate-300" : "text-green-500"} />
-            <span className={ignorePriorities ? "text-slate-400 line-through" : ""}>Priorités des OF</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={ignoreMaterial ? "text-slate-300" : "text-green-500"} />
-            <span className={ignoreMaterial ? "text-slate-400 line-through" : ""}>Disponibilité matière</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={ignoreCalendars ? "text-slate-300" : "text-green-500"} />
-            <span className={ignoreCalendars ? "text-slate-400 line-through" : ""}>Calendriers machines</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={(ignorePriorities || ignorePriorityPropagation) ? "text-slate-300" : "text-green-500"} />
-            <span className={(ignorePriorities || ignorePriorityPropagation) ? "text-slate-400 line-through" : ""}>Propagation priorité</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={(ignoreMaterial || ignoreMaterialPropagation) ? "text-slate-300" : "text-green-500"} />
-            <span className={(ignoreMaterial || ignoreMaterialPropagation) ? "text-slate-400 line-through" : ""}>Propagation matière</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className="text-green-500" />
-            <span>Capacité finie (non-chevauchement)</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={respectSequence ? "text-green-500" : "text-slate-300"} />
-            <span className={!respectSequence ? "text-slate-400 line-through" : ""}>Séquence des gammes</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className={(allowSplitting && !ignoreCalendars) ? "text-green-500" : "text-slate-300"} />
-            <span className={(!allowSplitting || ignoreCalendars) ? "text-slate-400 line-through" : ""}>Fractionnement multi-jours</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle size={14} className="text-green-500" />
-            <span>production_time + setup_time</span>
-          </div>
-        </div>
-        
-        {/* Résumé de l'horizon */}
-        <div className="mt-4 pt-3 border-t border-slate-200">
-          <div className="flex items-center gap-2 text-sm">
-            <Calendar size={14} className="text-blue-500" />
-            <span className="text-slate-600">
-              <strong>Horizon:</strong>{' '}
-              {horizonDays === 0 
-                ? 'Tous les ordres' 
-                : `J+${horizonDays} jour${horizonDays > 1 ? 's' : ''} (+ retards + dépendances)`
-              }
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Launch Button */}
       <div className="flex items-center gap-4">
         <button
@@ -663,26 +618,42 @@ export default function Scheduling() {
           )}
         </button>
         
-        {calculating && calculationProgress && (
-          <div className="flex-1 max-w-md">
+        {/* SUJET 9: Barre de progression avec temps écoulé */}
+        {calculating && (
+          <div className="flex-1 max-w-lg">
             <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-slate-600">{calculationProgress.message}</span>
-              {calculationProgress.progress !== null && (
-                <span className="text-slate-500 font-mono">{calculationProgress.progress}%</span>
-              )}
+              <span className="text-slate-600">
+                {calculationProgress?.message || 'Calcul en cours...'}
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-slate-500 font-mono flex items-center gap-1">
+                  <Clock size={14} />
+                  {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+                </span>
+                <span className="text-slate-500 font-mono font-bold">
+                  {Math.min(100, Math.round((elapsedSeconds / maxSolverTime) * 100))}%
+                </span>
+              </div>
             </div>
-            <div className="w-full bg-slate-200 rounded-full h-2">
+            <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
               <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${calculationProgress.progress || 0}%` }}
+                className="h-3 rounded-full transition-all duration-1000 ease-linear"
+                style={{ 
+                  width: `${Math.min(100, (elapsedSeconds / maxSolverTime) * 100)}%`,
+                  backgroundColor: elapsedSeconds >= maxSolverTime ? '#EF4444' : '#3B82F6'
+                }}
               />
             </div>
-          </div>
-        )}
-        
-        {calculating && !calculationProgress && (
-          <div className="text-sm text-slate-500">
-            Durée max: {SOLVER_TIMES.find(t => t.value === maxSolverTime)?.label}
+            <div className="flex items-center justify-between text-xs mt-1">
+              <span style={{ color: 'var(--text-muted)' }}>
+                Durée max: {SOLVER_TIMES.find(t => t.value === maxSolverTime)?.label}
+              </span>
+              {elapsedSeconds >= maxSolverTime && (
+                <span className="text-amber-600 font-medium">
+                  Optimisation en cours...
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>
