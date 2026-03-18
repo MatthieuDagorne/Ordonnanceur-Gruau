@@ -1159,8 +1159,17 @@ class SchedulerEngine:
             # PHASE 4: CONSTRUCTION DU MODÈLE OR-TOOLS
             model = cp_model.CpModel()
             
-            # Horizon de base: 14 jours en minutes (extensible si nécessaire)
-            base_horizon = 14 * 24 * 60
+            # Horizon de planification basé sur le paramètre utilisateur
+            # Si horizon_days > 0, utiliser cette valeur comme limite STRICTE
+            user_horizon_days = options.get('horizon_days', 14)
+            if user_horizon_days > 0:
+                # Utiliser l'horizon utilisateur comme base
+                base_horizon = user_horizon_days * 24 * 60
+                logger.info(f"   📅 Horizon utilisateur: {user_horizon_days} jours")
+            else:
+                # Pas de limite - utiliser 60 jours comme horizon par défaut
+                base_horizon = 60 * 24 * 60
+                logger.info(f"   📅 Horizon utilisateur: Illimité (60 jours par défaut)")
             
             # Calculer l'horizon nécessaire en fonction des contraintes matière
             max_material_constraint = 0
@@ -1175,9 +1184,23 @@ class SchedulerEngine:
                     min_minutes = self._datetime_to_minutes(min_date)
                     max_material_constraint = max(max_material_constraint, min_minutes)
             
-            # L'horizon doit être au moins égal à la contrainte max + marge pour les opérations
-            horizon = max(base_horizon, max_material_constraint + 7 * 24 * 60)
-            logger.info(f"   📐 Horizon de planification: {horizon} minutes ({horizon // (24*60)} jours)")
+            # Si l'utilisateur a défini un horizon, ne pas l'étendre automatiquement
+            # sauf si nécessaire pour les contraintes matière DANS l'horizon
+            if user_horizon_days > 0:
+                # Limiter l'extension aux contraintes matière dans l'horizon
+                max_extension = min(max_material_constraint, base_horizon + 2 * 24 * 60)  # Max 2 jours de marge
+                horizon = max(base_horizon, max_extension)
+            else:
+                # Mode illimité - étendre selon les contraintes matière + marge
+                horizon = max(base_horizon, max_material_constraint + 7 * 24 * 60)
+            
+            logger.info(f"   📐 Horizon de planification effectif: {horizon} minutes ({horizon // (24*60)} jours)")
+            
+            # Stocker l'horizon utilisateur pour les contraintes de fin
+            user_horizon_minutes = user_horizon_days * 24 * 60 if user_horizon_days > 0 else 0
+            
+            # Index des ordres pour accéder à _horizon_inclusion_reason
+            orders_index = {o.get('id'): o for o in orders}
             
             # Variables de décision
             start_vars = {}
@@ -1251,6 +1274,16 @@ class SchedulerEngine:
                 
                 # Lier début et fin
                 model.add(end_var == start_var + duration)
+                
+                # CONTRAINTE D'HORIZON: Si l'utilisateur a défini un horizon et que l'ordre
+                # est "dans l'horizon" (pas en retard, pas par dépendance), forcer la fin dans l'horizon
+                order = orders_index.get(op.get('order_id'), {})
+                inclusion_reason = order.get('_horizon_inclusion_reason', 'no_filter')
+                
+                if user_horizon_minutes > 0 and inclusion_reason == 'in_horizon':
+                    # Opération dans l'horizon - doit se terminer dans l'horizon
+                    model.add(end_var <= user_horizon_minutes)
+                    logger.debug(f"   🎯 {op_id}: fin contrainte <= J+{user_horizon_days} jours")
                 
                 # Variable d'intervalle pour NoOverlap
                 interval_var = model.new_interval_var(

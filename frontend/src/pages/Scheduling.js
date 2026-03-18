@@ -37,14 +37,6 @@ const SOLVER_TIMES = [
   { value: 600, label: '10 minutes' },
 ];
 
-const HORIZON_OPTIONS = [
-  { value: 0, label: 'Tous les ordres' },
-  { value: 7, label: '7 jours' },
-  { value: 14, label: '14 jours' },
-  { value: 21, label: '21 jours' },
-  { value: 30, label: '30 jours' },
-];
-
 export default function Scheduling() {
   const [calculating, setCalculating] = useState(false);
   const [stats, setStats] = useState(null);
@@ -299,25 +291,27 @@ export default function Scheduling() {
             </label>
           </div>
           <div className="flex items-center gap-4">
-            <select
-              value={horizonDays}
-              onChange={(e) => setHorizonDays(parseInt(e.target.value))}
-              className="h-10 rounded-sm border px-3 py-1 text-sm"
-              style={{ 
-                backgroundColor: 'var(--surface)', 
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)'
-              }}
-              data-testid="horizon-days"
-            >
-              {HORIZON_OPTIONS.map((h) => (
-                <option key={h.value} value={h.value}>{h.label}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                max="365"
+                value={horizonDays}
+                onChange={(e) => setHorizonDays(parseInt(e.target.value) || 0)}
+                className="w-20 h-10 rounded-sm border px-3 py-1 text-sm text-center"
+                style={{ 
+                  backgroundColor: 'var(--surface)', 
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-primary)'
+                }}
+                data-testid="horizon-days"
+              />
+              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>jours</span>
+            </div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {horizonDays === 0 
                 ? 'Tous les ordres seront optimisés (peut être lent pour gros volumes)'
-                : `Optimise uniquement jusqu'à J+${horizonDays}. Les ordres en retard et les dépendances sont toujours inclus.`
+                : `Optimise jusqu'à J+${horizonDays}. Les ordres en retard et les dépendances sont toujours inclus.`
               }
             </p>
           </div>
@@ -570,7 +564,7 @@ export default function Scheduling() {
               <strong>Horizon:</strong>{' '}
               {horizonDays === 0 
                 ? 'Tous les ordres' 
-                : `J+${horizonDays} jours (+ retards + dépendances)`
+                : `J+${horizonDays} jour${horizonDays > 1 ? 's' : ''} (+ retards + dépendances)`
               }
             </span>
           </div>
