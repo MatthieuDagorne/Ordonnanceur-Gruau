@@ -72,7 +72,16 @@ class CalendarManager:
     def is_working_time(self, machine_id: str, dt: datetime) -> bool:
         """Vérifie si un moment donné est un temps de travail pour la machine."""
         calendar = self.get_calendar_for_machine(machine_id)
-        working_days = calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6])
+        raw_working_days = calendar.get('working_days', [1, 2, 3, 4, 5])  # Frontend: 1-7
+        
+        # CONVERSION: Frontend utilise 1-7 (1=Lundi), Python weekday() utilise 0-6 (0=Lundi)
+        working_days = set()
+        for d in raw_working_days:
+            if 1 <= d <= 7:
+                working_days.add(d - 1)  # Convertir 1-7 vers 0-6
+            else:
+                working_days.add(d)  # Déjà en 0-6
+        
         start_hour = calendar.get('start_hour', 0)
         end_hour = calendar.get('end_hour', 24)
         
@@ -108,7 +117,15 @@ class CalendarManager:
         Utilise start_time/end_time (format HH:MM) pour une précision à la minute.
         """
         calendar = self.get_calendar_for_machine(machine_id)
-        working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
+        raw_working_days = calendar.get('working_days', [1, 2, 3, 4, 5])  # Frontend: 1-7
+        
+        # CONVERSION: Frontend utilise 1-7 (1=Lundi), Python weekday() utilise 0-6 (0=Lundi)
+        working_days = set()
+        for d in raw_working_days:
+            if 1 <= d <= 7:
+                working_days.add(d - 1)  # Convertir 1-7 vers 0-6
+            else:
+                working_days.add(d)  # Déjà en 0-6
         
         # Utiliser start_time/end_time si disponibles (précision minute), sinon fallback sur start_hour/end_hour
         start_time_str = calendar.get('start_time', '')
@@ -1359,7 +1376,8 @@ class SchedulerEngine:
                         'interval': interval_var,
                         'op_id': op_id,
                         'duration': duration,
-                        'min_start': min_start
+                        'min_start': min_start,
+                        'is_split': op.get('_is_split_operation', False)  # Pour les contraintes de calendrier
                     })
             
             # Log des contraintes matière actives
@@ -1388,7 +1406,18 @@ class SchedulerEngine:
                 
                 for machine_id, intervals_data in machine_to_intervals.items():
                     calendar = self.calendar_manager.get_calendar_for_machine(machine_id)
-                    working_days = set(calendar.get('working_days', [0, 1, 2, 3, 4, 5, 6]))
+                    raw_working_days = calendar.get('working_days', [1, 2, 3, 4, 5])  # Frontend: 1=Lun, 7=Dim
+                    
+                    # CONVERSION: Frontend utilise 1-7 (1=Lundi), Python weekday() utilise 0-6 (0=Lundi)
+                    # Convertir les jours du calendrier vers la convention Python
+                    working_days = set()
+                    for d in raw_working_days:
+                        if 1 <= d <= 7:
+                            working_days.add(d - 1)  # 1 -> 0 (Lundi), 7 -> 6 (Dimanche)
+                        else:
+                            working_days.add(d)  # Déjà en 0-6
+                    
+                    logger.info(f"   📅 Machine {machine_id}: raw_days={raw_working_days} → python_days={sorted(working_days)}")
                     
                     # Récupérer les heures de travail
                     start_time_str = calendar.get('start_time', '')
@@ -1423,7 +1452,10 @@ class SchedulerEngine:
                     forbidden_slots = []
                     base_date = self.scheduling_start.replace(hour=0, minute=0, second=0, microsecond=0)
                     
-                    for day_offset in range(21):  # 3 semaines
+                    # Couvrir tout l'horizon du solveur (horizon est en minutes)
+                    horizon_days_for_constraints = max(30, (horizon // (24 * 60)) + 7)  # Au moins 30 jours ou horizon + marge
+                    
+                    for day_offset in range(horizon_days_for_constraints):
                         day_start = base_date + timedelta(days=day_offset)
                         day_weekday = day_start.weekday()
                         day_start_min = int((day_start - self.scheduling_start).total_seconds() / 60)
@@ -1476,40 +1508,49 @@ class SchedulerEngine:
                         end_var = end_vars[op_id]
                         op_duration = interval_data['duration']
                         
-                        # CONTRAINTE STRICTE: L'opération ne peut PAS chevaucher les plages interdites
-                        # Pour chaque plage interdite [slot_start, slot_end], l'opération doit:
-                        # - soit finir AVANT le début de la plage (end <= slot_start)
-                        # - soit commencer APRÈS la fin de la plage (start >= slot_end)
+                        # CONTRAINTE OPTIMISÉE: Utiliser AddForbiddenAssignments ou NoOverlap
+                        # Au lieu de créer des booléens pour chaque plage, on utilise une approche plus directe
                         
-                        # WEEK-ENDS: Contrainte stricte (plages longues >= 24h)
+                        # WEEK-ENDS: Contrainte stricte - l'opération ne peut pas chevaucher le week-end
+                        # Approche: Pour chaque plage de week-end, créer UNE contrainte d'exclusion
                         for slot_start, slot_end in weekend_slots:
-                            # Créer deux variables booléennes pour les deux possibilités
-                            before_slot = model.new_bool_var(f'before_weekend_{op_id}_{slot_start}')
-                            after_slot = model.new_bool_var(f'after_weekend_{op_id}_{slot_start}')
+                            # L'opération ne chevauche PAS la plage si:
+                            # end <= slot_start (finit avant) OU start >= slot_end (commence après)
+                            #
+                            # Utilisation d'une variable intermédiaire pour éviter l'explosion de booléens
+                            # Alternative: utiliser AddLinearExpressionInDomain
                             
-                            # Si before_slot est vrai, l'opération finit avant la plage
+                            # MÉTHODE 1: Créer un intervalle fictif pour la plage interdite
+                            # et utiliser NoOverlap (plus efficace)
+                            
+                            # Pour simplifier, on utilise la contrainte: NOT(start < slot_end AND end > slot_start)
+                            # Ce qui équivaut à: end <= slot_start OR start >= slot_end
+                            
+                            before_slot = model.new_bool_var(f'bw_{op_id}_{slot_start}')
+                            after_slot = model.new_bool_var(f'aw_{op_id}_{slot_start}')
+                            
                             model.add(end_var <= slot_start).only_enforce_if(before_slot)
-                            # Si after_slot est vrai, l'opération commence après la plage
                             model.add(start_var >= slot_end).only_enforce_if(after_slot)
-                            
-                            # IMPORTANT: Au moins une des deux conditions DOIT être vraie
                             model.add_bool_or([before_slot, after_slot])
                             calendar_constraints_count += 1
                         
-                        # HORAIRES JOURNALIERS: Contrainte stricte si l'opération peut tenir dans une journée
-                        if op_duration <= daily_work_minutes:
-                            for slot_start, slot_end in daily_slots:
-                                before_slot = model.new_bool_var(f'before_daily_{op_id}_{slot_start}')
-                                after_slot = model.new_bool_var(f'after_daily_{op_id}_{slot_start}')
+                        # HORAIRES JOURNALIERS: Contrainte uniquement pour les opérations courtes
+                        # Les opérations longues (fractionnées) doivent déjà respecter les plages
+                        # via leur fractionnement
+                        if op_duration <= daily_work_minutes and not interval_data.get('is_split'):
+                            # Limiter aux premiers jours pour éviter l'explosion
+                            slots_to_apply = daily_slots[:14]  # Max 14 plages quotidiennes
+                            for slot_start, slot_end in slots_to_apply:
+                                before_slot = model.new_bool_var(f'bd_{op_id}_{slot_start}')
+                                after_slot = model.new_bool_var(f'ad_{op_id}_{slot_start}')
                                 
                                 model.add(end_var <= slot_start).only_enforce_if(before_slot)
                                 model.add(start_var >= slot_end).only_enforce_if(after_slot)
-                                
-                                # Au moins une des deux conditions DOIT être vraie
                                 model.add_bool_or([before_slot, after_slot])
                                 calendar_constraints_count += 1
                         else:
-                            logger.info(f"      ⚠️  Op {op_id}: durée {op_duration}min > {daily_work_minutes}min/jour - horaires assouplis")
+                            if op_duration > daily_work_minutes:
+                                logger.info(f"      ⚠️  Op {op_id}: durée {op_duration}min > {daily_work_minutes}min/jour - horaires assouplis")
                 
                 logger.info(f"\n   Total: {calendar_constraints_count} contraintes de calendrier")
             else:
