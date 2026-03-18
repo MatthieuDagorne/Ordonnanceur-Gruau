@@ -153,6 +153,15 @@ class MaterialManager:
         logger.info(f"  Stock initial: {len(self.initial_stocks)} articles")
         logger.info(f"  Besoins opérations: {len(self.operation_materials)} opérations")
         logger.info(f"  Réceptions planifiées: {len(self.planned_receipts)}")
+        
+        # Debug: Vérifier l'article 0157042
+        if '0157042' in self.initial_stocks:
+            logger.info(f"  ⚠️  Article 0157042 trouvé: stock = {self.initial_stocks['0157042']}")
+        else:
+            # Chercher des articles similaires
+            similar = [k for k in self.initial_stocks.keys() if '0157042' in k]
+            logger.warning(f"  ⚠️  Article 0157042 NON TROUVÉ! Articles similaires: {similar[:5]}")
+        
         logger.info(f"{'='*60}\n")
     
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
@@ -203,7 +212,13 @@ class MaterialManager:
         """
         Calcule le stock projeté d'un article à une date donnée.
         
-        Stock projeté = Stock initial + Réceptions avant date + Productions avant date - Consommations planifiées
+        Stock projeté = Stock initial 
+                       + Réceptions avant date 
+                       + Productions avant date 
+                       - Consommations planifiées AVANT cette date (horodatées)
+        
+        CORRECTION: Utilise les mouvements horodatés au lieu du total global,
+        afin de calculer correctement le stock projeté à chaque instant.
         """
         # Normaliser la date pour les comparaisons
         at_date = _normalize_datetime(at_date)
@@ -223,8 +238,18 @@ class MaterialManager:
             if production.article_id == article_id and prod_date <= at_date:
                 stock += production.quantity
         
-        # Soustraire les consommations déjà planifiées
-        stock -= self.planned_consumptions.get(article_id, 0)
+        # CORRECTION: Soustraire uniquement les consommations planifiées AVANT at_date
+        # Utiliser les mouvements horodatés pour un calcul temporel correct
+        consumptions_before = 0
+        for movement in self.movements:
+            if movement.article_id == article_id and movement.movement_type == 'CONSUMPTION':
+                movement_date = _normalize_datetime(movement.date)
+                # La consommation compte si elle est AVANT ou AU MÊME MOMENT que at_date
+                if movement_date <= at_date:
+                    # movement.quantity est déjà négatif pour les consommations
+                    consumptions_before += abs(movement.quantity)
+        
+        stock -= consumptions_before
         
         return stock
     

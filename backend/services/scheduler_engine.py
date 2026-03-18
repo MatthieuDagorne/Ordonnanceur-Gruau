@@ -1133,6 +1133,9 @@ class SchedulerEngine:
                         })
                 
                 # Vérification matière avec projection (seulement si pas déjà bloquée par propagation)
+                # PHASE INITIALE: On vérifie si la matière sera UN JOUR disponible.
+                # Si oui, l'opération est acceptée pour le solveur.
+                # Le contrôle chronologique précis sera fait APRÈS la résolution, dans la boucle itérative.
                 if is_valid and not ignore_material and not propagated_from_earlier_op:
                     # Vérifier les besoins matière de l'opération
                     material_status = self.material_manager.check_operation_materials(
@@ -1141,43 +1144,30 @@ class SchedulerEngine:
                     )
                     
                     if not material_status.all_available:
-                        # Reporter l'opération à la date de disponibilité
                         earliest_material_date = material_status.earliest_start_date
-                        if earliest_material_date:
-                            logger.info(f"⏳ Opération {op_id} reportée pour matière: {material_status.blocking_components}")
-                            logger.info(f"   Disponible à partir de: {earliest_material_date}")
+                        
+                        if earliest_material_date is None:
+                            # AUCUNE réception prévue → vraiment non planifiable
+                            is_valid = False
+                            blocking_reason = f'Matière JAMAIS disponible: {material_status.blocking_components}'
+                            logger.warning(f"⛔ Opération {op_id} NON PLANIFIABLE: {material_status.blocking_components} - Aucune réception prévue")
+                            
+                            # SUJET 3: Bloquer aussi les opérations suivantes de cet OF
+                            if order_id not in order_material_block:
+                                order_material_block[order_id] = {
+                                    'earliest_date': None,
+                                    'blocking_components': material_status.blocking_components,
+                                    'blocking_op': op_id
+                                }
+                        else:
+                            # Une réception est prévue → l'opération sera vérifiée après résolution
+                            # On la laisse passer au solveur, le post-traitement ajustera si nécessaire
+                            logger.info(f"⏳ Opération {op_id}: matière {material_status.blocking_components} dispo à partir de {earliest_material_date.strftime('%d/%m %H:%M')}")
                             material_delayed_operations.append({
                                 'operation_id': op_id,
                                 'blocking_components': material_status.blocking_components,
                                 'earliest_date': earliest_material_date.isoformat()
                             })
-                            
-                            # SUJET 3: Enregistrer ce blocage pour propager aux opérations suivantes
-                            # Si cet OF n'est pas encore dans le tracker, ou si cette date est plus tardive
-                            if order_id not in order_material_block:
-                                order_material_block[order_id] = {
-                                    'earliest_date': earliest_material_date,
-                                    'blocking_components': material_status.blocking_components,
-                                    'blocking_op': op_id
-                                }
-                            elif earliest_material_date > order_material_block[order_id]['earliest_date']:
-                                # Mettre à jour si cette rupture impose une date plus tardive
-                                order_material_block[order_id] = {
-                                    'earliest_date': earliest_material_date,
-                                    'blocking_components': material_status.blocking_components,
-                                    'blocking_op': op_id
-                                }
-                        else:
-                            is_valid = False
-                            blocking_reason = f'Matière insuffisante: {material_status.blocking_components}'
-                            
-                            # SUJET 3: Bloquer aussi les opérations suivantes (pas de date de report possible)
-                            if order_id not in order_material_block:
-                                order_material_block[order_id] = {
-                                    'earliest_date': None,  # Pas de date = vraiment non planifiable
-                                    'blocking_components': material_status.blocking_components,
-                                    'blocking_op': op_id
-                                }
                 
                 if is_valid:
                     # Enrichir avec date_besoin pour le tri et informations d'urgence
@@ -2196,6 +2186,21 @@ class SchedulerEngine:
                             # RUPTURE - chercher la date de disponibilité
                             earliest = material_status.earliest_start_date
                             
+                            # DEBUG: Log pour comprendre le problème 0157042
+                            for comp in material_status.blocking_components:
+                                if '0157042' in comp:
+                                    logger.warning(f"⚠️ DEBUG 0157042: Op {op_id} - earliest={earliest}, stock bloquant={comp}")
+                            
+                            if earliest is None:
+                                # JAMAIS DISPONIBLE - opération NON PLANIFIABLE
+                                logger.warning(f"⛔ Op {op_id}: Matière JAMAIS disponible - {material_status.blocking_components}")
+                                truly_unschedulable.append({
+                                    'operation_id': op_id,
+                                    'order_id': order_id,
+                                    'reason': f"Matière JAMAIS disponible: {material_status.blocking_components}",
+                                    'blocking_components': material_status.blocking_components
+                                })
+                            
                             if earliest and earliest > start_dt:
                                 # Reporter cette opération
                                 new_constraints[op_id] = earliest
@@ -2251,10 +2256,19 @@ class SchedulerEngine:
                             })
                     
                     # Ajouter les opérations vraiment non planifiables au résultat
+                    # ET les retirer de scheduled_ops
                     if truly_unschedulable:
+                        # IDs des opérations non planifiables
+                        unschedulable_ids = set(op['operation_id'] for op in truly_unschedulable)
+                        
+                        # Retirer ces opérations du planning
+                        original_count = len(scheduled_ops)
+                        scheduled_ops = [op for op in scheduled_ops if op['operation_id'] not in unschedulable_ids]
+                        removed_count = original_count - len(scheduled_ops)
+                        
                         result['unscheduled_operations'] = truly_unschedulable
                         result['unscheduled_count'] = len(truly_unschedulable)
-                        logger.warning(f"   Total: {len(truly_unschedulable)} opérations non planifiables")
+                        logger.warning(f"   ⛔ {len(truly_unschedulable)} opérations NON PLANIFIABLES (retirées du planning: {removed_count})")
                     else:
                         logger.info(f"   ✅ ORDONNANCEMENT OPTIMAL SANS RUPTURE en {current_iteration} itération(s)")
                 
