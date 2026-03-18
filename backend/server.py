@@ -2424,6 +2424,85 @@ async def run_scheduling_job(job_id: str, request_dict: dict):
         scheduling_jobs[job_id]['completed_at'] = datetime.now(timezone.utc).isoformat()
 
 
+@api_router.get("/scheduling/validate-config")
+async def validate_scheduling_config():
+    """
+    Valide la configuration avant de lancer un ordonnancement.
+    
+    Vérifie:
+    - Centres de charge sans machine
+    - Centres de charge sans calendrier
+    
+    Retourne les problèmes détectés.
+    """
+    centres = await db.centres_de_charge.find({}, {"_id": 0}).to_list(1000)
+    machines = await db.machines.find({}, {"_id": 0}).to_list(1000)
+    calendars = await db.calendars.find({}, {"_id": 0}).to_list(100)
+    
+    # Index des machines par centre
+    machines_by_centre = {}
+    for m in machines:
+        centre_id = m.get('centre_de_charge_id') or m.get('work_center_id')
+        if centre_id:
+            if centre_id not in machines_by_centre:
+                machines_by_centre[centre_id] = []
+            machines_by_centre[centre_id].append(m.get('id'))
+    
+    # Index des calendriers par ID
+    calendars_by_id = {c.get('id'): c for c in calendars}
+    
+    issues = []
+    warnings = []
+    
+    # Vérifier chaque centre de charge
+    centres_without_machines = []
+    centres_without_calendars = []
+    
+    for centre in centres:
+        centre_id = centre.get('id')
+        centre_name = centre.get('nom') or centre.get('name') or centre_id
+        
+        # Vérifier si le centre a des machines
+        if centre_id not in machines_by_centre:
+            centres_without_machines.append(centre_id)
+        
+        # Vérifier si le centre a un calendrier assigné
+        calendar_id = centre.get('calendar_id')
+        if not calendar_id or calendar_id not in calendars_by_id:
+            centres_without_calendars.append(centre_id)
+    
+    # Créer les messages d'erreur
+    if centres_without_machines:
+        issues.append({
+            'type': 'error',
+            'code': 'NO_MACHINES',
+            'message': f"{len(centres_without_machines)} centre(s) de charge sans machine",
+            'details': centres_without_machines,
+            'suggestion': "Ajoutez des machines à ces centres ou supprimez-les s'ils ne sont plus utilisés"
+        })
+    
+    if centres_without_calendars:
+        warnings.append({
+            'type': 'warning',
+            'code': 'NO_CALENDAR',
+            'message': f"{len(centres_without_calendars)} centre(s) de charge sans calendrier",
+            'details': centres_without_calendars,
+            'suggestion': "Assignez un calendrier à ces centres pour respecter les horaires de travail (sinon 24/7 par défaut)"
+        })
+    
+    return {
+        'valid': len(issues) == 0,
+        'issues': issues,  # Erreurs bloquantes
+        'warnings': warnings,  # Avertissements non bloquants
+        'stats': {
+            'total_centres': len(centres),
+            'centres_with_machines': len(centres) - len(centres_without_machines),
+            'centres_with_calendars': len(centres) - len(centres_without_calendars),
+            'total_machines': len(machines)
+        }
+    }
+
+
 @api_router.post("/scheduling/calculate/async")
 async def calculate_schedule_async(request: ScheduleRequestWithOptions, background_tasks: BackgroundTasks):
     """

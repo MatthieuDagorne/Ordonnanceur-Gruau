@@ -21,7 +21,13 @@ export default function CentresDeCharge() {
   const fetchCentres = async () => {
     try {
       const response = await axios.get(`${API}/centres-de-charge`);
-      setCentres(response.data);
+      // Trier par ID de centre de charge croissant
+      const sortedCentres = response.data.sort((a, b) => {
+        const idA = (a.id || '').toString().toLowerCase();
+        const idB = (b.id || '').toString().toLowerCase();
+        return idA.localeCompare(idB, 'fr', { numeric: true });
+      });
+      setCentres(sortedCentres);
     } catch (error) {
       console.error('Error:', error);
     }

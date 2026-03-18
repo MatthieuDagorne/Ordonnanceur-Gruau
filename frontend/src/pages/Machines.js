@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
-import { Plus, Trash2, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Search, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -12,6 +12,10 @@ export default function Machines() {
   const [showForm, setShowForm] = useState(false);
   const [editingMachine, setEditingMachine] = useState(null);
   const [formData, setFormData] = useState({ id: '', nom: '', centre_de_charge_id: '', description: '' });
+  
+  // Filtres
+  const [filterCentre, setFilterCentre] = useState('');
+  const [filterMachine, setFilterMachine] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -24,11 +28,48 @@ export default function Machines() {
         axios.get(`${API}/centres-de-charge`)
       ]);
       setMachines(machinesRes.data);
-      setCentres(centresRes.data);
+      // Trier les centres par ID croissant
+      const sortedCentres = centresRes.data.sort((a, b) => {
+        const idA = (a.id || '').toString().toLowerCase();
+        const idB = (b.id || '').toString().toLowerCase();
+        return idA.localeCompare(idB, 'fr', { numeric: true });
+      });
+      setCentres(sortedCentres);
     } catch (error) {
       console.error('Error:', error);
     }
   };
+
+  // Machines triées par centre de charge puis par ID machine
+  const sortedAndFilteredMachines = useMemo(() => {
+    let filtered = [...machines];
+    
+    // Appliquer les filtres
+    if (filterCentre) {
+      filtered = filtered.filter(m => 
+        (m.centre_de_charge_id || m.work_center_id || '').toLowerCase().includes(filterCentre.toLowerCase())
+      );
+    }
+    if (filterMachine) {
+      filtered = filtered.filter(m => 
+        (m.id || '').toLowerCase().includes(filterMachine.toLowerCase()) ||
+        (m.nom || m.name || '').toLowerCase().includes(filterMachine.toLowerCase())
+      );
+    }
+    
+    // Trier par centre de charge puis par ID machine
+    return filtered.sort((a, b) => {
+      const centreA = (a.centre_de_charge_id || a.work_center_id || '').toString().toLowerCase();
+      const centreB = (b.centre_de_charge_id || b.work_center_id || '').toString().toLowerCase();
+      const centreCompare = centreA.localeCompare(centreB, 'fr', { numeric: true });
+      
+      if (centreCompare !== 0) return centreCompare;
+      
+      const idA = (a.id || '').toString().toLowerCase();
+      const idB = (b.id || '').toString().toLowerCase();
+      return idA.localeCompare(idB, 'fr', { numeric: true });
+    });
+  }, [machines, filterCentre, filterMachine]);
 
   const resetForm = () => {
     setFormData({ id: '', nom: '', centre_de_charge_id: '', description: '' });
@@ -118,6 +159,69 @@ export default function Machines() {
           <Plus size={16} />
           Nouvelle Machine
         </button>
+      </div>
+
+      {/* Filtres */}
+      <div className="flex gap-4 items-center p-4 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}>
+        <Filter size={16} style={{ color: 'var(--text-muted)' }} />
+        <div className="flex-1 flex gap-4">
+          <div className="flex-1 max-w-xs">
+            <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>
+              Centre de Charge
+            </label>
+            <select
+              value={filterCentre}
+              onChange={(e) => setFilterCentre(e.target.value)}
+              className="w-full h-9 rounded-lg border px-3 text-sm"
+              style={{ 
+                backgroundColor: 'var(--bg-elevated)', 
+                borderColor: 'var(--border-default)',
+                color: 'var(--text-primary)'
+              }}
+              data-testid="filter-centre"
+            >
+              <option value="">Tous les centres</option>
+              {centres.map((centre) => (
+                <option key={centre.id} value={centre.id}>
+                  {centre.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1 max-w-xs">
+            <label className="text-xs font-semibold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>
+              Machine
+            </label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                value={filterMachine}
+                onChange={(e) => setFilterMachine(e.target.value)}
+                placeholder="Rechercher..."
+                className="w-full h-9 rounded-lg border pl-9 pr-3 text-sm"
+                style={{ 
+                  backgroundColor: 'var(--bg-elevated)', 
+                  borderColor: 'var(--border-default)',
+                  color: 'var(--text-primary)'
+                }}
+                data-testid="filter-machine"
+              />
+            </div>
+          </div>
+        </div>
+        {(filterCentre || filterMachine) && (
+          <button
+            onClick={() => { setFilterCentre(''); setFilterMachine(''); }}
+            className="text-xs px-2 py-1 rounded transition-colors"
+            style={{ color: 'var(--status-error)' }}
+          >
+            Effacer
+          </button>
+        )}
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          {sortedAndFilteredMachines.length} machine{sortedAndFilteredMachines.length > 1 ? 's' : ''}
+        </span>
       </div>
 
       {showForm && (
@@ -261,7 +365,7 @@ export default function Machines() {
             </tr>
           </thead>
           <tbody>
-            {machines.map((machine) => (
+            {sortedAndFilteredMachines.map((machine) => (
               <tr key={machine.id} className="transition-colors hover:bg-opacity-50" style={{ borderBottom: '1px solid var(--border-default)' }} data-testid="machine-row">
                 <td className="px-4 py-3">
                   <span className="px-2 py-1 rounded-lg text-sm font-mono font-semibold" style={{ backgroundColor: 'var(--status-info-bg)', color: 'var(--status-info)' }}>
@@ -298,10 +402,13 @@ export default function Machines() {
                 </td>
               </tr>
             ))}
-            {machines.length === 0 && (
+            {sortedAndFilteredMachines.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                  Aucune machine. Créez d'abord un centre de charge, puis une machine.
+                  {machines.length === 0 
+                    ? "Aucune machine. Créez d'abord un centre de charge, puis une machine."
+                    : "Aucune machine ne correspond aux filtres."
+                  }
                 </td>
               </tr>
             )}

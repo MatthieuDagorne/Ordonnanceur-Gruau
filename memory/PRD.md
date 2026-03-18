@@ -14,28 +14,35 @@ Advanced Planning & Scheduling (APS) application for industrial manufacturing, u
 - CSV import for operations, orders, machines, stocks
 - Automatic center creation from operations
 - ERP data transformation
-- **NEW: Articles.csv import** with material, thickness, width, length, color attributes
+- **Articles.csv import** with material, thickness, width, length, color attributes (3104 articles)
 
-### Scheduling Engine (Completed)
+### Scheduling Engine (FIXED 2026-03-18)
 - Finite capacity scheduling with NoOverlap constraints
 - Material availability checking with projected stock
 - Calendar constraints for working hours
 - Priority propagation between dependent orders
 - Asynchronous calculation to avoid proxy timeouts
+- **CRITICAL FIX**: Horizon du solveur maintenant indépendant du filtre d'horizon utilisateur
 
-### Horizon Planning (UPDATED 2026-03-18)
-- `horizon_days` parameter with **manual numeric input** (not dropdown)
-- **STRICT enforcement**: Operations "in horizon" are constrained to END within J+horizon
-- Automatic inclusion of:
-  - Orders within planning horizon → Must finish within horizon
-  - Late orders (past due date) → Can extend beyond horizon if needed
-  - Dependency orders (for material feasibility) → Can extend beyond horizon if needed
-- **Performance validated**: 14j horizon = 4668 ops in 13.74s (FEASIBLE)
+### Horizon Planning (FIXED 2026-03-18)
+- `horizon_days` parameter with **manual numeric input** (1, 2, 3... jours)
+- Horizon = **FILTRE sur les ordres**, pas sur la durée du planning
+- Le solveur peut planifier au-delà de J+horizon si nécessaire
+- Automatic inclusion of: Late orders, Dependency orders
+- **VALIDATED**: Horizon 7j = 3204 ops in 10.99s (FEASIBLE)
 
-### Operation Splitting (Completed)
-- Automatic splitting of long operations (> daily working hours)
-- Creates sub-operations (OP_PART1, OP_PART2, etc.)
-- Only active when calendars are enabled
+### Configuration Validation (NEW 2026-03-18)
+- Pre-scheduling validation via `/api/scheduling/validate-config`
+- **Blocking errors**: Work centers without machines
+- **Warnings**: Work centers without calendars
+- Visual alert in scheduling UI before launch
+
+### UI Improvements (2026-03-18)
+- **Work Centers page**: Sorted by ascending code
+- **Machines page**: 
+  - Sorted by work center then by machine ID
+  - Filters: work center dropdown (sorted), machine search
+  - Counter showing filtered results
 
 ### Gantt Visualization (Completed)
 - Interactive Gantt chart with zoom/pan
@@ -43,65 +50,36 @@ Advanced Planning & Scheduling (APS) application for industrial manufacturing, u
 - Tooltips with operation details
 - Conflict highlighting (material, late, urgent)
 
-### Diagnostic & Statistics (Completed)
-- Detailed scheduling statistics
-- Horizon filtering breakdown (in_horizon, late, dependency)
-- Split statistics
-- Machine utilization metrics
-- Blocked operation reasons
-
 ## API Endpoints
 
 ### Scheduling
+- `GET /api/scheduling/validate-config` - Validate configuration before scheduling
 - `POST /api/scheduling/calculate/async` - Start async calculation
 - `GET /api/scheduling/status/{job_id}` - Poll calculation status
 - `DELETE /api/scenarios/all` - Delete all scenarios
-
-### Data Import
-- `POST /api/import/articles` - Import articles.csv (ERP format supported)
-- `POST /api/import/operations` - Import operations
-- `POST /api/import/manufacturing-orders` - Import orders
 
 ### Data Parameters
 ```json
 {
   "scenario_name": "string",
   "scheduling_strategy": "ASAP|JIT",
-  "horizon_days": 14,  // 0 = all orders
-  "max_solver_time_seconds": 60,
+  "horizon_days": 7,  // Filter on orders to include, 0 = all
+  "max_solver_time_seconds": 90,
   "ignore_calendars": false,
-  "ignore_material": false,
-  "allow_splitting": true
+  "ignore_material": false
 }
 ```
 
 ## Test Results (2026-03-18)
-- **Horizon 14j, no calendars**: 4668 ops in 13.74s (FEASIBLE)
-- **Planning range**: 12 days (respects horizon constraint)
-- **Articles imported**: 3104 articles with attributes
+- **Horizon 7j, no calendars**: 3204 ops in 10.99s (FEASIBLE)
+- **Previous INFEASIBLE bug**: FIXED (horizon was limiting solver domain)
+- **Config validation**: Working (validates centers/machines/calendars)
 
-## Data Model - Articles
-```json
-{
-  "id": "U01073350",
-  "article_id": "U01073350", 
-  "name": "Article 1",
-  "article_label": "Article 1",
-  "material": "Acier",
-  "thickness": 0.05,
-  "length": 500,
-  "width": 1050,
-  "color": "Gris"
-}
-```
-
-## Known Limitations
-- With calendars enabled, constraint count can cause UNKNOWN status for large datasets
-- Recommendation: Use shorter horizon (7-14 days) or disable calendars for initial tests
+## Known Issues (RESOLVED)
+- ~~0 operations scheduled~~ → Fixed by separating horizon filter from solver domain
 
 ## Backlog
-1. (P1) Validate operation splitting with calendars active
-2. (P2) Create business rules using article attributes (material, thickness, etc.)
+1. (P1) Validate calculation WITH calendars active
+2. (P2) Create business rules using article attributes
 3. (P3) Export CSV for finalized planning
 4. (P3) Firm horizon implementation
-5. (P3) Advanced KPI dashboard

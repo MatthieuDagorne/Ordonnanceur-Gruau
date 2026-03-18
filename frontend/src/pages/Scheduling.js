@@ -4,7 +4,8 @@ import axios from 'axios';
 import { 
   Play, Loader2, AlertTriangle, CheckCircle, Settings2, 
   Clock, Package, Sliders, BarChart3, Zap, Calendar,
-  ChevronDown, ChevronUp, Target, Scale, Timer, FastForward, Rewind
+  ChevronDown, ChevronUp, Target, Scale, Timer, FastForward, Rewind,
+  AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -68,6 +69,9 @@ export default function Scheduling() {
   
   // État de progression du calcul asynchrone
   const [calculationProgress, setCalculationProgress] = useState(null);
+  
+  // État de validation de la config
+  const [configValidation, setConfigValidation] = useState(null);
 
   useEffect(() => {
     fetchStats();
@@ -91,6 +95,27 @@ export default function Scheduling() {
     if (stats?.operations === 0) {
       toast.error('Aucune opération à planifier. Importez des données.');
       return;
+    }
+
+    // Valider la configuration avant de lancer
+    try {
+      const validationResponse = await axios.get(`${API}/scheduling/validate-config`);
+      const validation = validationResponse.data;
+      setConfigValidation(validation);
+      
+      // Si erreurs bloquantes, ne pas lancer le calcul
+      if (!validation.valid) {
+        toast.error(`Configuration invalide: ${validation.issues[0]?.message}`);
+        return;
+      }
+      
+      // Afficher les warnings si présents
+      if (validation.warnings?.length > 0) {
+        validation.warnings.forEach(w => toast.warning(w.message));
+      }
+    } catch (error) {
+      console.error('Erreur de validation:', error);
+      // Continuer quand même si la validation échoue
     }
 
     setCalculating(true);
@@ -197,6 +222,52 @@ export default function Scheduling() {
           </div>
         )}
       </div>
+
+      {/* Alerte de validation de la configuration */}
+      {configValidation && !configValidation.valid && (
+        <div 
+          className="rounded-lg p-4 animate-fade-in-up"
+          style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--status-error)' }}
+          data-testid="config-validation-error"
+        >
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} style={{ color: 'var(--status-error)', flexShrink: 0, marginTop: 2 }} />
+            <div className="flex-1">
+              <h4 className="font-semibold" style={{ color: 'var(--status-error)' }}>
+                Configuration invalide - Ordonnancement bloqué
+              </h4>
+              {configValidation.issues.map((issue, idx) => (
+                <div key={idx} className="mt-2">
+                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {issue.message}
+                  </p>
+                  {issue.details && issue.details.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {issue.details.slice(0, 10).map((item, i) => (
+                        <span 
+                          key={i}
+                          className="px-2 py-0.5 rounded text-xs font-mono"
+                          style={{ backgroundColor: 'var(--bg-sunken)', color: 'var(--text-muted)' }}
+                        >
+                          {item}
+                        </span>
+                      ))}
+                      {issue.details.length > 10 && (
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          +{issue.details.length - 10} autres
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    {issue.suggestion}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Scénario Name */}
       <div 
