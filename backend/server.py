@@ -836,10 +836,11 @@ async def get_projected_stock():
         consumption_details = []
         
         for mat in operation_materials:
-            article_id = mat.get('article_composant_id')
+            article_id = mat.get('article_composant_id') or mat.get('component_article_id') or mat.get('article_id')
             # Le champ est 'due_quantity' (ou 'quantity' pour compatibilité)
-            qty = mat.get('due_quantity') or mat.get('quantity', 0)
-            op_id = mat.get('id')
+            qty = mat.get('due_quantity') or mat.get('required_quantity') or mat.get('quantity', 0)
+            # CORRECTION: L'ID de l'opération est dans 'operation_id', pas 'id'
+            op_id = mat.get('operation_id') or mat.get('id')
             order_id = mat.get('order_id')
             
             # Récupérer l'opération pour obtenir scheduled_start
@@ -1094,14 +1095,15 @@ async def get_projected_stock_by_scenario(scenario_id: str, article_id: Optional
         
         # 4. Ajouter les consommations des opérations planifiées
         for mat in operation_materials:
-            art_id = mat.get('article_composant_id')
+            art_id = mat.get('article_composant_id') or mat.get('component_article_id') or mat.get('article_id')
             if article_id and art_id != article_id:
                 continue
             articles_set.add(art_id)
             
-            op_id = mat.get('id')
+            # CORRECTION: L'ID de l'opération est dans 'operation_id', pas 'id'
+            op_id = mat.get('operation_id') or mat.get('id')
             order_id = mat.get('order_id')
-            qty = mat.get('due_quantity') or mat.get('quantity', 0)
+            qty = mat.get('due_quantity') or mat.get('required_quantity') or mat.get('quantity', 0)
             
             # Récupérer la date de l'opération depuis le scénario
             scheduled_op = scheduled_ops_by_id.get(op_id, {})

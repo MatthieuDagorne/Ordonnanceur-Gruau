@@ -10,64 +10,60 @@ Advanced Planning & Scheduling (APS) application for industrial manufacturing, u
 
 ## Recent Updates (2026-03-18)
 
-### BUG CRITIQUE RÉSOLU: Opérations planifiées le week-end
+### BUG CRITIQUE RÉSOLU: Stock projeté - Opérations marquées "non planifié" à tort
 
-**Problème**: Les opérations étaient planifiées les samedis et dimanches malgré le calendrier configuré pour Lundi-Vendredi.
+**Problème**: Dans la section "Stock projeté" du scénario, toutes les opérations apparaissaient comme "non planifié" même si elles étaient réellement planifiées. Cela faussait les consommations horodatées et donc les calculs de stock projeté.
 
-**Causes identifiées et corrigées**:
+**Cause identifiée**:
+- Le code utilisait `mat.get('id')` pour récupérer l'ID de l'opération
+- Mais dans `operation_materials`, l'ID est dans `mat.get('operation_id')` (format: `LV1139402_10`)
+- La jointure avec les opérations planifiées échouait systématiquement
 
-1. **Convention de jours incorrecte** (CORRIGÉ)
-   - Le frontend utilisait 1-7 (1=Lundi, 7=Dimanche)
-   - Le backend Python `weekday()` utilise 0-6 (0=Lundi, 6=Dimanche)
-   - **Fix**: Conversion `d-1` pour transformer 1-7 en 0-6
+**Correction**:
+```python
+# AVANT (bugué)
+op_id = mat.get('id')
 
-2. **Horizon de contraintes trop court** (CORRIGÉ)
-   - Les contraintes de calendrier ne couvraient que 21 jours
-   - Les opérations au-delà étaient planifiées sans contrainte
-   - **Fix**: Étendre l'horizon des contraintes à `max(30, horizon_du_solveur + 7)`
+# APRÈS (corrigé)
+op_id = mat.get('operation_id') or mat.get('id')
+```
 
-3. **Contraintes booléennes inefficaces** (CORRIGÉ)
-   - Utilisation de `only_enforce_if()` sans `add_bool_or()` ne garantissait pas le respect
-   - **Fix**: Ajout de `model.add_bool_or([before_slot, after_slot])` pour forcer l'une des deux conditions
+**Fichiers corrigés**:
+- `backend/server.py` lignes ~842 et ~1102
 
 **Résultat validé**:
-- Test avec 822 opérations: **0 opérations le week-end** ✅
-- Les contraintes de calendrier sont maintenant strictement respectées
+- Opération LV1139402_10 pour article 0157041: ✅ Planifiée au 19/03/2026 14:00
+- Timeline stock projeté: 9 consommations planifiées au lieu de 0
 
-### Autres améliorations (Sujets 4-9)
+### BUG CRITIQUE RÉSOLU: Opérations planifiées le week-end
 
-- **Sujet 4**: Traduction règles métier FR (REQUIRE/Interdit/Préféré)
-- **Sujet 5**: Tooltips Gantt enrichis (description tâche + article)
-- **Sujet 6**: Section "Contraintes Appliquées" retirée
-- **Sujet 7**: Module BOM retiré de l'import
-- **Sujet 8**: Page Ordres Fab. avec Op. Seq et descriptions
-- **Sujet 9**: Barre de progression avec timer (mm:ss + %)
+**Problème**: Des opérations étaient planifiées samedi/dimanche malgré le calendrier Lun-Ven.
 
-## Fichiers modifiés (session actuelle)
+**Causes et corrections**:
+1. Convention jours 1-7 (frontend) vs 0-6 (Python) → Conversion `d-1`
+2. Horizon contraintes calendrier 21 jours → Étendu à `max(30, horizon_solveur + 7)`
+3. Contraintes booléennes non strictes → Ajout `add_bool_or()`
 
-### Backend
-- `backend/services/scheduler_engine.py`:
-  - Conversion jours calendrier 1-7 → 0-6
-  - Extension horizon contraintes calendrier
-  - Ajout `add_bool_or()` pour contraintes strictes
-  - Flag `is_split` dans intervals_data
+**Résultat validé**: 822 opérations planifiées, **0 le week-end** ✅
 
-- `backend/server.py`:
-  - Enrichissement endpoint Gantt (tache_description, article_description)
-  - Enrichissement endpoint operations-enrichies
+### Améliorations UI (Sujets 4-9)
 
-### Frontend
-- `frontend/src/pages/Scheduling.js`: Timer progression
-- `frontend/src/pages/GanttInteractive.js`: Tooltips enrichis
-- `frontend/src/pages/BusinessRules.js`: Traduction FR
-- `frontend/src/pages/ImportData.js`: BOM retiré
-- `frontend/src/pages/ManufacturingOrders.js`: Descriptions + Op.Seq
+| Sujet | Description | Statut |
+|-------|-------------|--------|
+| 4 | Traduction règles métier FR (REQUIRE/Interdit/Préféré) | ✅ |
+| 5 | Tooltips Gantt enrichis (description tâche + article) | ✅ |
+| 6 | Section "Contraintes Appliquées" retirée | ✅ |
+| 7 | Module BOM retiré de l'import | ✅ |
+| 8 | Page Ordres Fab. avec Op. Seq et descriptions | ✅ |
+| 9 | Barre de progression avec timer (mm:ss + %) | ✅ |
 
 ## Tests validés
 
-| Scénario | Ops | Week-end | Statut |
-|----------|-----|----------|--------|
-| Test_Calendar_Fix_V3 | 822 | 0 | ✅ PASS |
+| Test | Résultat |
+|------|----------|
+| Calendrier: 0 ops week-end | ✅ PASS |
+| Stock projeté: ops horodatées | ✅ PASS |
+| LV1139402_10 planifié 19/03 14h | ✅ PASS |
 
 ## Backlog
 1. (P0) Implémenter la règle REQUIRE dans rules_engine
