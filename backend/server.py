@@ -3349,4 +3349,8 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    client.close()# Force reload Wed Mar 18 16:57:07 UTC 2026
+# Force reload print Wed Mar 18 16:58:39 UTC 2026
+# Force reload debug Wed Mar 18 16:59:41 UTC 2026
+# Force reload vars debug Wed Mar 18 17:01:23 UTC 2026
+# Force reload horizon debug Wed Mar 18 17:03:06 UTC 2026
